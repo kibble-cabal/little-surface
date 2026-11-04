@@ -1,0 +1,1947 @@
+import Foundation
+import simd
+
+public enum Tool: String, Codable, CaseIterable {
+    case select, drawEdges, edgeLoop, quadStrip, quadPatch, face, moveBrush, relaxBrush, erase
+
+    public var isDrawingTool: Bool {
+        switch self {
+        case .drawEdges, .edgeLoop, .quadStrip, .quadPatch: return true
+        default: return false
+        }
+    }
+    public var isBrush: Bool { self == .moveBrush || self == .relaxBrush || self == .erase }
+}
+
+public enum SelectionOperation: String, CaseIterable {
+    case replace, add, remove
+}
+
+public enum DragBehavior: String, CaseIterable {
+    /// Drag along the surface.
+    case move
+    /// Drag along connected edges.
+    case slide
+}
+
+public struct EngineMessage: Equatable {
+    public enum Kind { case info, success, warning, error }
+    public var id = UUID()
+    public var text: String
+    public var kind: Kind
+
+    public init(_ text: String, kind: Kind = .info) {
+        self.text = text
+        self.kind = kind
+    }
+}
+
+/// A stroke awaiting a decision: closing a near-closed path, or an interpretation worth checking.
+public struct PendingStroke {
+    public var paths: [ProcessedPath]
+    public var plans: [StrokePlan]
+    /// The ends are near each other, and closing the loop is on offer.
+    public var canClose: Bool
+    public var closedPlan: StrokePlan?
+    public var note: String?
+}
+
+public struct PendingStrip {
+    public var path: ProcessedPath
+    public var clippedAtCenterline: Bool
+    public var plan: TopologyPlan?
+    public var error: String?
+}
+
+public enum FaceCorner: Equatable {
+    case vertex(VertexID)
+    case edgePoint(EdgeID, t: Float, position: Vec3)
+    case surface(position: Vec3, normal: Vec3)
+}
+
+/// Everything the viewport draws that isn't the committed mesh or source, in world space.
+public struct OverlayGeometry {
+    public var previewEdges: [Vec3] = []
+    public var previewPoints: [Vec3] = []
+    public var previewTriangles: [Vec3] = []
+    public var mirrorEdges: [Vec3] = []
+    public var warningEdges: [Vec3] = []
+    /// Each picked patch chain, as line-segment pairs.
+    public var chains: [[Vec3]] = []
+    public init() {}
+}
+
+/// The document's editing engine: everything that changes topology goes through here, so the UI is
+/// nothing but input and display. It's main-thread-only; the source surface, snapshots and mesh values
+/// it hands out are all safe to use elsewhere.
+public final class RetopoEngine {
+    // MARK: Document state
+
+    public var name: String
+    public private(set) var createdAt: Date
+    public private(set) var sources: [SourceObject] = []
+    public private(set) var mesh = Mesh()
+    public private(set) var selection = Selection()
+    public private(set) var history = EditHistory()
+    public private(set) var projector: SurfaceProjector?
+    private var bvhs: [UUID: TriangleBVH] = [:]
+
+    public var camera = Camera()
+    public private(set) var symmetry = SymmetrySettings()
+    public var viewport = ViewportSettings() { didSet { notify() } }
+    public var tools = ToolSettings()
+    public private(set) var activeTool = Tool.drawEdges
+
+    // MARK: Interaction state
+
+    public var selectionOperation = SelectionOperation.replace
+    public var dragBehavior = DragBehavior.move
+    public var ignoresOcclusionForPicking: Bool { viewport.displayMode != .solid || !viewport.showSource }
+    public private(set) var hoverPoint: Vec2?
+    public private(set) var hoverElement: PickedElement?
+    public private(set) var lassoPath: [Vec2] = []
+    public private(set) var inkPath: [Vec2] = []
+    public private(set) var inkPrediction: [Vec2] = []
+    public private(set) var brushCursor: Vec2?
+
+    public private(set) var pendingStroke: PendingStroke?
+    public private(set) var pendingStrip: PendingStrip?
+    public private(set) var patchChains: [BoundaryChain] = []
+    public private(set) var patchPreview: PatchPlan?
+    public private(set) var patchError: String?
+    public private(set) var faceCorners: [FaceCorner] = []
+    public private(set) var overlay = OverlayGeometry()
+    public private(set) var issueHighlight: MeshIssue?
+
+    /// Set by every edit, cleared by the document layer.
+    public private(set) var editGeneration: UInt64 = 0
+    public private(set) var message: EngineMessage?
+    /// Called on the main thread after anything visible changes.
+    public var onChange: (() -> Void)?
+    /// Called when an action reaches a milestone the tutorial follows.
+    public var onEvent: ((EngineEvent) -> Void)?
+
+    public enum EngineEvent: Equatable {
+        case modelImported, strokeCommitted, loopClosed, facesGenerated, vertexMoved, exported
+    }
+
+    // MARK: Gesture state
+
+    private enum Gesture {
+        case idle
+        case stroke(StrokeCapture)
+        case tapOnly(start: Vec2)
+        case select(SelectDrag)
+        case lasso([Vec2])
+        case brush(before: EditSnapshot, lastHit: SurfaceHit?, label: String)
+        case erase(before: EditSnapshot, changed: Bool)
+    }
+
+    private struct SelectDrag {
+        var start: Vec2
+        var startedOn: PickedElement?
+        var before: EditSnapshot
+        var basePositions: [VertexID: Vec3]
+        var grabPoint: Vec3
+        var grabPlaneNormal: Vec3
+        var moved = false
+        var targets: [VertexID]
+    }
+
+    private var gesture = Gesture.idle
+    private let tapSlop: Float = 10
+    private var statsCache: (version: UInt64, stats: MeshStatistics)?
+
+    public init(name: String = "Untitled") {
+        self.name = name
+        createdAt = Date()
+    }
+
+    private func notify() { onChange?() }
+
+    public func say(_ text: String, kind: EngineMessage.Kind = .info) {
+        message = EngineMessage(text, kind: kind)
+        notify()
+    }
+
+    public func clearMessage() {
+        message = nil
+        notify()
+    }
+
+    public var statistics: MeshStatistics {
+        if let cache = statsCache, cache.version == mesh.topologyVersion { return cache.stats }
+        let stats = MeshStatistics(mesh)
+        statsCache = (mesh.topologyVersion, stats)
+        return stats
+    }
+
+    public var canUndo: Bool { history.canUndo }
+    public var canRedo: Bool { history.canRedo }
+    public var hasSurface: Bool { !(projector?.isEmpty ?? true) }
+    private var activeProjector: SurfaceProjector? { tools.surfaceSnapping ? projector : nil }
+
+    // MARK: Sources
+
+    /// Builds what's needed to query an object. Slow for dense meshes, so call it off the main thread.
+    public static func buildBVHs(for objects: [SourceObject], isCancelled: () -> Bool = { false }) -> [UUID: TriangleBVH] {
+        var out: [UUID: TriangleBVH] = [:]
+        for object in objects {
+            if isCancelled() { return out }
+            if let bvh = TriangleBVH(object: object, isCancelled: isCancelled) { out[object.id] = bvh }
+        }
+        return out
+    }
+
+    /// Adds imported objects. On a project's first model, this also sets scale-aware tool defaults.
+    public func addSources(_ objects: [SourceObject], bvhs built: [UUID: TriangleBVH], frame: Bool = true) {
+        let isFirst = sources.isEmpty
+        sources.append(contentsOf: objects)
+        bvhs.merge(built) { _, new in new }
+        rebuildProjector()
+        if isFirst { applyScaleDefaults() }
+        updateCameraScale()
+        if frame { frameAll() }
+        onEvent?(.modelImported)
+        notify()
+    }
+
+    /// Installs objects loaded from a saved project, keeping the settings saved with them.
+    public func installLoadedBVHs(_ built: [UUID: TriangleBVH]) {
+        bvhs = built
+        rebuildProjector()
+        notify()
+    }
+
+    public func removeSource(id: UUID) {
+        sources.removeAll { $0.id == id }
+        bvhs[id] = nil
+        rebuildProjector()
+        editGeneration &+= 1
+        notify()
+    }
+
+    public func setSourceVisible(id: UUID, _ visible: Bool) {
+        guard let i = sources.firstIndex(where: { $0.id == id }) else { return }
+        sources[i].isVisible = visible
+        editGeneration &+= 1
+        notify()
+    }
+
+    public func setSourceSnapTarget(id: UUID, _ available: Bool) {
+        guard let i = sources.firstIndex(where: { $0.id == id }) else { return }
+        sources[i].isSnapTarget = available
+        rebuildProjector()
+        editGeneration &+= 1
+        notify()
+    }
+
+    public var sourceBounds: AABB {
+        var box = AABB.empty
+        for bvh in bvhs.values where bvh.triangleCount > 0 { box.grow(bvh.bounds) }
+        return box
+    }
+
+    public var sceneBounds: AABB {
+        var box = sourceBounds
+        if !mesh.isEmpty { box.grow(mesh.bounds) }
+        return box
+    }
+
+    private func rebuildProjector() {
+        let active = sources.filter(\.isSnapTarget).compactMap { bvhs[$0.id] }
+        projector = active.isEmpty ? nil : SurfaceProjector(bvhs: active, surfaceOffset: tools.surfaceOffset)
+    }
+
+    /// A sensible starting scale, based on the model: all these stay editable afterward.
+    private func applyScaleDefaults() {
+        let box = sourceBounds
+        let diagonal = max(box.diagonal, 1e-4)
+        tools.stroke.edgeLength = diagonal * 0.02
+        tools.strip.width = diagonal * 0.05
+        tools.strip.vertexSpacing = diagonal * 0.02
+        tools.extrudeDistance = diagonal * 0.02
+        tools.surfaceOffset = diagonal * 0.0005
+        symmetry.centerTolerance = diagonal * 0.003
+        symmetry.plane.axis = .x
+        // A model centered near zero mirrors about zero, which is what most exporters intend.
+        symmetry.plane.offset = abs(box.center.x) < diagonal * 0.01 ? 0 : box.center.x
+        projector?.surfaceOffset = tools.surfaceOffset
+    }
+
+    private func updateCameraScale() {
+        camera.sceneRadius = max(sceneBounds.diagonal * 0.5, 1e-3)
+    }
+
+    public func setSurfaceOffset(_ offset: Float) {
+        tools.surfaceOffset = offset
+        projector?.surfaceOffset = offset
+        editGeneration &+= 1
+        notify()
+    }
+
+    // MARK: Camera commands
+
+    public func frameAll() {
+        let box = sceneBounds
+        guard !box.isEmpty else { return }
+        camera.sceneRadius = max(box.diagonal * 0.5, 1e-3)
+        camera.frame(box)
+        notify()
+    }
+
+    public func frameSelection() {
+        let box = selection.bounds(in: mesh)
+        guard !box.isEmpty else {
+            frameAll()
+            return
+        }
+        // A single vertex has no size, so give it some surroundings.
+        let padded = box.diagonal > 1e-5 ? box : box.expanded(by: max(sceneBounds.diagonal * 0.05, 1e-3))
+        camera.frame(padded, padding: 1.6)
+        notify()
+    }
+
+    public func setProjection(_ mode: ProjectionMode) {
+        camera.projection = mode
+        notify()
+    }
+
+    public func cameraChanged() { notify() }
+
+    // MARK: Tools
+
+    public func setTool(_ tool: Tool) {
+        guard tool != activeTool else { return }
+        settlePending()
+        cancelFaceBuilder()
+        if tool != .quadPatch { clearPatchPicks() }
+        activeTool = tool
+        hoverElement = nil
+        rebuildOverlay()
+        notify()
+    }
+
+    private func settlePending() {
+        if pendingStroke != nil { commitPendingStroke(close: false) }
+        if pendingStrip != nil { commitPendingStrip() }
+    }
+
+    public func setSelectionMode(_ mode: SelectionMode) {
+        guard mode != selection.mode else { return }
+        // Convert what's selected rather than dropping it, so that switching modes loses nothing.
+        let touched = selection.touchedVertices(in: mesh)
+        var next = Selection()
+        next.mode = mode
+        SelectionTools.select(vertices: touched, in: mesh, mode: mode, into: &next, additive: true)
+        selection = next
+        notify()
+    }
+
+    public func setIssueHighlight(_ issue: MeshIssue?) {
+        issueHighlight = issue
+        notify()
+    }
+
+    public func selectIssue(_ issue: MeshIssue) {
+        var next = Selection()
+        if !issue.faces.isEmpty {
+            next.mode = .face
+            next.faces = issue.faces
+        } else if !issue.edges.isEmpty {
+            next.mode = .edge
+            next.edges = issue.edges
+        } else {
+            next.mode = .vertex
+            next.vertices = issue.vertices
+        }
+        next.prune(in: mesh)
+        selection = next
+        activeTool = .select
+        notify()
+    }
+
+    // MARK: Transactions
+
+    /// Runs an edit on a copy. Success commits it as one undo step; a throw shows the reason and
+    /// leaves the mesh and selection exactly as they were.
+    @discardableResult
+    public func perform(_ label: String, _ body: (inout Mesh, inout Selection) throws -> Void) -> Bool {
+        var nextMesh = mesh
+        var nextSelection = selection
+        do {
+            try body(&nextMesh, &nextSelection)
+        } catch {
+            say(error.localizedDescription, kind: .error)
+            return false
+        }
+        commit(label: label, mesh: nextMesh, selection: nextSelection)
+        return true
+    }
+
+    private func commit(label: String, mesh nextMesh: Mesh, selection nextSelection: Selection) {
+        history.record(before: EditSnapshot(mesh: mesh, selection: selection), label: label)
+        var finalMesh = nextMesh
+        if let plane = symmetry.activePlane { repairPairs(&finalMesh, plane: plane) }
+        mesh = finalMesh
+        selection = nextSelection
+        selection.prune(in: mesh)
+        didEdit()
+    }
+
+    private func repairPairs(_ target: inout Mesh, plane: MirrorPlane) {
+        let tolerance = max(symmetry.centerTolerance * 2, target.averageEdgeLength * 0.3)
+        Symmetry.repairPairs(in: &target, plane: plane, centerTolerance: symmetry.centerTolerance, pairingTolerance: tolerance)
+    }
+
+    private func didEdit() {
+        editGeneration &+= 1
+        refreshPatchChains()
+        issueHighlight = nil
+        rebuildOverlay()
+        notify()
+    }
+
+    public func undo() {
+        cancelTransientState()
+        guard let snapshot = history.undo(current: EditSnapshot(mesh: mesh, selection: selection)) else { return }
+        restore(snapshot)
+        say("Undid \(history.redoLabel ?? "edit")")
+    }
+
+    public func redo() {
+        cancelTransientState()
+        guard let snapshot = history.redo(current: EditSnapshot(mesh: mesh, selection: selection)) else { return }
+        restore(snapshot)
+        say("Redid \(history.undoLabel ?? "edit")")
+    }
+
+    private func restore(_ snapshot: EditSnapshot) {
+        mesh = snapshot.mesh
+        // Versions must move forward even when restoring older content, or the renderer keeps stale buffers.
+        mesh.positionVersion = max(mesh.positionVersion, snapshotVersionFloor.0) &+ 1
+        mesh.topologyVersion = max(mesh.topologyVersion, snapshotVersionFloor.1) &+ 1
+        snapshotVersionFloor = (mesh.positionVersion, mesh.topologyVersion)
+        selection = snapshot.selection
+        didEdit()
+    }
+
+    private var snapshotVersionFloor: (UInt64, UInt64) = (0, 0)
+
+    private func cancelTransientState() {
+        pendingStroke = nil
+        pendingStrip = nil
+        faceCorners = []
+        gesture = .idle
+        inkPath = []
+        inkPrediction = []
+        lassoPath = []
+        snapshotVersionFloor = (max(snapshotVersionFloor.0, mesh.positionVersion), max(snapshotVersionFloor.1, mesh.topologyVersion))
+    }
+
+    // MARK: Pencil input
+
+    public var minimumStrokeLength: Float { 8 }
+
+    public func pencilBegan(at screen: Vec2, pressure: Float = 1) {
+        hoverElement = nil
+        switch activeTool {
+        case .drawEdges, .edgeLoop, .quadStrip, .quadPatch:
+            guard let projector else {
+                if sources.isEmpty {
+                    say("Import a model first, then draw on its surface.")
+                } else {
+                    say("The surface is still being prepared.")
+                }
+                gesture = .idle
+                return
+            }
+            settlePending()
+            var capture = StrokeCapture(camera: camera, projector: projector)
+            capture.add(screen: screen, pressure: pressure)
+            gesture = .stroke(capture)
+            inkPath = [screen]
+        case .select:
+            beginSelectGesture(at: screen)
+        case .face:
+            gesture = .tapOnly(start: screen)
+        case .moveBrush, .relaxBrush:
+            let before = EditSnapshot(mesh: mesh, selection: selection)
+            let label = activeTool == .moveBrush ? "Move brush" : "Relax brush"
+            gesture = .brush(before: before, lastHit: nil, label: label)
+            brushCursor = screen
+            applyBrush(at: screen, pressure: pressure)
+        case .erase:
+            gesture = .erase(before: EditSnapshot(mesh: mesh, selection: selection), changed: false)
+            brushCursor = screen
+            eraseAt(screen)
+        }
+        notify()
+    }
+
+    public func pencilMoved(to screen: Vec2, pressure: Float = 1, predicted: [Vec2] = []) {
+        switch gesture {
+        case .idle, .tapOnly:
+            break
+        case .stroke(var capture):
+            capture.add(screen: screen, pressure: pressure)
+            gesture = .stroke(capture)
+            inkPath = capture.screenPath
+            inkPrediction = predicted
+            updateLiveMirrorOverlay(capture)
+        case .select(var drag):
+            updateSelectDrag(&drag, to: screen)
+            gesture = .select(drag)
+        case .lasso(var points):
+            if let last = points.last, simd_length(last - screen) < 2 { break }
+            points.append(screen)
+            gesture = .lasso(points)
+            lassoPath = points
+        case .brush:
+            brushCursor = screen
+            applyBrush(at: screen, pressure: pressure)
+        case .erase:
+            brushCursor = screen
+            eraseAt(screen)
+        }
+        notify()
+    }
+
+    public func pencilEnded(at screen: Vec2, pressure: Float = 1) {
+        let finished = gesture
+        gesture = .idle
+        inkPrediction = []
+        switch finished {
+        case .idle:
+            break
+        case .tapOnly(let start):
+            if activeTool == .face { faceToolTap(at: start) }
+        case .stroke(var capture):
+            capture.add(screen: screen, pressure: pressure)
+            inkPath = []
+            finishStroke(capture, tapPoint: screen)
+        case .select(let drag):
+            finishSelectDrag(drag, at: screen)
+        case .lasso(let points):
+            lassoPath = []
+            finishLasso(points, tapPoint: screen)
+        case .brush(let before, _, let label):
+            brushCursor = nil
+            history.record(before: before, label: label)
+            didEdit()
+            if label == "Move brush" { onEvent?(.vertexMoved) }
+        case .erase(let before, let changed):
+            brushCursor = nil
+            if changed {
+                history.record(before: before, label: "Erase")
+                didEdit()
+            }
+        }
+        rebuildOverlay()
+        notify()
+    }
+
+    public func pencilCancelled() {
+        switch gesture {
+        case .brush(let before, _, _), .erase(let before, _):
+            mesh = before.mesh
+            selection = before.selection
+            mesh.positionVersion = max(mesh.positionVersion, snapshotVersionFloor.0) &+ 1
+            mesh.topologyVersion = max(mesh.topologyVersion, snapshotVersionFloor.1) &+ 1
+        case .select(let drag):
+            if drag.moved {
+                var restored = mesh
+                restored.setPositions(drag.basePositions.map { ($0.key, $0.value) })
+                mesh = restored
+            }
+        default:
+            break
+        }
+        gesture = .idle
+        inkPath = []
+        inkPrediction = []
+        lassoPath = []
+        brushCursor = nil
+        rebuildOverlay()
+        notify()
+    }
+
+    /// Pencil or pointer hover, for highlighting what a tap would hit. Nil when it leaves.
+    public func hover(at screen: Vec2?) {
+        hoverPoint = screen
+        if activeTool.isBrush { brushCursor = screen }
+        guard let screen else {
+            hoverElement = nil
+            notify()
+            return
+        }
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        switch activeTool {
+        case .select:
+            hoverElement = picker.pick(at: screen, mode: selection.mode, radius: pickRadius)
+        case .quadPatch:
+            hoverElement = picker.pickEdge(at: screen, radius: pickRadius).map { .edge($0.0, t: $0.t) }
+        case .face, .drawEdges, .edgeLoop, .quadStrip:
+            hoverElement = picker.pickVertex(at: screen, radius: tools.stroke.snapRadiusPoints).map { .vertex($0) }
+        default:
+            hoverElement = nil
+        }
+        notify()
+    }
+
+    private var pickRadius: Float { 24 }
+
+    // MARK: Stroke handling
+
+    private func finishStroke(_ capture: StrokeCapture, tapPoint: Vec2) {
+        overlay.mirrorEdges = []
+        if capture.screenLength < minimumStrokeLength {
+            if activeTool == .quadPatch {
+                patchTap(at: tapPoint)
+            } else {
+                say("Draw a longer line to make edges. Very short strokes are ignored so that stray touches don't add topology.")
+            }
+            return
+        }
+        guard let projector else { return }
+        let runs = capture.usableRuns
+        guard !runs.isEmpty else {
+            say("That stroke missed the model, so nothing was added.", kind: .warning)
+            return
+        }
+
+        let settings = tools.stroke
+        let midpoint = runs[0][runs[0].count / 2].position
+        let scale = camera.worldPerPoint(at: midpoint)
+        let closeRadius = settings.closeRadiusPoints * scale
+        var paths: [ProcessedPath] = []
+        for run in runs {
+            if let path = StrokeProcessor.process(run: run, settings: settings, projector: projector, closeRadius: closeRadius) {
+                paths.append(path)
+            }
+        }
+        guard !paths.isEmpty else {
+            say("That stroke was too short to make an edge.", kind: .warning)
+            return
+        }
+        let broken = paths.count > 1 || capture.hasGaps
+
+        if activeTool == .quadStrip {
+            // Long enough parts of a broken stroke would all compete for the strip, so use the longest.
+            let longest = paths.max { $0.length < $1.length }!
+            startStrip(path: longest, broken: paths.count > 1)
+            return
+        }
+
+        let options = strokeOptions(scale: scale)
+        var plans = paths.map { path -> StrokePlan in
+            StrokePlanner.plan(path: prepared(path), mesh: mesh, options: options)
+        }
+
+        if activeTool == .edgeLoop {
+            guard paths.count == 1 else {
+                pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: false, closedPlan: nil, note: "The stroke crossed a gap in the surface, so the loop is incomplete. Commit these parts and bridge the gap with another stroke, or cancel and try a different view.")
+                return
+            }
+            if paths[0].canClose {
+                let closed = StrokeProcessor.closed(paths[0], spacing: settings.edgeLength)
+                let plan = StrokePlanner.plan(path: prepared(closed), mesh: mesh, options: options)
+                apply(plans: [plan], label: "Draw loop", event: .loopClosed)
+                return
+            }
+            pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: true, closedPlan: closedPlan(paths[0], options: options), note: "The ends are too far apart to close this loop without guessing. Commit it open, close it anyway with a straight edge, or cancel.")
+            return
+        }
+
+        if activeTool == .quadPatch {
+            let result = apply(plans: plans, label: "Draw chain", event: .strokeCommitted)
+            if let result, let first = result.edges.first, let chain = ChainFinder.chain(through: first, in: mesh) {
+                addPatchChain(chain)
+            }
+            return
+        }
+
+        if paths.count == 1 && paths[0].canClose {
+            pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: true, closedPlan: closedPlan(paths[0], options: options), note: nil)
+            return
+        }
+        let overFaces = plans.contains(where: \.droppedOverFaces)
+        if broken {
+            pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: false, closedPlan: nil, note: "The stroke crossed a gap in the surface and broke into \(paths.count) parts. Nothing fills the gap automatically.")
+            return
+        }
+        if overFaces {
+            pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: false, closedPlan: nil, note: plans[0].plan.notes.first)
+            return
+        }
+        plans.removeAll { $0.plan.isEmpty }
+        apply(plans: plans, label: "Draw edges", event: .strokeCommitted)
+    }
+
+    private func closedPlan(_ path: ProcessedPath, options: StrokePlanOptions) -> StrokePlan {
+        StrokePlanner.plan(path: prepared(StrokeProcessor.closed(path, spacing: tools.stroke.edgeLength)), mesh: mesh, options: options)
+    }
+
+    private func strokeOptions(scale: Float) -> StrokePlanOptions {
+        var options = StrokePlanOptions(snapRadius: tools.stroke.snapRadiusPoints * scale, crossingTolerance: max(5 * scale, tools.stroke.edgeLength * 0.15), projector: projector)
+        options.surfaceOffset = projector?.surfaceOffset ?? 0
+        return options
+    }
+
+    /// Under symmetry, gives the path an exact vertex where it crosses the plane: the mirrored stroke
+    /// then shares it, with no doubled center vertices.
+    private func prepared(_ path: ProcessedPath) -> ProcessedPath {
+        guard let plane = symmetry.activePlane else { return path }
+        var points: [StrokePoint] = []
+        let n = path.points.count
+        let tolerance = symmetry.centerTolerance
+        let count = path.isClosed ? n : n - 1
+        for i in 0..<count {
+            let a = path.points[i], b = path.points[(i + 1) % n]
+            points.append(a)
+            let da = plane.signedDistance(a.position), db = plane.signedDistance(b.position)
+            if da * db < 0 && abs(da) > tolerance && abs(db) > tolerance {
+                let t = da / (da - db)
+                var crossing = a
+                crossing.position = plane.snap(simd_mix(a.position, b.position, Vec3(repeating: t)))
+                crossing.normal = GeometryMath.safeNormalize(simd_mix(a.normal, b.normal, Vec3(repeating: t)), fallback: a.normal)
+                points.append(crossing)
+            }
+        }
+        if !path.isClosed { points.append(path.points[n - 1]) }
+        var out = path
+        out.points = points
+        return out
+    }
+
+    @discardableResult
+    private func apply(plans: [StrokePlan], label: String, event: EngineEvent) -> PlanResult? {
+        let usable = plans.filter { !$0.plan.isEmpty }
+        guard !usable.isEmpty else {
+            say("Nothing to add: that stroke lay entirely over existing faces.", kind: .warning)
+            return nil
+        }
+        var total = PlanResult()
+        let ok = perform(label) { mesh, selection in
+            for plan in usable {
+                let result = try PlanApplier.apply(plan.plan, to: &mesh, symmetry: symmetry, projector: projector)
+                total.edges += result.edges
+                total.faces += result.faces
+                total.vertices += result.vertices
+            }
+            selection.clear()
+        }
+        guard ok else { return nil }
+        let notes = usable.flatMap(\.plan.notes)
+        if !notes.isEmpty { say(notes.joined(separator: " ")) }
+        onEvent?(event)
+        return total
+    }
+
+    public func commitPendingStroke(close: Bool) {
+        guard let pending = pendingStroke else { return }
+        pendingStroke = nil
+        if close, let closed = pending.closedPlan {
+            apply(plans: [closed], label: "Draw loop", event: .loopClosed)
+        } else {
+            apply(plans: pending.plans, label: "Draw edges", event: .strokeCommitted)
+        }
+        rebuildOverlay()
+        notify()
+    }
+
+    public func cancelPending() {
+        pendingStroke = nil
+        pendingStrip = nil
+        rebuildOverlay()
+        notify()
+    }
+
+    // MARK: Quad strip
+
+    private func startStrip(path: ProcessedPath, broken: Bool) {
+        var working = path
+        var clipped = false
+        if let plane = symmetry.activePlane {
+            let clippedPath = clipToStartSide(path, plane: plane)
+            clipped = clippedPath.points.count != path.points.count
+            working = clippedPath
+        }
+        pendingStrip = PendingStrip(path: working, clippedAtCenterline: clipped)
+        rebuildStripPlan()
+        if broken { say("The stroke crossed a gap in the surface, so this uses its longest part.", kind: .warning) }
+    }
+
+    /// Keeps the part of a path before it first crosses the plane, ending exactly on the plane.
+    private func clipToStartSide(_ path: ProcessedPath, plane: MirrorPlane) -> ProcessedPath {
+        guard path.points.count >= 2 else { return path }
+        let startSign = plane.signedDistance(path.points[0].position)
+        var points = [path.points[0]]
+        for i in 1..<path.points.count {
+            let p = path.points[i]
+            let d = plane.signedDistance(p.position)
+            if d * startSign < 0 {
+                let prev = path.points[i - 1]
+                let dPrev = plane.signedDistance(prev.position)
+                let t = dPrev / (dPrev - d)
+                var crossing = prev
+                crossing.position = plane.snap(simd_mix(prev.position, p.position, Vec3(repeating: t)))
+                points.append(crossing)
+                var out = path
+                out.points = points
+                out.length = StrokeProcessor.polylineLength(points)
+                out.canClose = false
+                out.isClosed = false
+                return out
+            }
+            points.append(p)
+        }
+        return path
+    }
+
+    /// Re-evaluates the pending strip with the current parameters, so sliders preview live.
+    public func rebuildStripPlan() {
+        guard var pending = pendingStrip else { return }
+        let scale = camera.worldPerPoint(at: pending.path.points[pending.path.points.count / 2].position)
+        do {
+            var plan = try QuadStripBuilder.plan(path: pending.path, parameters: tools.strip, mesh: mesh, projector: projector, snapRadius: tools.stroke.snapRadiusPoints * scale)
+            if pending.clippedAtCenterline, let plane = symmetry.activePlane {
+                // The final cross-section lies on the plane so that the mirrored half meets it there.
+                let stride = max(1, tools.strip.crossSegments) + 1
+                let columns = plan.nodes.count / stride
+                for k in 0..<stride {
+                    let index = (columns - 1) * stride + k
+                    if case .new(let p, let n) = plan.nodes[index] {
+                        plan.nodes[index] = .new(position: plane.snap(p), normal: n)
+                    }
+                }
+                plan.notes.append("The strip stops at the symmetry plane, and its mirror image completes it.")
+            }
+            pending.plan = plan
+            pending.error = nil
+        } catch {
+            pending.plan = nil
+            pending.error = error.localizedDescription
+        }
+        pendingStrip = pending
+        rebuildOverlay()
+        notify()
+    }
+
+    public func commitPendingStrip() {
+        guard let pending = pendingStrip else { return }
+        pendingStrip = nil
+        guard let plan = pending.plan else {
+            if let error = pending.error { say(error, kind: .error) }
+            rebuildOverlay()
+            notify()
+            return
+        }
+        let ok = perform("Quad strip") { mesh, selection in
+            let result = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
+            selection.clear()
+            selection.mode = .face
+            selection.faces = Set(result.faces)
+        }
+        if ok {
+            if !plan.notes.isEmpty { say(plan.notes.joined(separator: " ")) }
+            onEvent?(.facesGenerated)
+        }
+    }
+
+    // MARK: Quad patch
+
+    /// Picks the chain under the Pencil, or unpicks it when it's already picked.
+    public func patchTap(at screen: Vec2) {
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        guard let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius) else {
+            say("Tap an edge to use its chain as a side of the patch, or draw a new one.")
+            return
+        }
+        if let i = patchChains.firstIndex(where: { $0.edges.contains(edge) }) {
+            patchChains.remove(at: i)
+            updatePatchPreview()
+            return
+        }
+        guard let chain = ChainFinder.chain(through: edge, in: mesh) else {
+            say("This edge already has a face on both sides, so a patch can't attach to it.", kind: .warning)
+            return
+        }
+        addPatchChain(chain)
+    }
+
+    public func addPatchChain(_ chain: BoundaryChain) {
+        guard patchChains.count < 4 else {
+            say("A patch has at most four sides. Tap a chain to remove it first.", kind: .warning)
+            return
+        }
+        if patchChains.contains(where: { !Set($0.edges).isDisjoint(with: chain.edges) }) { return }
+        patchChains.append(chain)
+        updatePatchPreview()
+    }
+
+    /// Uses the selected edges as one patch side.
+    public func addPatchChainFromSelection() {
+        guard let chain = ChainFinder.chain(from: selection.edges, in: mesh) else {
+            say("The selected edges don't form a single connected chain.", kind: .warning)
+            return
+        }
+        addPatchChain(chain)
+    }
+
+    public func clearPatchPicks() {
+        patchChains = []
+        patchPreview = nil
+        patchError = nil
+        rebuildOverlay()
+    }
+
+    public func updatePatchPreview() {
+        patchPreview = nil
+        patchError = nil
+        if patchChains.isEmpty {
+            rebuildOverlay()
+            notify()
+            return
+        }
+        if patchChains.count == 1 && !patchChains[0].isClosed {
+            patchError = nil
+            rebuildOverlay()
+            notify()
+            return
+        }
+        do {
+            patchPreview = try QuadPatchBuilder.plan(chains: patchChains, parameters: tools.patch, mesh: mesh, projector: projector)
+        } catch {
+            patchError = error.localizedDescription
+        }
+        rebuildOverlay()
+        notify()
+    }
+
+    public func commitPatch() {
+        guard let preview = patchPreview else {
+            if let patchError { say(patchError, kind: .error) }
+            return
+        }
+        let ok = perform("Quad patch") { mesh, selection in
+            let result = try PlanApplier.apply(preview.plan, to: &mesh, symmetry: symmetry, projector: projector)
+            selection.clear()
+            selection.mode = .face
+            selection.faces = Set(result.faces)
+        }
+        guard ok else { return }
+        if !preview.plan.notes.isEmpty { say(preview.plan.notes.joined(separator: " ")) }
+        patchChains = []
+        patchPreview = nil
+        patchError = nil
+        rebuildOverlay()
+        onEvent?(.facesGenerated)
+        notify()
+    }
+
+    private func refreshPatchChains() {
+        guard !patchChains.isEmpty else { return }
+        var refreshed: [BoundaryChain] = []
+        for chain in patchChains {
+            if let edge = chain.edges.first(where: mesh.isEdgeAlive), let updated = ChainFinder.chain(through: edge, in: mesh) {
+                refreshed.append(updated)
+            }
+        }
+        patchChains = refreshed
+        updatePatchPreview()
+    }
+
+    // MARK: Manual faces
+
+    /// Pencil taps build a face: on an existing vertex, an edge, or empty surface.
+    public func faceToolTap(at screen: Vec2) {
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        let corner: FaceCorner
+        if let v = picker.pickVertex(at: screen, radius: tools.stroke.snapRadiusPoints) {
+            if faceCorners.first == .vertex(v), faceCorners.count >= 3 {
+                commitFaceBuilder()
+                return
+            }
+            guard !faceCorners.contains(.vertex(v)) else {
+                say("That vertex is already part of this face.", kind: .warning)
+                return
+            }
+            corner = .vertex(v)
+        } else if let (e, t) = picker.pickEdge(at: screen, radius: tools.stroke.snapRadiusPoints * 0.6), t > 0.1, t < 0.9, mesh.faceCountOf(edge: e) < 2 {
+            let (a, b) = mesh.ends(e)
+            corner = .edgePoint(e, t: t, position: simd_mix(mesh.position(a), mesh.position(b), Vec3(repeating: t)))
+        } else if let hit = projector?.raycast(camera.ray(through: screen)) {
+            // Close to the first corner counts as closing the face, even if it's a new vertex.
+            if faceCorners.count >= 3, let first = cornerPosition(faceCorners[0]),
+               let projected = camera.project(first), simd_length(projected.screen - screen) < tools.stroke.snapRadiusPoints {
+                commitFaceBuilder()
+                return
+            }
+            corner = .surface(position: hit.offsetPosition(tools.surfaceOffset), normal: hit.normal)
+        } else {
+            say("Tap on the model or on existing vertices to build a face.")
+            return
+        }
+        faceCorners.append(corner)
+        if faceCorners.count == 4 {
+            commitFaceBuilder()
+        } else {
+            rebuildOverlay()
+            notify()
+        }
+    }
+
+    private func cornerPosition(_ corner: FaceCorner) -> Vec3? {
+        switch corner {
+        case .vertex(let v): return mesh.isVertexAlive(v) ? mesh.position(v) : nil
+        case .edgePoint(_, _, let p): return p
+        case .surface(let p, _): return p
+        }
+    }
+
+    public func commitFaceBuilder() {
+        guard faceCorners.count >= 3 else {
+            say("A face needs at least three corners.", kind: .warning)
+            return
+        }
+        var plan = TopologyPlan()
+        var points: [Vec3] = []
+        for corner in faceCorners {
+            switch corner {
+            case .vertex(let v):
+                plan.nodes.append(.existing(v))
+                points.append(mesh.position(v))
+            case .edgePoint(let e, let t, let p):
+                plan.nodes.append(.split(edge: e, t: t, position: p))
+                points.append(p)
+            case .surface(let p, let n):
+                plan.nodes.append(.new(position: p, normal: n))
+                points.append(p)
+            }
+        }
+        var loop = Array(0..<Int32(faceCorners.count))
+        loop = orient(loop, points: points)
+        plan.faces = [loop]
+        faceCorners = []
+        let ok = perform("Add face") { mesh, selection in
+            let result = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
+            selection.clear()
+            selection.mode = .face
+            selection.faces = Set(result.faces)
+        }
+        if ok { onEvent?(.facesGenerated) }
+    }
+
+    /// Winds a loop to face out of the surface when there's a surface to ask.
+    private func orient(_ loop: [Int32], points: [Vec3]) -> [Int32] {
+        guard let projector, !projector.isEmpty else { return loop }
+        let center = points.reduce(Vec3(repeating: 0), +) / Float(points.count)
+        guard let hit = projector.closest(to: center) else { return loop }
+        return simd_dot(GeometryMath.newellNormal(points), hit.normal) < 0 ? loop.reversed() : loop
+    }
+
+    public func cancelFaceBuilder() {
+        guard !faceCorners.isEmpty else { return }
+        faceCorners = []
+        rebuildOverlay()
+        notify()
+    }
+
+    public func undoFaceCorner() {
+        guard !faceCorners.isEmpty else { return }
+        faceCorners.removeLast()
+        rebuildOverlay()
+        notify()
+    }
+
+    // MARK: Selection gestures
+
+    private func beginSelectGesture(at screen: Vec2) {
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        let hit = picker.pick(at: screen, mode: selection.mode, radius: pickRadius)
+        guard let hit else {
+            gesture = .lasso([screen])
+            lassoPath = [screen]
+            return
+        }
+        var grab = Vec3(repeating: 0)
+        switch hit {
+        case .vertex(let v): grab = mesh.position(v)
+        case .edge(let e, let t):
+            let (a, b) = mesh.ends(e)
+            grab = simd_mix(mesh.position(a), mesh.position(b), Vec3(repeating: t))
+        case .face(let f): grab = mesh.faceCenter(f)
+        }
+        gesture = .select(SelectDrag(
+            start: screen,
+            startedOn: hit,
+            before: EditSnapshot(mesh: mesh, selection: selection),
+            basePositions: [:],
+            grabPoint: grab,
+            grabPlaneNormal: camera.forward,
+            targets: []
+        ))
+    }
+
+    private func isSelected(_ element: PickedElement) -> Bool {
+        switch element {
+        case .vertex(let v): return selection.vertices.contains(v)
+        case .edge(let e, _): return selection.edges.contains(e)
+        case .face(let f): return selection.faces.contains(f)
+        }
+    }
+
+    private func applyPick(_ element: PickedElement) {
+        var next = selection
+        func change<T: Hashable>(_ set: inout Set<T>, _ item: T) {
+            switch selectionOperation {
+            case .replace:
+                set = [item]
+            case .add:
+                set.insert(item)
+            case .remove:
+                set.remove(item)
+            }
+        }
+        if selectionOperation == .replace {
+            next.vertices.removeAll()
+            next.edges.removeAll()
+            next.faces.removeAll()
+        }
+        switch element {
+        case .vertex(let v): change(&next.vertices, v)
+        case .edge(let e, _): change(&next.edges, e)
+        case .face(let f): change(&next.faces, f)
+        }
+        selection = next
+    }
+
+    private func updateSelectDrag(_ drag: inout SelectDrag, to screen: Vec2) {
+        guard let startedOn = drag.startedOn else { return }
+        if !drag.moved {
+            guard simd_length(screen - drag.start) > tapSlop else { return }
+            // Dragging something unselected selects it first, then moves it.
+            if !isSelected(startedOn) {
+                let saved = selectionOperation
+                if selectionOperation == .remove { selectionOperation = .replace }
+                applyPick(startedOn)
+                selectionOperation = saved
+                drag.before.selection = drag.before.selection
+            }
+            let touched = selection.touchedVertices(in: mesh)
+            let expanded = symmetry.isEnabled ? Symmetry.expanded(vertices: touched, in: mesh) : touched
+            drag.targets = expanded.sorted()
+            drag.basePositions = Dictionary(uniqueKeysWithValues: drag.targets.map { ($0, mesh.position($0)) })
+            drag.moved = true
+        }
+        switch dragBehavior {
+        case .move:
+            dragMove(drag, to: screen)
+        case .slide:
+            dragSlide(drag, to: screen)
+        }
+    }
+
+    private func dragMove(_ drag: SelectDrag, to screen: Vec2) {
+        let ray = camera.ray(through: screen)
+        var delta: Vec3
+        var surfaceHit: SurfaceHit?
+        if let projector = activeProjector, let hit = projector.raycast(ray) {
+            surfaceHit = hit
+            delta = hit.offsetPosition(projector.surfaceOffset) - drag.grabPoint
+        } else {
+            // Off the model, or snapping is off: move in the plane facing the camera.
+            let denom = simd_dot(ray.direction, drag.grabPlaneNormal)
+            guard abs(denom) > 1e-5 else { return }
+            let t = simd_dot(drag.grabPoint - ray.origin, drag.grabPlaneNormal) / denom
+            delta = ray.at(t) - drag.grabPoint
+            if activeProjector != nil { return }
+        }
+        // Only the side being dragged is driven directly; the other side mirrors it.
+        var primary = drag.targets
+        if symmetry.isEnabled {
+            let grabbed = selection.touchedVertices(in: mesh)
+            primary = drag.targets.filter { grabbed.contains($0) }
+        }
+        var updates: [(VertexID, Vec3)] = []
+        updates.reserveCapacity(primary.count)
+        let single = primary.count == 1
+        for v in primary {
+            guard let base = drag.basePositions[v] else { continue }
+            var target = base + delta
+            if let projector = activeProjector {
+                if single, let surfaceHit {
+                    target = surfaceHit.offsetPosition(projector.surfaceOffset)
+                } else {
+                    let hint = mesh.vertexNormal(v)
+                    target = projector.project(target, normalHint: simd_length_squared(hint) > 0 ? hint : surfaceHit?.normal)?.position ?? target
+                }
+            }
+            updates.append((v, target))
+        }
+        Brushes.apply(updates, to: &mesh, projector: activeProjector, symmetry: symmetry, radius: max(sceneBounds.diagonal * 0.05, 1e-3))
+    }
+
+    /// Each vertex follows whichever connected edge best matches the drag on screen, so a selected
+    /// edge loop slides as a loop, with its neighbours' spacing changing but not their connectivity.
+    private func dragSlide(_ drag: SelectDrag, to screen: Vec2) {
+        let dragVector = screen - drag.start
+        let length = simd_length(dragVector)
+        guard length > 0.5 else { return }
+        let direction = dragVector / length
+        let grabbed = selection.touchedVertices(in: mesh)
+        var updates: [(VertexID, Vec3)] = []
+        for v in grabbed.sorted() {
+            guard let base = drag.basePositions[v], let baseScreen = camera.project(base)?.screen else { continue }
+            var bestTarget: Vec3?
+            var bestScore: Float = 0.2
+            var bestScreenLength: Float = 1
+            for e in mesh.edgesOf(v) {
+                let other = mesh.otherEnd(e, from: v)
+                if grabbed.contains(other) { continue }
+                let p = drag.basePositions[other] ?? mesh.position(other)
+                guard let s = camera.project(p)?.screen else { continue }
+                let toOther = s - baseScreen
+                let screenLength = simd_length(toOther)
+                guard screenLength > 1e-3 else { continue }
+                let score = simd_dot(toOther / screenLength, direction)
+                if score > bestScore {
+                    bestScore = score
+                    bestTarget = p
+                    bestScreenLength = screenLength
+                }
+            }
+            guard let bestTarget else {
+                updates.append((v, base))
+                continue
+            }
+            let t = simd_clamp(length * bestScore / bestScreenLength, 0, 0.98)
+            let moved = simd_mix(base, bestTarget, Vec3(repeating: t))
+            updates.append((v, mesh.reprojected(moved, near: v, projector: activeProjector)))
+        }
+        Brushes.apply(updates, to: &mesh, projector: activeProjector, symmetry: symmetry, radius: max(sceneBounds.diagonal * 0.05, 1e-3))
+    }
+
+    private func finishSelectDrag(_ drag: SelectDrag, at screen: Vec2) {
+        if drag.moved {
+            history.record(before: drag.before, label: dragBehavior == .slide ? "Slide" : "Move")
+            editGeneration &+= 1
+            refreshPatchChains()
+            rebuildOverlay()
+            onEvent?(.vertexMoved)
+            return
+        }
+        if let element = drag.startedOn { applyPick(element) }
+    }
+
+    private func finishLasso(_ points: [Vec2], tapPoint: Vec2) {
+        var total: Float = 0
+        if points.count > 1 {
+            for i in 1..<points.count { total += simd_length(points[i] - points[i - 1]) }
+        }
+        if total < tapSlop {
+            if selectionOperation == .replace { selection.clear() }
+            return
+        }
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        let found = picker.select(inside: points, mode: selection.mode)
+        switch selectionOperation {
+        case .replace:
+            selection.clear()
+            selection.vertices = found.vertices
+            selection.edges = found.edges
+            selection.faces = found.faces
+        case .add:
+            selection.vertices.formUnion(found.vertices)
+            selection.edges.formUnion(found.edges)
+            selection.faces.formUnion(found.faces)
+        case .remove:
+            selection.vertices.subtract(found.vertices)
+            selection.edges.subtract(found.edges)
+            selection.faces.subtract(found.faces)
+        }
+    }
+
+    // MARK: Brushes
+
+    private func applyBrush(at screen: Vec2, pressure: Float) {
+        guard case .brush(let before, let lastHit, let label) = gesture else { return }
+        guard let projector, let hit = projector.raycast(camera.ray(through: screen)) else {
+            gesture = .brush(before: before, lastHit: nil, label: label)
+            return
+        }
+        let settings = tools.brush
+        let worldRadius = settings.radiusPoints * camera.worldPerPoint(at: hit.position)
+        let strength = settings.strength * (settings.usesPressure ? simd_clamp(pressure, 0.1, 1) : 1)
+        let stamp = BrushStamp(center: hit.position, worldRadius: worldRadius, strength: strength, normal: hit.normal)
+        if activeTool == .relaxBrush {
+            Brushes.relax(&mesh, stamp: stamp, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
+        } else if let lastHit {
+            Brushes.move(&mesh, stamp: stamp, delta: hit.position - lastHit.position, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
+        }
+        gesture = .brush(before: before, lastHit: hit, label: label)
+    }
+
+    private func eraseAt(_ screen: Vec2) {
+        guard case .erase(let before, let changedSoFar) = gesture else { return }
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        let radius = max(tools.brush.radiusPoints * 0.35, 12)
+        var changed = false
+        switch selection.mode {
+        case .face:
+            if let f = picker.pickFace(at: screen) {
+                let faces = symmetry.isEnabled ? Symmetry.expanded(faces: [f], in: mesh) : [f]
+                mesh.deleteFaces(faces)
+                changed = true
+            } else if let (e, _) = picker.pickEdge(at: screen, radius: radius), mesh.isWire(e) {
+                let edges = symmetry.isEnabled ? Symmetry.expanded(edges: [e], in: mesh) : [e]
+                mesh.deleteEdges(edges)
+                changed = true
+            }
+        case .edge:
+            if let (e, _) = picker.pickEdge(at: screen, radius: radius) {
+                let edges = symmetry.isEnabled ? Symmetry.expanded(edges: [e], in: mesh) : [e]
+                mesh.deleteEdges(edges)
+                changed = true
+            }
+        case .vertex:
+            if let v = picker.pickVertex(at: screen, radius: radius) {
+                let vertices = symmetry.isEnabled ? Symmetry.expanded(vertices: [v], in: mesh) : [v]
+                mesh.deleteVertices(vertices)
+                changed = true
+            }
+        }
+        if changed { selection.prune(in: mesh) }
+        gesture = .erase(before: before, changed: changedSoFar || changed)
+    }
+
+    // MARK: Selection commands
+
+    public func selectAll() {
+        var next = Selection()
+        next.mode = selection.mode
+        switch selection.mode {
+        case .vertex: next.vertices = Set(mesh.aliveVertices)
+        case .edge: next.edges = Set(mesh.aliveEdges)
+        case .face: next.faces = Set(mesh.aliveFaces)
+        }
+        selection = next
+        notify()
+    }
+
+    public func clearSelection() {
+        selection.clear()
+        notify()
+    }
+
+    public func selectEdgeLoop() {
+        guard !selection.edges.isEmpty else {
+            say("Select an edge first to extend it along its loop.")
+            return
+        }
+        var out = selection.edges
+        for e in selection.edges { out.formUnion(SelectionTools.edgeLoop(from: e, in: mesh)) }
+        selection.edges = out
+        notify()
+    }
+
+    public func selectEdgeRing() {
+        guard !selection.edges.isEmpty else {
+            say("Select an edge first to extend it across its ring.")
+            return
+        }
+        var out = selection.edges
+        for e in selection.edges { out.formUnion(SelectionTools.edgeRing(from: e, in: mesh)) }
+        selection.edges = out
+        notify()
+    }
+
+    public func selectConnected() {
+        let touched = selection.touchedVertices(in: mesh)
+        guard !touched.isEmpty else {
+            say("Select something first to grow it to its connected region.")
+            return
+        }
+        let connected = SelectionTools.connectedVertices(from: touched, in: mesh)
+        SelectionTools.select(vertices: connected, in: mesh, mode: selection.mode, into: &selection, additive: false)
+        notify()
+    }
+
+    public func selectBoundary() {
+        var next = Selection()
+        next.mode = .edge
+        next.edges = SelectionTools.boundaryEdges(in: mesh)
+        selection = next
+        notify()
+    }
+
+    // MARK: Edit commands
+
+    /// Under symmetry a command sees the selection on both sides.
+    private var workingVertices: Set<VertexID> {
+        symmetry.isEnabled ? Symmetry.expanded(vertices: selection.vertices, in: mesh) : selection.vertices
+    }
+    private var workingEdges: Set<EdgeID> {
+        symmetry.isEnabled ? Symmetry.expanded(edges: selection.edges, in: mesh) : selection.edges
+    }
+    private var workingFaces: Set<FaceID> {
+        symmetry.isEnabled ? Symmetry.expanded(faces: selection.faces, in: mesh) : selection.faces
+    }
+
+    public func deleteSelection() {
+        guard !selection.isEmpty else {
+            say("Select something to delete first.")
+            return
+        }
+        let vertices = workingVertices, edges = workingEdges, faces = workingFaces
+        perform("Delete") { mesh, selection in
+            mesh.deleteFaces(faces)
+            mesh.deleteEdges(edges)
+            mesh.deleteVertices(vertices)
+            selection.clear()
+        }
+    }
+
+    public func dissolveSelection() {
+        guard !selection.vertices.isEmpty || !selection.edges.isEmpty else {
+            say("Select vertices or edges to dissolve.")
+            return
+        }
+        let vertices = workingVertices, edges = workingEdges
+        perform("Dissolve") { mesh, selection in
+            for e in edges.sorted() where mesh.isEdgeAlive(e) { try mesh.dissolveEdge(e) }
+            for v in vertices.sorted() where mesh.isVertexAlive(v) { try mesh.dissolveVertex(v) }
+            selection.clear()
+        }
+    }
+
+    public func splitSelectedEdges(cuts: Int = 1) {
+        guard !selection.edges.isEmpty else {
+            say("Select edges to split.")
+            return
+        }
+        let edges = workingEdges
+        let projector = activeProjector
+        let wasNgon = statistics.ngons
+        let ok = perform("Split edges") { mesh, selection in
+            let created = try mesh.subdivideEdges(edges, cuts: cuts)
+            project(created, in: &mesh, projector: projector)
+            selection.clear()
+            selection.mode = .vertex
+            selection.vertices = Set(created)
+        }
+        if ok {
+            let grown = statistics.ngons - wasNgon
+            if grown > 0 { say(grown == 1 ? "1 neighbouring face became an n-gon." : "\(grown) neighbouring faces became n-gons.") }
+        }
+    }
+
+    private func project(_ vertices: [VertexID], in mesh: inout Mesh, projector: SurfaceProjector?) {
+        guard let projector, !projector.isEmpty else { return }
+        var updates: [(VertexID, Vec3)] = []
+        for v in vertices where mesh.isVertexAlive(v) {
+            updates.append((v, mesh.reprojected(mesh.position(v), near: v, projector: projector)))
+        }
+        mesh.setPositions(updates)
+    }
+
+    public func connectSelectedVertices() {
+        let list = selection.vertices.sorted()
+        guard list.count == 2 else {
+            say("Select exactly two vertices to connect them.")
+            return
+        }
+        let a = list[0], b = list[1]
+        let pa = mesh.mirrorPartner[Int(a)], pb = mesh.mirrorPartner[Int(b)]
+        let mirrored = symmetry.isEnabled && pa >= 0 && pb >= 0 && !(pa == a && pb == b) && !(pa == b && pb == a)
+        perform("Connect") { mesh, selection in
+            let e = try mesh.connectVertices(a, b)
+            if mirrored && mesh.edge(between: pa, pb) == nil {
+                try mesh.connectVertices(pa, pb)
+            }
+            selection.clear()
+            selection.mode = .edge
+            selection.edges = [e]
+        }
+    }
+
+    public func extrudeSelectedEdges() {
+        guard !selection.edges.isEmpty else {
+            say("Select boundary edges to extrude.")
+            return
+        }
+        let edges = workingEdges
+        let distance = tools.extrudeDistance
+        let projector = activeProjector
+        perform("Extrude") { mesh, selection in
+            let top = try mesh.extrudeEdges(edges, distance: distance, projector: projector)
+            selection.clear()
+            selection.mode = .edge
+            selection.edges = top
+        }
+    }
+
+    /// Fills the holes touched by the selected edges, or every closed boundary if nothing is selected.
+    public func fillHoles() {
+        var loops: [BoundaryChain] = []
+        if selection.edges.isEmpty {
+            loops = ChainFinder.boundaryLoops(in: mesh)
+            // A sheet's outer boundary is a loop too. Filling it would cap the whole sheet.
+            if loops.count == 1, selection.vertices.isEmpty {
+                say("This mesh has one open boundary, which might be its outline rather than a hole. Select one of its edges and fill again to confirm.")
+                return
+            }
+        } else {
+            var seen = Set<EdgeID>()
+            for e in workingEdges.sorted() where !seen.contains(e) {
+                if let chain = ChainFinder.chain(through: e, in: mesh), chain.isClosed {
+                    loops.append(chain)
+                    seen.formUnion(chain.edges)
+                }
+            }
+        }
+        guard !loops.isEmpty else {
+            say("No closed loop to fill. A hole needs a complete ring of boundary edges.", kind: .warning)
+            return
+        }
+        let projector = self.projector
+        let ok = perform("Fill") { mesh, selection in
+            var faces = Set<FaceID>()
+            for loop in loops {
+                let center = loop.vertices.map { mesh.position($0) }.reduce(Vec3(repeating: 0), +) / Float(loop.vertices.count)
+                let normal = projector?.closest(to: center)?.normal
+                faces.insert(try mesh.fill(loop: loop, surfaceNormal: normal))
+            }
+            selection.clear()
+            selection.mode = .face
+            selection.faces = faces
+        }
+        if ok {
+            onEvent?(.facesGenerated)
+            if loops.contains(where: { $0.vertices.count > 4 }) {
+                say("Filled with one n-gon. Use Quad Patch for a loop you'd rather fill with quads.")
+            }
+        }
+    }
+
+    public func weldSelected() {
+        guard selection.vertices.count >= 2 else {
+            say("Select at least two vertices to weld.")
+            return
+        }
+        let group = selection.vertices
+        var mirror = Set<VertexID>()
+        if symmetry.isEnabled {
+            mirror = Symmetry.expanded(vertices: group, in: mesh).subtracting(group)
+        }
+        let plane = symmetry.activePlane
+        perform("Weld") { mesh, selection in
+            // Partners within the selection mean a weld across the plane: that lands on the plane.
+            var center: Vec3? = nil
+            if let plane, group.contains(where: { group.contains(mesh.mirrorPartner[Int($0)]) && mesh.mirrorPartner[Int($0)] != $0 }) {
+                var sum = Vec3(repeating: 0)
+                for v in group { sum += mesh.position(v) }
+                center = plane.snap(sum / Float(group.count))
+            }
+            let kept = try mesh.weld(group, position: center)
+            if center != nil { mesh.setMirrorPartner(kept, kept) }
+            if mirror.count >= 2 {
+                let other = try mesh.weld(mirror)
+                mesh.setMirrorPartner(kept, other)
+                mesh.setMirrorPartner(other, kept)
+            }
+            selection.clear()
+            selection.mode = .vertex
+            selection.vertices = [kept]
+        }
+    }
+
+    public func weldByDistance(_ threshold: Float) {
+        var merged = 0
+        let ok = perform("Weld by distance") { mesh, selection in
+            merged = try mesh.weldByDistance(threshold)
+            selection.prune(in: mesh)
+        }
+        if ok { say(merged == 1 ? "Merged 1 vertex." : "Merged \(merged) vertices.") }
+    }
+
+    public func flipSelectedEdges() {
+        guard !selection.edges.isEmpty else {
+            say("Select an edge between two faces to flip it.")
+            return
+        }
+        let edges = workingEdges
+        perform("Flip edge") { mesh, selection in
+            for e in edges.sorted() where mesh.isEdgeAlive(e) { try mesh.flipEdge(e) }
+            selection.clear()
+        }
+    }
+
+    public func subdivideSelection() {
+        let projector = activeProjector
+        if !selection.faces.isEmpty {
+            let faces = workingFaces
+            let wasNgon = statistics.ngons
+            let ok = perform("Subdivide") { mesh, selection in
+                let result = try mesh.subdivideFaces(faces)
+                project(result.vertices, in: &mesh, projector: projector)
+                selection.clear()
+                selection.mode = .face
+                selection.faces = Set(result.faces)
+            }
+            if ok {
+                let grown = statistics.ngons - wasNgon
+                if grown > 0 { say(grown == 1 ? "1 neighbouring face gained a corner and became an n-gon." : "\(grown) neighbouring faces gained corners and became n-gons.") }
+            }
+        } else if !selection.edges.isEmpty {
+            splitSelectedEdges()
+        } else {
+            say("Select faces or edges to subdivide.")
+        }
+    }
+
+    public func applySubdivision() {
+        let projector = activeProjector
+        perform("Apply subdivision") { mesh, selection in
+            try mesh.applyCatmullClark(projector: projector)
+            selection.clear()
+        }
+    }
+
+    public func relaxSelection(iterations: Int = 4) {
+        let touched = selection.touchedVertices(in: mesh)
+        guard !touched.isEmpty else {
+            say("Select something to relax.")
+            return
+        }
+        let targets = symmetry.isEnabled ? Symmetry.expanded(vertices: touched, in: mesh) : touched
+        let projector = activeProjector
+        let strength = max(tools.brush.strength, 0.3)
+        let plane = symmetry.activePlane
+        perform("Relax") { mesh, _ in
+            mesh.relax(vertices: targets, iterations: iterations, strength: strength, pinBoundary: false, projector: projector)
+            if let plane {
+                // Relaxing isn't exactly mirror-preserving, so centerline vertices return to the plane.
+                for v in targets where mesh.mirrorPartner[Int(v)] == v {
+                    mesh.setPosition(v, plane.snap(mesh.position(v)))
+                }
+            }
+        }
+    }
+
+    public func reverseNormals() {
+        let faces = selection.faces.isEmpty ? Set(mesh.aliveFaces) : workingFaces
+        guard !faces.isEmpty else {
+            say("There are no faces to reverse.")
+            return
+        }
+        perform("Reverse normals") { mesh, _ in mesh.reverseFaces(faces) }
+    }
+
+    public func recalculateNormals() {
+        guard mesh.faceCount > 0 else {
+            say("There are no faces to fix.")
+            return
+        }
+        var flipped = 0
+        let projector = self.projector
+        let ok = perform("Recalculate normals") { mesh, _ in flipped = mesh.recalculateNormals(projector: projector) }
+        if ok { say(flipped == 0 ? "Normals were already consistent." : (flipped == 1 ? "Flipped 1 face." : "Flipped \(flipped) faces."), kind: .success) }
+    }
+
+    /// Makes a face from selected vertices, or a quad bridging two selected edges.
+    public func makeFaceFromSelection() {
+        var loop: [VertexID] = []
+        if selection.edges.count == 2 {
+            let list = selection.edges.sorted()
+            let (a0, a1) = mesh.ends(list[0])
+            var (b0, b1) = mesh.ends(list[1])
+            // Connect ends so the two new sides don't cross.
+            let straight = simd_length(mesh.position(a1) - mesh.position(b0)) + simd_length(mesh.position(b1) - mesh.position(a0))
+            let crossed = simd_length(mesh.position(a1) - mesh.position(b1)) + simd_length(mesh.position(b0) - mesh.position(a0))
+            if crossed < straight { swap(&b0, &b1) }
+            var seen = Set<VertexID>()
+            loop = [a0, a1, b0, b1].filter { seen.insert($0).inserted }
+        } else if selection.vertices.count >= 3 {
+            loop = orderedAroundCenter(selection.vertices)
+        } else {
+            say("Select three or more vertices, or two edges, to make a face.")
+            return
+        }
+        guard loop.count >= 3 else {
+            say("Those don't enclose an area, so no face was made.", kind: .warning)
+            return
+        }
+        var plan = TopologyPlan()
+        plan.nodes = loop.map { .existing($0) }
+        plan.faces = [orient(Array(0..<Int32(loop.count)), points: loop.map { mesh.position($0) })]
+        let ok = perform("Make face") { mesh, selection in
+            let result = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
+            selection.clear()
+            selection.mode = .face
+            selection.faces = Set(result.faces)
+        }
+        if ok { onEvent?(.facesGenerated) }
+    }
+
+    private func orderedAroundCenter(_ vertices: Set<VertexID>) -> [VertexID] {
+        let list = vertices.sorted()
+        let points = list.map { mesh.position($0) }
+        let center = points.reduce(Vec3(repeating: 0), +) / Float(points.count)
+        // Best-fit normal from the loop of points as given is unreliable, so ask the surface first.
+        var normal = projector?.closest(to: center)?.normal ?? Vec3(repeating: 0)
+        if simd_length_squared(normal) == 0 {
+            normal = GeometryMath.safeNormalize(simd_cross(points[1] - points[0], points[2] - points[0]))
+        }
+        let u = GeometryMath.perpendicular(to: normal)
+        let v = simd_cross(normal, u)
+        return list.sorted { a, b in
+            let pa = mesh.position(a) - center, pb = mesh.position(b) - center
+            return atan2(simd_dot(pa, v), simd_dot(pa, u)) < atan2(simd_dot(pb, v), simd_dot(pb, u))
+        }
+    }
+
+    /// Puts vertices back on the surface. Applies to the selection, or to everything without one.
+    public func reproject() {
+        guard let projector else {
+            say("There's no surface to project onto.")
+            return
+        }
+        let touched = selection.touchedVertices(in: mesh)
+        let targets = touched.isEmpty ? Set(mesh.aliveVertices) : touched
+        perform("Reproject") { mesh, _ in
+            var updates: [(VertexID, Vec3)] = []
+            for v in targets {
+                updates.append((v, mesh.reprojected(mesh.position(v), near: v, projector: projector)))
+            }
+            mesh.setPositions(updates)
+        }
+    }
+
+    // MARK: Symmetry
+
+    public func setSymmetryEnabled(_ enabled: Bool) {
+        symmetry.isEnabled = enabled
+        if enabled, let plane = symmetry.activePlane {
+            var work = mesh
+            repairPairs(&work, plane: plane)
+            mesh = work
+        }
+        editGeneration &+= 1
+        rebuildOverlay()
+        notify()
+    }
+
+    public func setSymmetryPlane(axis: MirrorAxis? = nil, offset: Float? = nil) {
+        let changed = (axis != nil && axis != symmetry.plane.axis) || (offset != nil && offset != symmetry.plane.offset)
+        if let axis {
+            symmetry.plane.axis = axis
+            if offset == nil {
+                let box = sourceBounds
+                if !box.isEmpty {
+                    let c = box.center[axis.rawValue]
+                    symmetry.plane.offset = abs(c) < box.diagonal * 0.01 ? 0 : c
+                }
+            }
+        }
+        if let offset { symmetry.plane.offset = offset }
+        guard changed else { return }
+        // Old partner links described the old plane.
+        var work = mesh
+        for v in work.aliveVertices { work.setMirrorPartner(v, invalidID) }
+        if let plane = symmetry.activePlane { repairPairs(&work, plane: plane) }
+        mesh = work
+        editGeneration &+= 1
+        notify()
+    }
+
+    public func setCenterTolerance(_ tolerance: Float) {
+        symmetry.centerTolerance = tolerance
+        editGeneration &+= 1
+        notify()
+    }
+
+    /// Merges vertices across the centerline: those near the plane are snapped and pairs merged.
+    public func mergeCenterline() {
+        let plane = symmetry.plane
+        let tolerance = symmetry.centerTolerance
+        var merged = 0
+        let ok = perform("Merge centerline") { mesh, selection in
+            var near: [VertexID] = []
+            for v in mesh.aliveVertices where abs(plane.signedDistance(mesh.position(v))) <= tolerance {
+                near.append(v)
+                mesh.setPosition(v, plane.snap(mesh.position(v)))
+                mesh.setMirrorPartner(v, v)
+            }
+            merged = try mesh.weldByDistance(tolerance, among: Set(near))
+            selection.prune(in: mesh)
+        }
+        if ok { say(merged == 1 ? "Merged 1 centerline vertex." : "Merged \(merged) centerline vertices.", kind: .success) }
+    }
+
+    /// Bakes symmetry into the mesh, copying the side with more faces over the other.
+    public func applySymmetry() {
+        let plane = symmetry.plane
+        let tolerance = symmetry.centerTolerance
+        var positive = 0, negative = 0
+        for f in mesh.aliveFaces {
+            if plane.signedDistance(mesh.faceCenter(f)) >= 0 { positive += 1 } else { negative += 1 }
+        }
+        if positive == 0 && negative == 0 {
+            for v in mesh.aliveVertices {
+                if plane.signedDistance(mesh.position(v)) >= 0 { positive += 1 } else { negative += 1 }
+            }
+        }
+        let keepPositive = positive >= negative
+        let projector = self.projector
+        let ok = perform("Apply symmetry") { mesh, selection in
+            try Symmetry.apply(to: &mesh, plane: plane, centerTolerance: tolerance, keepPositive: keepPositive, projector: projector)
+            selection.clear()
+        }
+        if ok { say("Symmetry applied to the mesh. Each side sits on its own part of the surface.", kind: .success) }
+    }
+
+    // MARK: Overlay
+
+    private func updateLiveMirrorOverlay(_ capture: StrokeCapture) {
+        guard let plane = symmetry.activePlane, let run = capture.runs.last, run.count >= 2 else {
+            overlay.mirrorEdges = []
+            return
+        }
+        // Mirrored points are only shown, not yet projected: this runs at Pencil rate.
+        let start = max(run.count - 512, 1)
+        var lines: [Vec3] = []
+        lines.reserveCapacity((run.count - start) * 2)
+        for i in start..<run.count {
+            lines.append(plane.reflect(run[i - 1].position))
+            lines.append(plane.reflect(run[i].position))
+        }
+        overlay.mirrorEdges = lines
+    }
+
+    public func rebuildOverlay() {
+        var out = OverlayGeometry()
+        func addPlan(_ plan: TopologyPlan) {
+            let positions = plan.positions(in: mesh)
+            for e in plan.edges {
+                out.previewEdges.append(positions[Int(e.x)])
+                out.previewEdges.append(positions[Int(e.y)])
+            }
+            for face in plan.faces {
+                let corners = face.map { positions[Int($0)] }
+                for i in 0..<corners.count {
+                    out.previewEdges.append(corners[i])
+                    out.previewEdges.append(corners[(i + 1) % corners.count])
+                }
+                for t in Triangulation.triangulate(corners) {
+                    out.previewTriangles.append(corners[Int(t.x)])
+                    out.previewTriangles.append(corners[Int(t.y)])
+                    out.previewTriangles.append(corners[Int(t.z)])
+                }
+            }
+            out.previewPoints.append(contentsOf: positions)
+            if let plane = symmetry.activePlane {
+                for i in stride(from: 0, to: out.previewEdges.count - 1, by: 2) {
+                    out.mirrorEdges.append(plane.reflect(out.previewEdges[i]))
+                    out.mirrorEdges.append(plane.reflect(out.previewEdges[i + 1]))
+                }
+            }
+        }
+        if let pending = pendingStroke {
+            for plan in pending.plans { addPlan(plan.plan) }
+            if pending.canClose, let path = pending.paths.first, let a = path.points.first, let b = path.points.last {
+                out.warningEdges.append(a.position)
+                out.warningEdges.append(b.position)
+            }
+        }
+        if let plan = pendingStrip?.plan { addPlan(plan) }
+        if let preview = patchPreview { addPlan(preview.plan) }
+        for chain in patchChains {
+            var lines: [Vec3] = []
+            for e in chain.edges where mesh.isEdgeAlive(e) {
+                let (a, b) = mesh.ends(e)
+                lines.append(mesh.position(a))
+                lines.append(mesh.position(b))
+            }
+            out.chains.append(lines)
+        }
+        if !faceCorners.isEmpty {
+            let points = faceCorners.compactMap(cornerPosition)
+            out.previewPoints.append(contentsOf: points)
+            if points.count >= 2 {
+                for i in 0..<(points.count - 1) {
+                    out.previewEdges.append(points[i])
+                    out.previewEdges.append(points[i + 1])
+                }
+            }
+            if points.count >= 3 {
+                out.warningEdges.append(points[points.count - 1])
+                out.warningEdges.append(points[0])
+            }
+        }
+        overlay = out
+    }
+
+    // MARK: Project state
+
+    public func makeSnapshot() -> ProjectSnapshot {
+        var snapshot = ProjectSnapshot(name: name)
+        snapshot.createdAt = createdAt
+        snapshot.modifiedAt = Date()
+        snapshot.sources = sources
+        snapshot.mesh = mesh
+        snapshot.selection = selection
+        snapshot.camera = CameraState(camera)
+        snapshot.symmetry = symmetry
+        snapshot.viewport = viewport
+        snapshot.tools = tools
+        snapshot.activeTool = activeTool
+        snapshot.patchChains = patchChains
+        snapshot.faceBuilderVertices = faceCorners.compactMap { corner in
+            if case .vertex(let v) = corner { return v }
+            return nil
+        }
+        return snapshot
+    }
+
+    /// Opens a saved project. The surface isn't ready until `installLoadedBVHs` runs, because BVHs are
+    /// rebuilt in the background rather than stored.
+    public convenience init(snapshot: ProjectSnapshot) {
+        self.init(name: snapshot.name)
+        createdAt = snapshot.createdAt
+        sources = snapshot.sources
+        mesh = snapshot.mesh
+        selection = snapshot.selection
+        camera = snapshot.camera.applied(to: camera)
+        symmetry = snapshot.symmetry
+        viewport = snapshot.viewport
+        tools = snapshot.tools
+        activeTool = snapshot.activeTool
+        patchChains = snapshot.patchChains.filter { $0.isAlive(in: mesh) }
+        faceCorners = snapshot.faceBuilderVertices.filter(mesh.isVertexAlive).map { .vertex($0) }
+        rebuildOverlay()
+    }
+
+    public func exportData(format: ExportFormat, options: ExportOptions) -> Data {
+        onEvent?(.exported)
+        switch format {
+        case .obj: return OBJExporter.export(mesh: mesh, name: name, sources: sources, options: options)
+        case .glb: return GLBExporter.export(mesh: mesh, name: name, sources: sources, options: options)
+        }
+    }
+}
+
+public enum ExportFormat: String, CaseIterable, Identifiable, Codable {
+    case obj, glb
+
+    public var id: String { rawValue }
+    public var fileExtension: String { rawValue }
+    public var label: String { rawValue.uppercased() }
+}
