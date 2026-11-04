@@ -10,6 +10,9 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
     private var engine: RetopoEngine? { model?.engine }
     private var settings: AppSettings { AppSettings.shared }
 
+    private lazy var canvasFeedback = UICanvasFeedbackGenerator(view: self)
+    /// Where the last stroke ended, for haptics played as it finishes.
+    private var lastStrokeEnd = CGPoint.zero
     private var pencilTouch: UITouch?
     private var lastPencilTime: TimeInterval = 0
     /// A finger acting as a Pencil, when that setting is on or when the Pencil is unavailable.
@@ -85,6 +88,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 cancelFingerStroke()
                 pencilTouch = touch
                 lastPencilTime = now
+                canvasFeedback.prepare()
                 model?.gestureBegan()
                 engine?.pencilBegan(at: point(touch), pressure: pressure(touch))
             default:
@@ -191,6 +195,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
             if touch === pencilTouch {
                 pencilTouch = nil
                 lastPencilTime = now
+                lastStrokeEnd = touch.location(in: self)
                 engine?.pencilEnded(at: point(touch), pressure: pressure(touch))
                 model?.gestureEnded()
             } else if touch === fingerStroke {
@@ -304,6 +309,16 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
     }
 
     // MARK: Pencil extras
+
+    /// A stroke met something existing. Only an Apple Pencil Pro can feel this: iPads have no haptics of their own.
+    func playAlignment() {
+        if settings.pencilHaptics { canvasFeedback.alignmentOccurred(at: lastStrokeEnd) }
+    }
+
+    /// A stroke closed into a loop.
+    func playPathCompleted() {
+        if settings.pencilHaptics { canvasFeedback.pathCompleted(at: lastStrokeEnd) }
+    }
 
     func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
         model?.pencilDoubleTapped()

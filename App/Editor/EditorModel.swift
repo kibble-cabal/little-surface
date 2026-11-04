@@ -372,8 +372,17 @@ final class EditorModel {
     // MARK: Tutorial
 
     private func handle(_ event: RetopoEngine.EngineEvent) {
-        guard let step = tutorialStep else { return }
-        if step.completes(on: event) { tutorialStep = step.next }
+        if let step = tutorialStep, step.completes(on: event) { tutorialStep = step.next }
+        switch event {
+        case .patchCreated:
+            if AppSettings.shared.selectsAfterPatch { select(tool: .select) }
+        case .loopClosed:
+            viewport?.playPathCompleted()
+        case .strokeSnapped:
+            viewport?.playAlignment()
+        default:
+            break
+        }
     }
 
     func startTutorial() {
@@ -414,7 +423,7 @@ enum TutorialStep: Int, CaseIterable {
         case .importModel: return "Tap Import in the top bar, or load the example, to get a model to draw on."
         case .drawLoop: return "With Draw Edges active, draw around a form with Apple Pencil. When the ends land near each other, the line closes into a loop."
         case .drawAnother: return "Draw two lines side by side. They land on the surface as real edges."
-        case .generate: return "Tap Fill with Quads to bridge your two lines. For more control, choose Quad Patch and tap each line."
+        case .generate: return "Tap Fill with Quads to bridge your two lines. For more control, tap each line, then tap Create Patch."
         case .editVertices: return "Choose Select, then drag a vertex. It stays on the surface as it moves."
         case .export: return "Tap Export and choose OBJ. Quads stay quads in Blender."
         }

@@ -64,18 +64,26 @@ final class AppSettings {
     var suggestsFills: Bool {
         didSet { defaults.set(suggestsFills, forKey: "suggestsFills") }
     }
+    var selectsAfterPatch: Bool {
+        didSet { defaults.set(selectsAfterPatch, forKey: "selectsAfterPatch") }
+    }
+    var pencilHaptics: Bool {
+        didSet { defaults.set(pencilHaptics, forKey: "pencilHaptics") }
+    }
     var hasSeenTutorial: Bool {
         didSet { defaults.set(hasSeenTutorial, forKey: "hasSeenTutorial") }
     }
 
     private init() {
-        defaults.register(defaults: ["twoFingerTapUndoes": true, "orbitInertia": true, "showsStatusBar": true, "closesLoopsAutomatically": true, "suggestsFills": true])
+        defaults.register(defaults: ["twoFingerTapUndoes": true, "orbitInertia": true, "showsStatusBar": true, "closesLoopsAutomatically": true, "suggestsFills": true, "selectsAfterPatch": true, "pencilHaptics": true])
         oneFingerAction = OneFingerAction(rawValue: defaults.string(forKey: "oneFingerAction") ?? "") ?? .orbit
         twoFingerTapUndoes = defaults.bool(forKey: "twoFingerTapUndoes")
         pencilDoubleTap = PencilDoubleTapAction(rawValue: defaults.string(forKey: "pencilDoubleTap") ?? "") ?? .eraser
         orbitInertia = defaults.bool(forKey: "orbitInertia")
         closesLoopsAutomatically = defaults.bool(forKey: "closesLoopsAutomatically")
         suggestsFills = defaults.bool(forKey: "suggestsFills")
+        selectsAfterPatch = defaults.bool(forKey: "selectsAfterPatch")
+        pencilHaptics = defaults.bool(forKey: "pencilHaptics")
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .light
         showsStatusBar = defaults.bool(forKey: "showsStatusBar")
         hasSeenTutorial = defaults.bool(forKey: "hasSeenTutorial")

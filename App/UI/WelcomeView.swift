@@ -191,10 +191,12 @@ struct SettingsView: View {
                 Section {
                     Toggle("Close loops when the ends meet", isOn: $settings.closesLoopsAutomatically)
                     Toggle("Offer to fill between lines", isOn: $settings.suggestsFills)
+                    Toggle("Switch to Select after Create Patch", isOn: $settings.selectsAfterPatch)
+                    Toggle("Pencil haptics", isOn: $settings.pencilHaptics)
                 } header: {
                     Text("Drawing")
                 } footer: {
-                    Text("A stroke whose ends land near each other becomes a loop, or a ring with Quad Strip, and Keep Open undoes that in one tap. A line drawn beside another offers to fill the space between them with quads.")
+                    Text("A stroke whose ends land near each other becomes a loop, or a ring with Quad Strip, and Keep Open undoes that in one tap. A line or loop drawn beside another, or beside a finished patch, offers to fill the space with quads. Haptics need an Apple Pencil Pro.")
                 }
                 Section("Interface") {
                     Picker("Appearance", selection: $settings.appearance) {

@@ -274,6 +274,25 @@ final class WorkflowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Create Patch"].exists)
     }
 
+    func testTappingLinesInDrawEdgesMakesAPatchAndMovesToSelect() throws {
+        button("Open Example").tap()
+        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
+        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
+        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
+        XCTAssertTrue(button("tool-drawEdges").isSelected)
+        tap(410, 480)
+        settle()
+        XCTAssertFalse(button("Create Patch").isEnabled, "one line isn't enough yet")
+        tap(410, 585)
+        settle()
+        XCTAssertTrue(button("Create Patch").isEnabled)
+        shot("picked in draw edges")
+        button("Create Patch").tap()
+        settle()
+        XCTAssertGreaterThan(stats.faces, 0)
+        XCTAssertTrue(button("tool-select").isSelected, "the next thing is usually adjusting it")
+    }
+
     func testSideBySideLinesOfferToFill() throws {
         button("Open Example").tap()
         XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))

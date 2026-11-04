@@ -603,8 +603,6 @@ final class QuadPatchTests: XCTestCase {
 
     func testADenserLineGivesWayRatherThanSplittingThePatch() throws {
         let engine = try patchedEngine()
-        let side = engine.fillSuggestion?.preview.columns
-        XCTAssertNil(side)
         engine.tools.stroke.edgeLength *= 0.5
         Fixtures.draw(engine, from: Vec2(400, 560), to: Vec2(600, 560))
         let suggestion = try XCTUnwrap(engine.fillSuggestion)

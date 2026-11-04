@@ -268,7 +268,7 @@ extension Tool {
     var hint: String {
         switch self {
         case .select: return "Tap to select, drag a selected element to move it, drag elsewhere to lasso."
-        case .drawEdges: return "Draw on the surface to add edges."
+        case .drawEdges: return "Draw on the surface to add edges, or tap two lines to fill between them."
         case .edgeLoop: return "Draw around a form to make a closed loop."
         case .quadStrip: return "Draw a path to preview a band of quads."
         case .quadPatch: return "Tap or draw the lines to bridge, then create the patch."
@@ -490,20 +490,24 @@ private struct DecisionChips: View {
                 }
                 Button("Cancel") { engine.cancelPending() }.pillButton()
             }
-        } else if engine.activeTool == .quadPatch, !engine.patchChains.isEmpty {
+        } else if engine.activeTool == .quadPatch || engine.activeTool == .drawEdges, !engine.patchChains.isEmpty {
             chipRow(note: engine.patchError ?? patchNote(engine)) {
                 Button("Create Patch") { engine.commitPatch() }
                     .pillButton(prominent: true).disabled(engine.patchPreview == nil).accessibilityIdentifier("Create Patch")
                 Button("Clear") { engine.clearPatchPicks() }.pillButton().accessibilityIdentifier("Clear Patch")
             }
+        } else if let suggestion = engine.fillSuggestion {
+            let shapes = suggestion.preview.kind == .ring ? "loops" : "lines"
+            chipRow(note: "\(suggestion.preview.columns) × \(suggestion.preview.rows) quads would fill between these \(shapes).") {
+                Button("Fill with Quads") { engine.commitFillSuggestion() }.pillButton(prominent: true).accessibilityIdentifier("Fill with Quads")
+                if engine.reopenablePlans != nil {
+                    Button("Keep Open") { engine.keepLoopOpen() }.pillButton().accessibilityIdentifier("Keep Open")
+                }
+                Button("Not Now") { engine.dismissFillSuggestion() }.pillButton().accessibilityIdentifier("Not Now")
+            }
         } else if engine.reopenablePlans != nil {
             chipRow(note: "Closed into a loop.") {
                 Button("Keep Open") { engine.keepLoopOpen() }.pillButton().accessibilityIdentifier("Keep Open")
-            }
-        } else if let suggestion = engine.fillSuggestion {
-            chipRow(note: "\(suggestion.preview.columns) × \(suggestion.preview.rows) quads would fill between these lines.") {
-                Button("Fill with Quads") { engine.commitFillSuggestion() }.pillButton(prominent: true).accessibilityIdentifier("Fill with Quads")
-                Button("Not Now") { engine.dismissFillSuggestion() }.pillButton().accessibilityIdentifier("Not Now")
             }
         } else if engine.activeTool == .face, !engine.faceCorners.isEmpty {
             chipRow(note: "\(engine.faceCorners.count) corner\(engine.faceCorners.count == 1 ? "" : "s"). Tap more, or finish.") {

@@ -99,6 +99,10 @@ public enum StrokePlanner {
             }
         }
 
+        if extendsLine {
+            nodes = bridgingJumps(in: nodes, spacing: spacing, offset: offset, projector: options.projector)
+        }
+
         if !mesh.isEmpty {
             let crossings = findCrossings(path: path, nodes: nodes, mesh: mesh, options: options, spacing: spacing)
             if !crossings.isEmpty {
@@ -206,6 +210,31 @@ public enum StrokePlanner {
         out.droppedOverFaces = dropped
         out.extendsLine = extendsLine
         out.connectedLines = connectedLines
+        return out
+    }
+
+    /// A stroke that picked up a line from a distance would join it with one long edge. This spaces
+    /// that jump out to match the rest of the stroke.
+    private static func bridgingJumps(in nodes: [PathNode], spacing: Float, offset: Float, projector: SurfaceProjector?) -> [PathNode] {
+        guard nodes.count >= 2, spacing > 0 else { return nodes }
+        func between(_ a: PathNode, _ b: PathNode) -> [PathNode] {
+            let cuts = Int((simd_length(b.position - a.position) / spacing).rounded()) - 1
+            guard cuts > 0 else { return [] }
+            return (1...cuts).map { k in
+                let t = Float(k) / Float(cuts + 1)
+                var position = simd_mix(a.position, b.position, Vec3(repeating: t))
+                var normal = a.normal
+                if let hit = projector?.project(position, maxDistance: spacing * Float(cuts + 1)) {
+                    position = hit.position + hit.normal * offset
+                    normal = hit.normal
+                }
+                return PathNode(node: .new(position: position, normal: normal), position: position, normal: normal, along: a.along + (b.along - a.along) * t)
+            }
+        }
+        let last = nodes.count - 1
+        var out = nodes
+        if case .existing = nodes[last].node { out.insert(contentsOf: between(nodes[last - 1], nodes[last]), at: last) }
+        if case .existing = nodes[0].node { out.insert(contentsOf: between(nodes[0], nodes[1]), at: 1) }
         return out
     }
 

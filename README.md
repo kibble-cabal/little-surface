@@ -35,10 +35,14 @@ xcrun simctl launch --terminate-running-process booted com.audreyserene.littlesu
 ## Using it
 
 1. On the welcome screen, tap **Example** for the bundled model, or **Import Model** for your own OBJ, GLB or glTF file.
-2. With **Draw Edges**, draw two lines side by side on the surface, then tap **Fill with Quads** when it's offered. For more control, use **Quad Patch**: draw a closed shape, or tap two lines, check the preview, and tap **Create Patch**.
-3. Draw a stroke whose ends land near each other to make a loop, or a ring with **Quad Strip**. **Keep Open** undoes that in one tap, and Settings can turn it off.
-4. With **Select**, tap or lasso to select, and drag a selected element to move it. The panel on the right holds the topology operations.
-5. Tap **Export** to send an OBJ (quads) or GLB (triangulated) to Blender, with or without the source model.
+2. With **Draw Edges**, draw two lines side by side on the surface, then tap **Fill with Quads** when it's offered. The same offer appears for a line drawn beside a finished patch, and for a loop drawn inside or around another loop or patch.
+3. To choose the sides yourself, tap two lines in **Draw Edges**, or use **Quad Patch** to draw a closed shape or tap two lines. Check the preview and tap **Create Patch**, which then moves you to **Select** to adjust the result.
+4. Draw a stroke whose ends land near each other to make a loop, or a ring with **Quad Strip**. **Keep Open** undoes that in one tap.
+5. A stroke that starts near the end of a line and heads on from it continues that line. A stroke across two or more lines joins them, and a short overshoot past them is dropped.
+6. With **Select**, tap or lasso to select, and drag a selected element to move it. The panel on the right holds the topology operations.
+7. Tap **Export** to send an OBJ (quads) or GLB (triangulated) to Blender, with or without the source model.
+
+Settings can turn off closing loops, fill offers, the move to Select, and Pencil haptics.
 
 An optional tutorial appears on first launch.
 
@@ -134,7 +138,7 @@ These files came from that UI test and were checked by `tools/verify_app_exports
 
 - **Editing:** Subdivide, Relax, Reverse, Fix Normals, Loop, Ring, Connected, Boundary, Extrude, Split, Delete, Fill, Dissolve, and each one's undo. Operations with nothing selected do nothing.
 - **Mesh checks:** the Check Mesh report.
-- **Tools:** Quad Strip with preview; Move, Relax and Erase brushes; lasso selection; a one-line patch that explains what's missing and leaves the mesh unchanged; Clear; filling between side-by-side lines (16 × 8 quads). By hand, with touch: an oval drawn with Quad Patch, which made a 9 × 9 grid of 81 quads, and a nearly closed stroke made into a Quad Strip ring.
+- **Tools:** Quad Strip with preview; Move, Relax and Erase brushes; lasso selection; a one-line patch that explains what's missing and leaves the mesh unchanged; Clear; filling between side-by-side lines (16 × 8 quads). Tapping two lines in Draw Edges, creating the patch and landing in Select. By hand, with touch: an oval drawn with Quad Patch, which made a 9 × 9 grid of 81 quads; a nearly closed stroke made into a Quad Strip ring; a line beside a finished patch filled up to its edge (12 × 4 quads); a loop inside a loop offering a 35 × 5 ring; a line carried on from another's end; and a stroke joining two lines. A stroke between a line's two ends closing it is covered by core tests only.
 - **Viewing:** Wireframe, X-ray and Solid; hiding the source and the topology; dark mode in landscape; by hand, two-finger tap to undo.
 - **Files:** the system file picker; a damaged GLB giving a clear error; a second model added to a project; a project killed as soon as its import was saved reopened with the model; a project killed after editing reopened with its mesh and selection.
 
@@ -162,6 +166,7 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 - Nothing has run on a physical iPad. Apple Pencil pressure, hover, double-tap, palm rejection and drawing latency have never been exercised with real input. The UI tests draw with a finger, which goes through the same engine calls but not the app's Pencil branch.
 - Frame rate, memory limits and heat on the 2020 iPad are unknown. Simulator rendering uses the Mac's GPU.
 - The 2020 iPad uses the first-generation Pencil, which has no double-tap or hover, so those features only help on newer hardware.
+- Haptics have never been felt. iPads have no haptic motor, so they only reach an Apple Pencil Pro, which the 2020 iPad can't use. The simulator can't play them either, so the code is only known to compile and be called.
 
 **Not tested in the app**
 
@@ -169,7 +174,7 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 - Nearly all of the testing was in portrait, the simulator's default. Only the dark mode UI test ran in landscape, even though the layout is designed landscape first.
 - Slide, Weld, Connect, Flip, and merging or applying symmetry at the centerline are covered by core tests only, not UI tests.
 - Two-finger undo has no UI test, because XCTest can't aim a two-finger tap at the viewport under a navigation stack. It was checked by hand with simulated touches.
-- Closing a stroke into a loop and the fill offer have only been drawn with touch, so how forgiving they feel with a Pencil is unknown.
+- Closing a stroke into a loop, the fill offers, carrying a line on and joining lines have only been drawn with touch, so how forgiving they feel with a Pencil is unknown.
 - The app has only run on iPadOS 26.3. The iPadOS 18 fallback for Liquid Glass compiles but has never been run.
 
 **Files**
@@ -183,7 +188,9 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 
 - A failed import started from the welcome screen leaves an empty project with that name.
 - A stroke that runs off the model breaks into separate pieces and doesn't close, even if its ends meet.
-- The fill offer only looks at open lines, so a line drawn beside a closed loop or a finished patch's outer edge gets no offer.
+- A line drawn beside a closed loop that has no faces gets no fill offer, because a loop beside a line is more often a separate feature than one side of a patch.
+- Two loops around a limb only get a ring offer once both are closed, which takes more than one stroke from more than one view.
+- Haptics play when a stroke ends, not while it's being drawn.
 - In portrait, the inspector covers the right of the viewport rather than moving the model aside.
 - The self-intersection check is approximate.
 - The mesh checks report facts and never declare a mesh animation-ready. That judgement stays with you.

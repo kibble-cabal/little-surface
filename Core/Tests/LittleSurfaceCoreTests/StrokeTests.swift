@@ -312,6 +312,8 @@ final class StrokeTests: XCTestCase {
         Fixtures.draw(engine, from: Vec2(515, 500), to: Vec2(650, 500))
         XCTAssertEqual(freeEnds(engine.mesh), 2, "one line, not two")
         XCTAssertEqual(engine.message?.text, "Extended the line.")
+        let lengths = engine.mesh.aliveEdges.map { engine.mesh.edgeLength($0) }
+        XCTAssertLessThan(lengths.max()!, lengths.min()! * 2.5, "the jump is spaced like the rest of the line")
         XCTAssertTrue(events.contains(.strokeSnapped))
     }
 
