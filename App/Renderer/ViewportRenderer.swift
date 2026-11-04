@@ -3,7 +3,7 @@ import MetalKit
 import simd
 import UIKit
 
-/// Must match `Uniforms` in Shaders.metal.
+/// Must match `Uniforms` in Shaders.msl.
 private struct Uniforms {
     var viewProj: Mat4
     var view: Mat4

@@ -214,7 +214,8 @@ final class EditorModel {
         var text = "Imported \(model.objects.count == 1 ? model.objects[0].name : "\(model.objects.count) objects"), \(triangles.formatted()) triangles."
         if let warning = model.warnings.first { text += " " + warning }
         engine.say(text, kind: model.warnings.isEmpty ? .success : .warning)
-        settingChanged()
+        // An import is expensive to repeat, so don't leave it to wait for autosave.
+        save()
         viewport?.setNeedsDisplay()
     }
 

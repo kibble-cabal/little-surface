@@ -199,15 +199,21 @@ final class WorkflowUITests: XCTestCase {
         button("Undo").tap()
         settle()
 
-        // Export both formats through the share sheet. Scripts then read the files from the app's container.
-        for format in ["OBJ", "GLB"] {
+        // Export through the share sheet, with and without the source. tools/verify_app_exports.sh reads the results.
+        for (format, withSource) in [("OBJ", false), ("GLB", false), ("OBJ", true), ("GLB", true)] {
             button("Export").tap()
             let picker = app.segmentedControls["Export Format"]
             XCTAssertTrue(picker.waitForExistence(timeout: 5))
             picker.buttons[format].tap()
+            if withSource {
+                let field = app.textFields["Export Name"]
+                field.tap()
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40) + "with-source")
+                flip(app.switches["Include Source"])
+            }
             button("Export Confirm").tap()
             settle(1.5)
-            shot("export \(format)")
+            shot("export \(format)\(withSource ? " with source" : "")")
             // Dismiss the share sheet.
             let close = app.buttons["Close"]
             if close.waitForExistence(timeout: 3) {
