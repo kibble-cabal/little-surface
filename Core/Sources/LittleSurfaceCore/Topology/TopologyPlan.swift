@@ -16,7 +16,7 @@ public struct TopologyPlan {
     public var nodes: [PlanNode] = []
     public var edges: [SIMD2<Int32>] = []
     public var faces: [[Int32]] = []
-    /// Wire edges that this plan replaces.
+    /// Wire edges that this plan replaces. Vertices they leave with no edges go with them.
     public var removeEdges: [EdgeID] = []
     /// Plain-language notes for the artist, such as "stopped at existing faces".
     public var notes: [String] = []
@@ -61,13 +61,19 @@ public enum PlanApplier {
         let plane = symmetry.activePlane
         let searchRadius = max(max(work.bounds.diagonal, projector?.bounds.diagonal ?? 0) * 0.05, symmetry.centerTolerance * 4)
 
+        var leftBehind = Set<VertexID>()
+        func remove(_ e: EdgeID) {
+            let (a, b) = work.ends(e)
+            leftBehind.formUnion([a, b])
+            work.removeEdge(e)
+        }
         for e in plan.removeEdges where work.isEdgeAlive(e) {
             guard work.isWire(e) else {
                 throw MeshError.invalid("This would replace an edge that belongs to a face.")
             }
             let mirror = plane != nil ? Symmetry.mirrorEdge(of: e, in: work) : nil
-            work.removeEdge(e)
-            if let mirror, mirror != e, work.isEdgeAlive(mirror), work.isWire(mirror) { work.removeEdge(mirror) }
+            remove(e)
+            if let mirror, mirror != e, work.isEdgeAlive(mirror), work.isWire(mirror) { remove(mirror) }
         }
 
         var nodeVertices = [VertexID](repeating: invalidID, count: plan.nodes.count)
@@ -168,6 +174,9 @@ public enum PlanApplier {
                 }
             }
         }
+
+        let stranded = leftBehind.filter { work.isVertexAlive($0) && work.edgesOf($0).isEmpty && !nodeVertices.contains($0) }
+        if !stranded.isEmpty { work.deleteVertices(stranded) }
 
         result.nodeVertices = nodeVertices
         mesh = work

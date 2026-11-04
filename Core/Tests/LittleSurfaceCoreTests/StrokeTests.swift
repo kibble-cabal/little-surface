@@ -296,4 +296,76 @@ final class StrokeTests: XCTestCase {
         engine.commitPendingStroke(close: false)
         assertValid(engine.mesh)
     }
+
+    // MARK: Carrying on from lines, and joining them
+
+    private func freeEnds(_ mesh: Mesh) -> Int {
+        mesh.aliveVertices.filter { mesh.edgesOf($0).count == 1 }.count
+    }
+
+    func testAStrokeFromTheEndOfALineCarriesItOn() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(350, 500), to: Vec2(480, 500))
+        var events: [RetopoEngine.EngineEvent] = []
+        engine.onEvent = { events.append($0) }
+        // Further from the end than a snap reaches, but heading on from it.
+        Fixtures.draw(engine, from: Vec2(515, 500), to: Vec2(650, 500))
+        XCTAssertEqual(freeEnds(engine.mesh), 2, "one line, not two")
+        XCTAssertEqual(engine.message?.text, "Extended the line.")
+        XCTAssertTrue(events.contains(.strokeSnapped))
+    }
+
+    func testAParallelLineStartingNearAnEndStaysSeparate() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 470), to: Vec2(600, 470))
+        Fixtures.draw(engine, from: Vec2(400, 505), to: Vec2(600, 505))
+        XCTAssertEqual(freeEnds(engine.mesh), 4, "it runs back alongside the line, so it doesn't continue it")
+    }
+
+    func testAnExtendedLineIsMeasuredWholeForTheFillOffer() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 450), to: Vec2(600, 450))
+        Fixtures.draw(engine, from: Vec2(400, 530), to: Vec2(480, 530))
+        XCTAssertNil(engine.fillSuggestion, "too short beside the first line")
+        Fixtures.draw(engine, from: Vec2(510, 530), to: Vec2(600, 530))
+        XCTAssertNotNil(engine.fillSuggestion, "together they run alongside it")
+    }
+
+    func testAStrokeBetweenALinesTwoEndsClosesIt() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        let circle = Fixtures.circle(center: Vec2(500, 500), radius: 150)
+        Fixtures.drawPath(engine, Array(circle[0...32]))
+        var events: [RetopoEngine.EngineEvent] = []
+        engine.onEvent = { events.append($0) }
+        Fixtures.drawPath(engine, Array(circle[34...62]))
+        XCTAssertEqual(freeEnds(engine.mesh), 0)
+        XCTAssertTrue(events.contains(.loopClosed))
+    }
+
+    func testAStrokeAcrossTwoLinesJoinsThemAndDropsTheOvershoot() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 440), to: Vec2(600, 440))
+        Fixtures.draw(engine, from: Vec2(400, 560), to: Vec2(600, 560))
+        engine.dismissFillSuggestion()
+        Fixtures.draw(engine, from: Vec2(500, 410), to: Vec2(500, 590))
+        XCTAssertEqual(freeEnds(engine.mesh), 4, "only the two lines' own ends are left loose")
+        XCTAssertEqual(engine.message?.text, "Connected 2 lines.")
+        XCTAssertEqual(engine.mesh.faceCount, 0)
+    }
+
+    func testALongOvershootPastTwoLinesIsKept() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 440), to: Vec2(600, 440))
+        Fixtures.draw(engine, from: Vec2(400, 560), to: Vec2(600, 560))
+        engine.dismissFillSuggestion()
+        Fixtures.draw(engine, from: Vec2(500, 340), to: Vec2(500, 660))
+        XCTAssertEqual(freeEnds(engine.mesh), 6, "the stroke meant to go on past them")
+    }
+
+    func testCrossingOneLineStillKeepsBothEnds() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 500), to: Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(500, 460), to: Vec2(500, 540))
+        XCTAssertEqual(freeEnds(engine.mesh), 4)
+    }
 }

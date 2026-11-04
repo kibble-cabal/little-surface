@@ -40,7 +40,8 @@ public enum QuadPatchBuilder {
         parameters: QuadPatchParameters,
         mesh: Mesh,
         projector: SurfaceProjector?,
-        cornerGapTolerance: Float = 0
+        cornerGapTolerance: Float = 0,
+        linesYieldToFaces: Bool = false
     ) throws -> PatchPlan {
         for chain in chains {
             guard chain.isAlive(in: mesh) else { throw MeshError.staleElement }
@@ -54,9 +55,9 @@ public enum QuadPatchBuilder {
         case (1, _):
             throw MeshError.invalid("One open chain doesn't enclose anything. Pick a second chain to fill between them.")
         case (2, 2):
-            return try planRing(chains[0], chains[1], parameters: parameters, mesh: mesh, projector: projector)
+            return try planRing(chains[0], chains[1], parameters: parameters, mesh: mesh, projector: projector, linesYield: linesYieldToFaces)
         case (2, 0):
-            return try planTwoChains(chains[0], chains[1], parameters: parameters, mesh: mesh, projector: projector)
+            return try planTwoChains(chains[0], chains[1], parameters: parameters, mesh: mesh, projector: projector, linesYield: linesYieldToFaces)
         case (2, _):
             throw MeshError.invalid("A closed loop and an open chain can't be paired, because their ends don't match up. Split the loop into a chain first, or pick two of the same kind.")
         case (3, _):
@@ -70,7 +71,7 @@ public enum QuadPatchBuilder {
 
     // MARK: Two open chains
 
-    private static func planTwoChains(_ a: BoundaryChain, _ bInput: BoundaryChain, parameters: QuadPatchParameters, mesh: Mesh, projector: SurfaceProjector?) throws -> PatchPlan {
+    private static func planTwoChains(_ a: BoundaryChain, _ bInput: BoundaryChain, parameters: QuadPatchParameters, mesh: Mesh, projector: SurfaceProjector?, linesYield: Bool) throws -> PatchPlan {
         if a.vertices == bInput.vertices || a.vertices == bInput.vertices.reversed() {
             throw MeshError.invalid("Those are the same chain. Pick a different second chain.")
         }
@@ -99,11 +100,14 @@ public enum QuadPatchBuilder {
         if parameters.flipPairing { reverse.toggle() }
         if reverse { b = b.reversed() }
 
-        let counts = try matchedCounts(a.segmentCount, b.segmentCount, density: parameters.columnDensity, match: parameters.matchVertexCounts, nameA: "first chain", nameB: "second chain")
+        let keptA = linesYield ? thinned(a, against: b, parameters: parameters, mesh: mesh) : nil
+        let keptB = linesYield ? thinned(b, against: a, parameters: parameters, mesh: mesh) : nil
+        let counts = try keptA != nil ? b.segmentCount : keptB != nil ? a.segmentCount
+            : matchedCounts(a.segmentCount, b.segmentCount, density: parameters.columnDensity, match: parameters.matchVertexCounts, nameA: "first chain", nameB: "second chain")
         var splits = 0
         var builder = PlanBuilder(mesh: mesh)
-        let sideA = builder.distribute(chain: a, segments: counts, splits: &splits, projector: projector)
-        let sideB = builder.distribute(chain: b, segments: counts, splits: &splits, projector: projector)
+        let sideA = keptA.map { $0.map { builder.nodeForVertex($0) } } ?? builder.distribute(chain: a, segments: counts, splits: &splits, projector: projector)
+        let sideB = keptB.map { $0.map { builder.nodeForVertex($0) } } ?? builder.distribute(chain: b, segments: counts, splits: &splits, projector: projector)
 
         let rows = rowCount(parameters.rows, sideA: sideA, sideB: sideB, builder: builder)
 
@@ -127,7 +131,7 @@ public enum QuadPatchBuilder {
         builder.fillRuled(&grid)
         relaxAndProject(&grid, builder: &builder, iterations: parameters.relaxIterations, projector: projector)
         var result = try builder.finish(grid: grid, projector: projector)
-        result.removeEdges = removals
+        result.removeEdges = removals + (keptA != nil ? a.edges : []) + (keptB != nil ? b.edges : [])
         return PatchPlan(plan: result, rows: rows, columns: counts, boundarySplits: splits, kind: .twoChains)
     }
 
@@ -142,15 +146,18 @@ public enum QuadPatchBuilder {
 
     // MARK: Two closed loops
 
-    private static func planRing(_ a: BoundaryChain, _ bInput: BoundaryChain, parameters: QuadPatchParameters, mesh: Mesh, projector: SurfaceProjector?) throws -> PatchPlan {
+    private static func planRing(_ a: BoundaryChain, _ bInput: BoundaryChain, parameters: QuadPatchParameters, mesh: Mesh, projector: SurfaceProjector?, linesYield: Bool) throws -> PatchPlan {
         guard Set(a.vertices).isDisjoint(with: bInput.vertices) else {
             throw MeshError.invalid("These loops share vertices, so there's no ring between them. Pick two separate loops.")
         }
-        let counts = try matchedCounts(a.segmentCount, bInput.segmentCount, density: parameters.columnDensity, match: parameters.matchVertexCounts, nameA: "first loop", nameB: "second loop")
+        let keptA = linesYield ? thinned(a, against: bInput, parameters: parameters, mesh: mesh) : nil
+        let keptB = linesYield ? thinned(bInput, against: a, parameters: parameters, mesh: mesh) : nil
+        let counts = try keptA != nil ? bInput.segmentCount : keptB != nil ? a.segmentCount
+            : matchedCounts(a.segmentCount, bInput.segmentCount, density: parameters.columnDensity, match: parameters.matchVertexCounts, nameA: "first loop", nameB: "second loop")
         var splits = 0
         var builder = PlanBuilder(mesh: mesh)
-        let sideA = builder.distribute(chain: a, segments: counts, splits: &splits, projector: projector)
-        var sideB = builder.distribute(chain: bInput, segments: counts, splits: &splits, projector: projector)
+        let sideA = keptA.map { $0.map { builder.nodeForVertex($0) } } ?? builder.distribute(chain: a, segments: counts, splits: &splits, projector: projector)
+        var sideB = keptB.map { $0.map { builder.nodeForVertex($0) } } ?? builder.distribute(chain: bInput, segments: counts, splits: &splits, projector: projector)
 
         // Choose the direction and starting vertex with the least total stretch, so rows don't twist.
         let positionsA = sideA.map(builder.position), positionsB = sideB.map(builder.position)
@@ -184,7 +191,9 @@ public enum QuadPatchBuilder {
         }
         builder.fillRuled(&grid)
         relaxAndProject(&grid, builder: &builder, iterations: parameters.relaxIterations, projector: projector)
-        return PatchPlan(plan: try builder.finish(grid: grid, projector: projector), rows: rows, columns: counts, boundarySplits: splits, kind: .ring)
+        var result = try builder.finish(grid: grid, projector: projector)
+        result.removeEdges = (keptA != nil ? a.edges : []) + (keptB != nil ? bInput.edges : [])
+        return PatchPlan(plan: result, rows: rows, columns: counts, boundarySplits: splits, kind: .ring)
     }
 
     // MARK: Four sides
@@ -323,6 +332,34 @@ public enum QuadPatchBuilder {
     }
 
     // MARK: Shared helpers
+
+    /// When a drawn line has more segments than the finished edge it's joining, the line's vertices
+    /// that keep it evenly spaced with one per segment of that edge. Splitting the edge instead would
+    /// turn the finished quads beside it into n-gons. Nil when the line doesn't need to give way.
+    private static func thinned(_ line: BoundaryChain, against other: BoundaryChain, parameters: QuadPatchParameters, mesh: Mesh) -> [VertexID]? {
+        guard parameters.columnDensity <= 1, line.segmentCount > other.segmentCount, line.edges.allSatisfy(mesh.isWire),
+              other.edges.contains(where: { !mesh.isWire($0) }) else { return nil }
+        var along: [Float] = [0]
+        let count = line.vertices.count
+        for i in 0..<line.segmentCount {
+            along.append(along[i] + simd_length(mesh.position(line.vertices[(i + 1) % count]) - mesh.position(line.vertices[i])))
+        }
+        let total = along[line.segmentCount]
+        let wanted = other.segmentCount
+        var kept = [line.vertices[0]]
+        var index = 0
+        for k in 1..<wanted {
+            let target = total * Float(k) / Float(wanted)
+            // Leave enough vertices for the segments still to come.
+            let last = line.segmentCount - (wanted - k)
+            var pick = index + 1
+            while pick < last, abs(along[pick + 1] - target) <= abs(along[pick] - target) { pick += 1 }
+            kept.append(line.vertices[pick])
+            index = pick
+        }
+        if !line.isClosed { kept.append(line.vertices[count - 1]) }
+        return kept
+    }
 
     private static func matchedCounts(_ a: Int, _ b: Int, density: Int, match: Bool, nameA: String, nameB: String) throws -> Int {
         if a != b && !match {

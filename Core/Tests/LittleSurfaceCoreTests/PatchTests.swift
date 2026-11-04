@@ -570,6 +570,173 @@ final class QuadPatchTests: XCTestCase {
         XCTAssertNil(engine.fillSuggestion)
     }
 
+    // MARK: Offers beside finished faces and between loops
+
+    private func isolatedVertices(_ mesh: Mesh) -> Int {
+        mesh.aliveVertices.filter { mesh.edgesOf($0).isEmpty }.count
+    }
+
+    /// A patch between two lines, ready for something to be drawn beside it.
+    private func patchedEngine() throws -> RetopoEngine {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 440), to: Vec2(600, 440))
+        Fixtures.draw(engine, from: Vec2(400, 500), to: Vec2(600, 500))
+        XCTAssertNotNil(engine.fillSuggestion)
+        engine.commitFillSuggestion()
+        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
+        return engine
+    }
+
+    func testALineBesideAPatchOffersToFillUpToItsEdge() throws {
+        let engine = try patchedEngine()
+        let before = engine.mesh.faceCount
+        Fixtures.draw(engine, from: Vec2(400, 560), to: Vec2(600, 560))
+        let suggestion = try XCTUnwrap(engine.fillSuggestion)
+        XCTAssertEqual(engine.mesh.faceCount, before, "it's an offer until accepted")
+        engine.commitFillSuggestion()
+        XCTAssertEqual(engine.mesh.faceCount, before + suggestion.preview.columns * suggestion.preview.rows)
+        XCTAssertEqual(engine.statistics.ngons, 0)
+        assertValid(engine.mesh)
+        engine.undo()
+        XCTAssertEqual(engine.mesh.faceCount, before)
+    }
+
+    func testADenserLineGivesWayRatherThanSplittingThePatch() throws {
+        let engine = try patchedEngine()
+        let side = engine.fillSuggestion?.preview.columns
+        XCTAssertNil(side)
+        engine.tools.stroke.edgeLength *= 0.5
+        Fixtures.draw(engine, from: Vec2(400, 560), to: Vec2(600, 560))
+        let suggestion = try XCTUnwrap(engine.fillSuggestion)
+        XCTAssertEqual(suggestion.preview.boundarySplits, 0)
+        XCTAssertFalse(suggestion.preview.plan.removeEdges.isEmpty, "the line's own edges are replaced")
+        engine.commitFillSuggestion()
+        XCTAssertEqual(engine.statistics.ngons, 0, "the finished quads stay quads")
+        XCTAssertEqual(isolatedVertices(engine.mesh), 0, "no vertices are left over from the line")
+        assertValid(engine.mesh)
+    }
+
+    func testASparserLineTakesTheSplitsItself() throws {
+        let engine = try patchedEngine()
+        engine.tools.stroke.edgeLength *= 2
+        Fixtures.draw(engine, from: Vec2(400, 560), to: Vec2(600, 560))
+        engine.commitFillSuggestion()
+        XCTAssertEqual(engine.statistics.ngons, 0)
+        assertValid(engine.mesh)
+    }
+
+    func testALineFarFromAPatchOffersNothing() throws {
+        let engine = try patchedEngine()
+        Fixtures.draw(engine, from: Vec2(460, 720), to: Vec2(540, 720))
+        XCTAssertNil(engine.fillSuggestion)
+    }
+
+    func testALoopInsideALoopOffersARing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 150))
+        XCTAssertNil(engine.fillSuggestion, "one loop has nothing to join")
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 80))
+        let suggestion = try XCTUnwrap(engine.fillSuggestion)
+        XCTAssertEqual(suggestion.preview.kind, .ring)
+        XCTAssertNotNil(engine.reopenablePlans, "the loop can still be kept open")
+        XCTAssertEqual(engine.mesh.faceCount, 0)
+        engine.commitFillSuggestion()
+        XCTAssertEqual(engine.mesh.faceCount, suggestion.preview.columns * suggestion.preview.rows)
+        XCTAssertNil(engine.reopenablePlans)
+        XCTAssertEqual(engine.statistics.ngons, 0)
+        assertValid(engine.mesh)
+    }
+
+    func testKeepingTheInnerLoopOpenWithdrawsTheRing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 150))
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 80))
+        XCTAssertNotNil(engine.fillSuggestion)
+        engine.keepLoopOpen()
+        XCTAssertNil(engine.fillSuggestion)
+        XCTAssertNil(engine.reopenablePlans)
+    }
+
+    func testALoopAroundAPatchOffersARing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.quadPatch)
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 80))
+        engine.commitPatch()
+        let before = engine.mesh.faceCount
+        XCTAssertGreaterThan(before, 0)
+        engine.setTool(.drawEdges)
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 160))
+        XCTAssertEqual(engine.fillSuggestion?.preview.kind, .ring)
+        engine.commitFillSuggestion()
+        XCTAssertGreaterThan(engine.mesh.faceCount, before)
+        XCTAssertEqual(engine.statistics.ngons, 0)
+        XCTAssertEqual(isolatedVertices(engine.mesh), 0)
+        assertValid(engine.mesh)
+    }
+
+    func testTwoLoopsSideBySideOfferNothing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(420, 500), radius: 55))
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(580, 500), radius: 55))
+        XCTAssertEqual(engine.mesh.faceCount, 0)
+        XCTAssertNil(engine.fillSuggestion, "a pair of eyes isn't a ring")
+    }
+
+    // MARK: Picking lines in Draw Edges
+
+    private func tap(_ engine: RetopoEngine, _ point: Vec2) {
+        engine.pencilBegan(at: point)
+        engine.pencilEnded(at: point)
+    }
+
+    func testTappingTwoLinesInDrawEdgesPreviewsAPatch() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(600, 400))
+        Fixtures.draw(engine, from: Vec2(400, 600), to: Vec2(600, 600))
+        tap(engine, Vec2(500, 400))
+        XCTAssertEqual(engine.patchChains.count, 1)
+        XCTAssertEqual(engine.activeTool, .drawEdges)
+        tap(engine, Vec2(500, 600))
+        XCTAssertNotNil(engine.patchPreview)
+        var events: [RetopoEngine.EngineEvent] = []
+        engine.onEvent = { events.append($0) }
+        engine.commitPatch()
+        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
+        XCTAssertTrue(events.contains(.patchCreated))
+        XCTAssertTrue(engine.patchChains.isEmpty)
+        assertValid(engine.mesh)
+    }
+
+    func testAStrokeAfterPickingALineBecomesTheNextSide() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(600, 400))
+        tap(engine, Vec2(500, 400))
+        Fixtures.draw(engine, from: Vec2(400, 600), to: Vec2(600, 600))
+        XCTAssertEqual(engine.patchChains.count, 2)
+        XCTAssertNotNil(engine.patchPreview)
+        XCTAssertNil(engine.fillSuggestion, "it's already on its way to being a patch")
+    }
+
+    func testPicksLastAcrossDrawEdgesAndQuadPatchOnly() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(600, 400))
+        tap(engine, Vec2(500, 400))
+        engine.setTool(.quadPatch)
+        XCTAssertEqual(engine.patchChains.count, 1)
+        engine.setTool(.drawEdges)
+        XCTAssertEqual(engine.patchChains.count, 1)
+        engine.setTool(.select)
+        XCTAssertTrue(engine.patchChains.isEmpty)
+    }
+
+    func testATapAwayFromAnyLineInDrawEdgesPicksNothing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(600, 400))
+        tap(engine, Vec2(500, 600))
+        XCTAssertTrue(engine.patchChains.isEmpty)
+        XCTAssertNotNil(engine.message)
+    }
+
     func testLinesOnOppositeSidesOfTheModelAreNotNeighbours() throws {
         var mesh = Mesh()
         let front = (0...5).map { mesh.addVertex(simd_normalize(Vec3(Float($0) * 0.04 - 0.1, 0, 1))) }

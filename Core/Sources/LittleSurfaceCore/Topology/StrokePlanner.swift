@@ -7,6 +7,8 @@ public struct StrokePlanOptions {
     /// How close the stroke must pass to an existing edge to count as crossing it.
     public var crossingTolerance: Float
     public var surfaceOffset: Float = 0
+    /// How far a stroke heading away from the end of a line still counts as continuing it.
+    public var lineEndRadius: Float = 0
     /// Used to tell a vertex on the far side of a thin surface from one beside the stroke.
     public var projector: SurfaceProjector?
 
@@ -25,6 +27,10 @@ public struct StrokePlan {
     /// Parts of the stroke lay over existing faces and were left out.
     public var droppedOverFaces = false
     public var isClosed = false
+    /// An end picked up where an existing line stops, to carry on from it.
+    public var extendsLine = false
+    /// Existing lines the stroke crossed, when it crossed at least two and so joins them.
+    public var connectedLines = 0
 }
 
 /// Converts a processed stroke into a topology plan. Behaviour where a stroke meets existing topology:
@@ -34,6 +40,9 @@ public struct StrokePlan {
 ///   edge. Either way the stroke and the edge end up sharing a vertex.
 /// - **Over existing faces** nothing is created. The stroke stops at the faces' boundary and resumes on
 ///   the far side, because an edge across a face interior isn't valid topology.
+/// - **Starting at the end of a line** and heading on from it carries the line on, from further away
+///   than a snap would reach.
+/// - **Crossing two or more lines** joins them, and a short overshoot past the outermost is left out.
 public enum StrokePlanner {
     private struct PathNode {
         var node: PlanNode
@@ -57,18 +66,32 @@ public enum StrokePlanner {
         var out = StrokePlan(plan: TopologyPlan())
         out.isClosed = path.isClosed
         var splitCount = 0, snappedEnds = 0
+        var extendsLine = false, connectedLines = 0
 
         let spacing = path.points.count > 1 ? path.length / Float(path.points.count - 1) : options.snapRadius
 
         if !path.isClosed, !mesh.isEmpty {
-            if let snapped = snapEnd(position: nodes[0].position, normal: nodes[0].normal, mesh: mesh, options: options) {
+            let inward = min(3, nodes.count - 1)
+            let startHeading = nodes[inward].position - nodes[0].position
+            if let v = lineEnd(near: nodes[0].position, heading: startHeading, normal: nodes[0].normal, mesh: mesh, options: options) {
+                nodes[0].node = .existing(v)
+                nodes[0].position = mesh.position(v)
+                snappedEnds += 1
+                extendsLine = true
+            } else if let snapped = snapEnd(position: nodes[0].position, normal: nodes[0].normal, mesh: mesh, options: options) {
                 nodes[0].node = snapped.node
                 nodes[0].position = snapped.position
                 snappedEnds += 1
                 if case .split = snapped.node { splitCount += 1 }
             }
             let last = nodes.count - 1
-            if let snapped = snapEnd(position: nodes[last].position, normal: nodes[last].normal, mesh: mesh, options: options) {
+            let endHeading = nodes[last - inward].position - nodes[last].position
+            if let v = lineEnd(near: nodes[last].position, heading: endHeading, normal: nodes[last].normal, mesh: mesh, options: options) {
+                nodes[last].node = .existing(v)
+                nodes[last].position = mesh.position(v)
+                snappedEnds += 1
+                extendsLine = true
+            } else if let snapped = snapEnd(position: nodes[last].position, normal: nodes[last].normal, mesh: mesh, options: options) {
                 nodes[last].node = snapped.node
                 nodes[last].position = snapped.position
                 snappedEnds += 1
@@ -88,6 +111,16 @@ public enum StrokePlanner {
                 merged.append(contentsOf: crossings)
                 merged.sort { $0.along < $1.along }
                 nodes = merged
+                if !path.isClosed, crossings.count >= 2 {
+                    connectedLines = crossings.count
+                    let overshoot = options.snapRadius * 1.5
+                    if let first = nodes.firstIndex(where: \.isCrossing), let last = nodes.lastIndex(where: \.isCrossing) {
+                        var keep = 0...(nodes.count - 1)
+                        if case .new = nodes[0].node, nodes[first].along - nodes[0].along <= overshoot { keep = first...keep.upperBound }
+                        if case .new = nodes[nodes.count - 1].node, nodes[nodes.count - 1].along - nodes[last].along <= overshoot { keep = keep.lowerBound...last }
+                        nodes = Array(nodes[keep])
+                    }
+                }
             }
         }
 
@@ -171,7 +204,30 @@ public enum StrokePlanner {
         out.splitCount = splitCount
         out.snappedEnds = snappedEnds
         out.droppedOverFaces = dropped
+        out.extendsLine = extendsLine
+        out.connectedLines = connectedLines
         return out
+    }
+
+    /// The nearest free end of a wire line in reach of the stroke's end, if the stroke heads on from
+    /// it rather than running back alongside. Two parallel lines drawn close together stay separate.
+    private static func lineEnd(near position: Vec3, heading: Vec3, normal: Vec3, mesh: Mesh, options: StrokePlanOptions) -> VertexID? {
+        guard options.lineEndRadius > 0, simd_length_squared(heading) > 0 else { return nil }
+        let direction = simd_normalize(heading)
+        var best: VertexID?
+        var bestDistance = options.lineEndRadius
+        for v in mesh.aliveVertices {
+            let edges = mesh.edgesOf(v)
+            guard edges.count == 1, mesh.isWire(edges[0]) else { continue }
+            let p = mesh.position(v)
+            let d = simd_length(p - position)
+            guard d < bestDistance, sameSide(of: v, normal: normal, mesh: mesh, options: options) else { continue }
+            let outward = p - mesh.position(mesh.otherEnd(edges[0], from: v))
+            guard simd_length_squared(outward) > 0, simd_dot(simd_normalize(outward), direction) >= 0.3 else { continue }
+            best = v
+            bestDistance = d
+        }
+        return best
     }
 
     private static func snapEnd(position: Vec3, normal: Vec3, mesh: Mesh, options: StrokePlanOptions) -> (node: PlanNode, position: Vec3)? {
