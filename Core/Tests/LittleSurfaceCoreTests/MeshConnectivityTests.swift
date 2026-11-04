@@ -48,7 +48,8 @@ final class MeshConnectivityTests: XCTestCase {
         var (mesh, ids) = Fixtures.grid(columns: 1, rows: 1)
         let a = mesh.addVertex(Vec3(2, 0, 0)), b = mesh.addVertex(Vec3(2, 1, 0))
         // Stated with the same direction along the shared edge as the existing face.
-        try mesh.addFace([ids[0][1], ids[1][1], b, a].reversed().reversed())
+        let added = try mesh.addFace([ids[0][1], ids[1][1], b, a])
+        XCTAssertGreaterThan(mesh.faceNormal(added).z, 0.9, "stated clockwise, flipped to match its neighbour")
         assertConsistentWinding(mesh)
         assertValid(mesh)
     }
@@ -408,5 +409,26 @@ final class MeshConnectivityTests: XCTestCase {
         for f in mesh.aliveFaces {
             XCTAssertGreaterThan(simd_dot(mesh.faceNormal(f), mesh.faceCenter(f)), 0)
         }
+    }
+
+    func testExtrudingAWireChainKeepsOneSideWhateverItsEndOrder() throws {
+        var mesh = Mesh()
+        let v = (0..<5).map { mesh.addVertex(Vec3(Float($0), 0, 0)) }
+        // Alternate the stated direction, which is what stored end order can look like.
+        var edges = Set<EdgeID>()
+        for i in 0..<4 {
+            edges.insert(i % 2 == 0 ? try mesh.ensureEdge(v[i], v[i + 1]) : try mesh.ensureEdge(v[i + 1], v[i]))
+        }
+        let top = try mesh.extrudeEdges(edges, distance: 0.5, projector: nil)
+        XCTAssertEqual(top.count, 4)
+        XCTAssertEqual(mesh.faceCount, 4)
+        XCTAssertEqual(mesh.vertexCount, 10)
+        let new = mesh.aliveVertices.filter { !v.contains($0) }.map { mesh.position($0) }
+        for p in new {
+            XCTAssertEqual(simd_distance(p, new[0]) > 0 ? simd_length(Vec3(0, p.y, p.z)) : 0.5, 0.5, accuracy: 1e-4, "\(p)")
+            XCTAssertEqual(simd_length(Vec3(0, p.y, p.z) - Vec3(0, new[0].y, new[0].z)), 0, accuracy: 1e-4, "all copies moved the same way")
+        }
+        assertValid(mesh)
+        assertConsistentWinding(mesh)
     }
 }

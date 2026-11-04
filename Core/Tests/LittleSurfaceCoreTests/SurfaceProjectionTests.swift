@@ -116,6 +116,26 @@ final class SurfaceProjectionTests: XCTestCase {
     }
 }
 
+final class AxisAlignedRayTests: XCTestCase {
+    func testRaysLyingInBoxFacesStillHit() throws {
+        // The plane's triangle edges fill BVH faces at y = 0 and x = 0, exactly where these rays run.
+        let projector = Fixtures.projector(Fixtures.plane())
+        for d in [Vec3(0, 0, -1), Vec3(-0.0, -0.0, -1), simd_normalize(Vec3(0.2, 0, -1)), simd_normalize(Vec3(-0.2, -0.0, -1)), simd_normalize(Vec3(0, -0.2, -1))] {
+            let hit = projector.raycast(Ray(origin: Vec3(0, 0, 5), direction: d))
+            XCTAssertNotNil(hit, "\(d)")
+            XCTAssertEqual(hit?.position.z ?? 1, 0, accuracy: 1e-4)
+        }
+        XCTAssertNil(projector.raycast(Ray(origin: Vec3(9, 0, 5), direction: Vec3(0, 0, -1))), "rays beside the plane still miss")
+    }
+
+    func testStrokeAlongAnAxisOfASymmetricModelIsContinuous() throws {
+        var capture = StrokeCapture(camera: Fixtures.frontCamera(), projector: Fixtures.projector(Fixtures.plane()))
+        for x in stride(from: Float(300), through: 700, by: 10) { capture.add(screen: Vec2(x, 500)) }
+        XCTAssertEqual(capture.runs.count, 1)
+        XCTAssertEqual(capture.missCount, 0)
+    }
+}
+
 final class CameraTests: XCTestCase {
     func testProjectAndRayAreInverse() throws {
         for mode in ProjectionMode.allCases {

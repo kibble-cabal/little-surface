@@ -167,18 +167,28 @@ public final class TriangleBVH {
 
     @inline(__always)
     private static func slabEntry(_ node: Node, origin: Vec3, inverse: Vec3, tMax: Float) -> Float {
-        let t0 = (node.lo - origin) * inverse
-        let t1 = (node.hi - origin) * inverse
+        // A ray lying exactly in a box's face has 0 * infinity = NaN there. It counts as inside that slab.
+        var t0 = (node.lo - origin) * inverse
+        var t1 = (node.hi - origin) * inverse
+        t0.replace(with: -.infinity, where: t0 .!= t0)
+        t1.replace(with: .infinity, where: t1 .!= t1)
         let near = simd_min(t0, t1), far = simd_max(t0, t1)
         let tNear = max(near.max(), 0)
         let tFar = min(far.min(), tMax)
-        return tNear <= tFar ? tNear : .infinity
+        // The small allowance stops rounding from opening cracks between neighbouring boxes.
+        return tNear <= tFar * 1.00001 ? tNear : .infinity
+    }
+
+    /// Per-axis 1/d. Zero is always +infinity, so -0 can't turn a slab inside out.
+    @inline(__always)
+    private static func inverseDirection(_ d: Vec3) -> Vec3 {
+        Vec3(d.x == 0 ? .infinity : 1 / d.x, d.y == 0 ? .infinity : 1 / d.y, d.z == 0 ? .infinity : 1 / d.z)
     }
 
     /// Nearest hit along the ray, before `tMax`.
     public func raycast(_ ray: Ray, tMax: Float = .infinity) -> Hit? {
         guard !triangleOrder.isEmpty else { return nil }
-        let inverse = Vec3(1 / ray.direction.x, 1 / ray.direction.y, 1 / ray.direction.z)
+        let inverse = TriangleBVH.inverseDirection(ray.direction)
         var best = tMax
         var bestTri = -1
         var bestU: Float = 0, bestV: Float = 0

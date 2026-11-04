@@ -39,7 +39,7 @@ final class SelectionTests: XCTestCase {
         let projector = Fixtures.projector(sphere)
         var mesh = Mesh()
         let front = mesh.addVertex(Vec3(0, 0, 1))
-        let back = mesh.addVertex(Vec3(0, 0, -1))
+        _ = mesh.addVertex(Vec3(0, 0, -1))
         let camera = Fixtures.frontCamera()
         let center = Vec2(500, 500)
 
@@ -53,7 +53,7 @@ final class SelectionTests: XCTestCase {
 
         picker.ignoresOcclusion = true
         XCTAssertNotNil(picker.pickVertex(at: center, radius: 20), "x-ray can pick through the surface")
-        _ = back
+
     }
 
     func testPickFaceAndEdge() throws {

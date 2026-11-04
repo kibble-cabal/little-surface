@@ -210,6 +210,7 @@ public final class RetopoEngine {
     public func installLoadedBVHs(_ built: [UUID: TriangleBVH]) {
         bvhs = built
         rebuildProjector()
+        if !patchChains.isEmpty { updatePatchPreview() }
         notify()
     }
 
@@ -1131,7 +1132,6 @@ public final class RetopoEngine {
                 if selectionOperation == .remove { selectionOperation = .replace }
                 applyPick(startedOn)
                 selectionOperation = saved
-                drag.before.selection = drag.before.selection
             }
             let touched = selection.touchedVertices(in: mesh)
             let expanded = symmetry.isEnabled ? Symmetry.expanded(vertices: touched, in: mesh) : touched

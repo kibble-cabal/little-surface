@@ -123,6 +123,8 @@ public enum StrokePlanner {
                     guard case .new = nodes[i].node else { continue }
                     if nodes[j].along - nodes[i].along < spacing * 2.5 { continue }
                     if path.isClosed && (path.length - nodes[j].along + nodes[i].along) < spacing * 2.5 { continue }
+                    // Joining an open stroke's two ends would be closing it, which only the artist may ask for.
+                    if !path.isClosed && i == 0 && j == nodes.count - 1 { continue }
                     if simd_length(nodes[i].position - nodes[j].position) < selfTolerance {
                         canonical[j] = i
                         break

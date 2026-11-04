@@ -312,11 +312,31 @@ public extension Mesh {
             throw MeshError.invalid("Only boundary or loose edges can be extruded. An interior edge already has a face on both sides.")
         }
 
+        // Wire edges have no inside to tell them apart and store their ends in arbitrary order,
+        // so walk each connected run to give every edge the same direction of travel.
+        let liveSet = Set(live)
+        var travel = [EdgeID: (VertexID, VertexID)]()
+        for start in live where travel[start] == nil && isWire(start) {
+            travel[start] = ends(start)
+            var stack = [start]
+            while let e = stack.popLast() {
+                let (a, b) = travel[e]!
+                for n in edgesOf(a) where liveSet.contains(n) && travel[n] == nil && isWire(n) {
+                    travel[n] = (otherEnd(n, from: a), a)
+                    stack.append(n)
+                }
+                for n in edgesOf(b) where liveSet.contains(n) && travel[n] == nil && isWire(n) {
+                    travel[n] = (b, otherEnd(n, from: b))
+                    stack.append(n)
+                }
+            }
+        }
+
         // Average outward direction per vertex across the edges using it.
         var directions = [VertexID: Vec3]()
         var normals = [VertexID: Vec3]()
         for e in live {
-            let (a, b) = ends(e)
+            let (a, b) = travel[e] ?? ends(e)
             let pa = position(a), pb = position(b)
             let tangent = GeometryMath.safeNormalize(pb - pa)
             var normal = Vec3(repeating: 0)
@@ -336,7 +356,6 @@ public extension Mesh {
             normals[a] = normal
             normals[b] = normal
         }
-        // Wire edges have no inside to tell them apart, so make neighbouring sides agree first.
         var copies = [VertexID: VertexID]()
         for (v, direction) in directions.sorted(by: { $0.key < $1.key }) {
             let raw = position(v) + GeometryMath.safeNormalize(direction, fallback: Vec3(0, 1, 0)) * distance
