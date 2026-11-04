@@ -47,7 +47,10 @@ public struct Camera: Equatable {
 
     public var nearPlane: Float {
         let r = max(sceneRadius, 1e-4)
-        return max(distance - r * 4, max(distance, r) * 0.002)
+        // Close enough that the depth buffer can still tell the front of the model from the back, however the
+        // view is framed. Lines are pulled toward the eye by a fixed depth, so too near a plane lets them show through.
+        let keepsDepth = min(distance * distance / r * 0.058, distance * 0.5)
+        return max(distance - r * 4, keepsDepth, max(distance, r) * 0.002)
     }
 
     public var farPlane: Float { distance + max(sceneRadius, 1e-4) * 6 }
