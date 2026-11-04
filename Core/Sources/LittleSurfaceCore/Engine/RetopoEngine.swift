@@ -496,6 +496,33 @@ public final class RetopoEngine {
         notify()
     }
 
+    // MARK: Timelapse
+
+    public let timelapse = TimelapseRecorder()
+
+    /// An engine for drawing the frames of a replay. It has the project's models and nothing else.
+    public static func forReplay(of snapshot: ProjectSnapshot) -> RetopoEngine {
+        var bare = snapshot
+        bare.mesh = Mesh()
+        bare.selection = Selection()
+        bare.patchChains = []
+        bare.faceBuilderVertices = []
+        bare.symmetry.isEnabled = false
+        bare.sketches = []
+        bare.showsSketch = true
+        bare.timelapse = []
+        bare.activeTool = .select
+        bare.viewport.showRetopology = true
+        bare.viewport.showSource = true
+        bare.viewport.displayMode = .solid
+        return RetopoEngine(snapshot: bare)
+    }
+
+    public func showForReplay(mesh: Mesh, sketches: [SketchStroke]) {
+        install(EditSnapshot(mesh: mesh, selection: Selection(), sketches: sketches))
+        rebuildOverlay()
+    }
+
     // MARK: Sketch layer
 
     public private(set) var sketches: [SketchStroke] = []
@@ -701,6 +728,8 @@ public final class RetopoEngine {
     }
 
     private func didEdit() {
+        // Here rather than at each tool, so that no edit, undo or redo can miss the timelapse.
+        timelapse.record(mesh: mesh, sketches: sketches, orientation: camera.orientation)
         editGeneration &+= 1
         reopenablePlans = nil
         fillSuggestion = nil
@@ -2222,12 +2251,19 @@ public final class RetopoEngine {
 
     // MARK: Symmetry
 
+    /// Pairing can snap vertices onto the plane. That isn't an edit to undo, but the replay still shows it.
+    private func adoptRepairedPairs(_ repaired: Mesh) {
+        let moved = repaired.positions != mesh.positions
+        mesh = repaired
+        if moved { timelapse.record(mesh: mesh, sketches: sketches, orientation: camera.orientation) }
+    }
+
     public func setSymmetryEnabled(_ enabled: Bool) {
         symmetry.isEnabled = enabled
         if enabled, let plane = symmetry.activePlane {
             var work = mesh
             repairPairs(&work, plane: plane)
-            mesh = work
+            adoptRepairedPairs(work)
         }
         editGeneration &+= 1
         rebuildOverlay()
@@ -2252,7 +2288,7 @@ public final class RetopoEngine {
         var work = mesh
         for v in work.aliveVertices { work.setMirrorPartner(v, invalidID) }
         if let plane = symmetry.activePlane { repairPairs(&work, plane: plane) }
-        mesh = work
+        adoptRepairedPairs(work)
         editGeneration &+= 1
         notify()
     }
@@ -2402,6 +2438,7 @@ public final class RetopoEngine {
         snapshot.patchChains = patchChains
         snapshot.polyBudget = polyBudget
         snapshot.sketches = sketches
+        snapshot.timelapse = timelapse.frames
         snapshot.sketchColorIndex = sketchColorIndex
         snapshot.showsSketch = showsSketch
         snapshot.faceBuilderVertices = faceCorners.compactMap { corner in
@@ -2429,6 +2466,7 @@ public final class RetopoEngine {
         sketches = snapshot.sketches
         sketchColorIndex = snapshot.sketchColorIndex
         showsSketch = snapshot.showsSketch
+        timelapse.load(snapshot.timelapse, mesh: mesh, sketches: sketches, orientation: camera.orientation)
         faceCorners = snapshot.faceBuilderVertices.filter(mesh.isVertexAlive).map { .vertex($0) }
         rebuildOverlay()
     }

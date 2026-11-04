@@ -13,6 +13,7 @@
 		28C67CB5770916452B11EFD8 /* EditorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F59F4BAB4DCBF1FE470F3BA /* EditorModel.swift */; };
 		2C6DE9CD3B751F72CA635013 /* ProjectDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA242867357FBD8D7B1CD7C0 /* ProjectDocument.swift */; };
 		3FA58251E03D18B177DBAE18 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 804563D7FDEE3D22BEDDA3E3 /* AppSettings.swift */; };
+		41E939F6A70455FBD3AE6954 /* TimelapseExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */; };
 		4530B86FCE58F3165DDB7D96 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF8E71B735CA1BCC54E753D5 /* WelcomeView.swift */; };
 		533EE4078DDE44E4E86FA2CA /* Shaders.msl in Resources */ = {isa = PBXBuildFile; fileRef = 862D894F342901E63C82BC90 /* Shaders.msl */; };
 		64BE7548250EFFB3185C0D91 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7EAC9FE2B53E2CAD6566E547 /* Assets.xcassets */; };
@@ -22,6 +23,7 @@
 		A0472A208CA67BA35D0F511B /* ViewportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6AA6E9C3423B67DD74022A /* ViewportView.swift */; };
 		B615EFF448BFFED6C41F6E0A /* ProjectLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A34BA98C55686516ECB57D1 /* ProjectLibrary.swift */; };
 		B9A00326904285BBBDA6C803 /* LittleSurfaceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 86455407BC6AD5E65434F015 /* LittleSurfaceCore */; };
+		D0FEEAAA0A34FBC5FF1FADD9 /* TimelapseExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */; };
 		D37C1C98DCA6F7AAA185CFBC /* WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */; };
 		E365E75625D10F561FE679CB /* Example.glb in Resources */ = {isa = PBXBuildFile; fileRef = 2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */; };
 		F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77C29AE9EE3901E9C42619B /* EditorView.swift */; };
@@ -53,6 +55,7 @@
 		4A6AA6E9C3423B67DD74022A /* ViewportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportView.swift; sourceTree = "<group>"; };
 		64964A42BDD2F8515FB3421A /* DocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentTests.swift; sourceTree = "<group>"; };
 		698C798F81E379D1E9A20233 /* LittleSurfaceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LittleSurfaceApp.swift; sourceTree = "<group>"; };
+		719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelapseExporter.swift; sourceTree = "<group>"; };
 		7A34BA98C55686516ECB57D1 /* ProjectLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectLibrary.swift; sourceTree = "<group>"; };
 		7EAC9FE2B53E2CAD6566E547 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7F59F4BAB4DCBF1FE470F3BA /* EditorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorModel.swift; sourceTree = "<group>"; };
@@ -63,6 +66,7 @@
 		C5DABC239222C132F83905E0 /* ToolPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPanels.swift; sourceTree = "<group>"; };
 		C77C29AE9EE3901E9C42619B /* EditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorView.swift; sourceTree = "<group>"; };
 		DA242867357FBD8D7B1CD7C0 /* ProjectDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDocument.swift; sourceTree = "<group>"; };
+		DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelapseExportTests.swift; sourceTree = "<group>"; };
 		E6499438F5C0C4A697E5F4C1 /* LittleSurfaceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LittleSurfaceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD96C0A47A21C3DB990725EE /* LittleSurface.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LittleSurface.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF8E71B735CA1BCC54E753D5 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
@@ -182,6 +186,7 @@
 			isa = PBXGroup;
 			children = (
 				64964A42BDD2F8515FB3421A /* DocumentTests.swift */,
+				DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */,
 			);
 			path = AppTests;
 			sourceTree = "<group>";
@@ -191,6 +196,7 @@
 			children = (
 				804563D7FDEE3D22BEDDA3E3 /* AppSettings.swift */,
 				7F59F4BAB4DCBF1FE470F3BA /* EditorModel.swift */,
+				719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */,
 			);
 			path = Editor;
 			sourceTree = "<group>";
@@ -345,6 +351,7 @@
 				2C6DE9CD3B751F72CA635013 /* ProjectDocument.swift in Sources */,
 				B615EFF448BFFED6C41F6E0A /* ProjectLibrary.swift in Sources */,
 				1AEE19D627CF604BCE93E6B9 /* Theme.swift in Sources */,
+				D0FEEAAA0A34FBC5FF1FADD9 /* TimelapseExporter.swift in Sources */,
 				03BAF5AF01C7C02403C86BBD /* ToolPanels.swift in Sources */,
 				816CBE3FC65CBD74D4F40652 /* ViewportRenderer.swift in Sources */,
 				A0472A208CA67BA35D0F511B /* ViewportView.swift in Sources */,
@@ -357,6 +364,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8D2D78BB187D63B667F332FF /* DocumentTests.swift in Sources */,
+				41E939F6A70455FBD3AE6954 /* TimelapseExportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

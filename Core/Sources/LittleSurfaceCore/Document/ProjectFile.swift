@@ -100,6 +100,7 @@ public struct ProjectSnapshot {
     public var sketches: [SketchStroke] = []
     public var sketchColorIndex = 0
     public var showsSketch = true
+    public var timelapse: [TimelapseFrame] = []
 
     public init(name: String) {
         self.name = name
@@ -208,13 +209,15 @@ public enum ProjectCodec {
         chunks.append(("MESH", encodeMesh(snapshot.mesh)))
         for source in snapshot.sources { chunks.append(("SRC ", encodeSource(source))) }
         if !snapshot.sketches.isEmpty { chunks.append(("SKCH", encodeSketches(snapshot.sketches))) }
+        if !snapshot.timelapse.isEmpty { chunks.append(("TLPS", encodeTimelapse(snapshot.timelapse))) }
 
         var out = Data()
         out.append(magic)
         appendValue(&out, currentVersion)
         appendValue(&out, UInt32(chunks.count))
         for chunk in chunks {
-            let compressed = try? (chunk.data as NSData).compressed(using: .lzfse) as Data
+            // The timelapse frames are packed already, and squeezing them again would slow every autosave.
+            let compressed = chunk.tag == "TLPS" ? nil : try? (chunk.data as NSData).compressed(using: .lzfse) as Data
             let useCompressed = (compressed?.count ?? .max) < chunk.data.count
             let stored = useCompressed ? compressed! : chunk.data
             out.append(Data(chunk.tag.utf8))
@@ -233,6 +236,53 @@ public enum ProjectCodec {
     private static func appendArray<T>(_ data: inout Data, _ array: [T]) {
         appendValue(&data, UInt64(array.count))
         array.withUnsafeBytes { data.append(contentsOf: $0) }
+    }
+
+    static func encodeTimelapseGeometry(mesh: Mesh, sketches: [SketchStroke]) -> Data {
+        let meshData = encodeMesh(mesh)
+        var plain = Data()
+        appendValue(&plain, UInt64(meshData.count))
+        plain.append(meshData)
+        plain.append(encodeSketches(sketches))
+        return (try? (plain as NSData).compressed(using: .lzfse) as Data) ?? Data()
+    }
+
+    static func decodeTimelapseGeometry(_ data: Data) throws -> (mesh: Mesh, sketches: [SketchStroke]) {
+        let plain = try (data as NSData).decompressed(using: .lzfse) as Data
+        var r = BinaryReader(data: plain, offset: 0)
+        let meshSize: UInt64 = try r.value()
+        let meshData = try r.bytes(Int(meshSize))
+        return (try decodeMesh(meshData), try decodeSketches(plain.subdata(in: (plain.startIndex + r.offset)..<plain.endIndex)))
+    }
+
+    private static func encodeTimelapse(_ frames: [TimelapseFrame]) -> Data {
+        var out = Data()
+        appendValue(&out, UInt32(frames.count))
+        for frame in frames {
+            appendValue(&out, UInt8(frame.focus == nil ? 0 : 1))
+            let focus = frame.focus ?? Vec3(repeating: 0)
+            for value in [focus.x, focus.y, focus.z, frame.orientation.vector.x, frame.orientation.vector.y, frame.orientation.vector.z, frame.orientation.vector.w] {
+                appendValue(&out, value)
+            }
+            appendValue(&out, UInt64(frame.geometry.count))
+            out.append(frame.geometry)
+        }
+        return out
+    }
+
+    private static func decodeTimelapse(_ data: Data) throws -> [TimelapseFrame] {
+        var r = BinaryReader(data: data, offset: 0)
+        let count: UInt32 = try r.value()
+        var frames: [TimelapseFrame] = []
+        for _ in 0..<count {
+            let hasFocus: UInt8 = try r.value()
+            var v: [Float] = []
+            for _ in 0..<7 { v.append(try r.value()) }
+            let size: UInt64 = try r.value()
+            frames.append(TimelapseFrame(geometry: try r.bytes(Int(size)), focus: hasFocus == 1 ? Vec3(v[0], v[1], v[2]) : nil,
+                                         orientation: simd_quatf(ix: v[3], iy: v[4], iz: v[5], r: v[6])))
+        }
+        return frames
     }
 
     private static func encodeSketches(_ sketches: [SketchStroke]) -> Data {
@@ -310,6 +360,7 @@ public enum ProjectCodec {
         var meshData: Data?
         var sourceData: [Data] = []
         var sketchData: Data?
+        var timelapseData: Data?
         for _ in 0..<count {
             if isCancelled() { throw ImportError.cancelled }
             let tag = String(decoding: try reader.bytes(4), as: UTF8.self)
@@ -333,6 +384,7 @@ public enum ProjectCodec {
             case "MESH": meshData = chunk
             case "SRC ": sourceData.append(chunk)
             case "SKCH": sketchData = chunk
+            case "TLPS": timelapseData = chunk
             default: break
             }
         }
@@ -361,6 +413,8 @@ public enum ProjectCodec {
         snapshot.sketchColorIndex = meta.sketchColorIndex ?? 0
         snapshot.showsSketch = meta.showsSketch ?? true
         if let sketchData { snapshot.sketches = try decodeSketches(sketchData) }
+        // Losing the replay isn't worth losing the project over.
+        if let timelapseData { snapshot.timelapse = (try? decodeTimelapse(timelapseData)) ?? [] }
         snapshot.mesh = try decodeMesh(meshData)
         for (info, chunk) in zip(meta.sources, sourceData) {
             if isCancelled() { throw ImportError.cancelled }

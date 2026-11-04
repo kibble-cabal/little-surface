@@ -504,6 +504,17 @@ struct ExportPopover: View {
             .pillButton(prominent: true)
             .disabled(stats.faces == 0 && stats.edges == 0 && !includesSource)
             .accessibilityIdentifier("Export Confirm")
+            Divider()
+            Text("Timelapse").font(.subheadline.weight(.semibold))
+            Text("A short video of the mesh growing, step by step.")
+                .font(.footnote).foregroundStyle(Theme.quiet)
+            Button("Make Timelapse…") {
+                model.exportTimelapse()
+                isPresented = false
+            }
+            .pillButton()
+            .disabled(model.engine.timelapse.frames.isEmpty)
+            .accessibilityIdentifier("Make Timelapse")
         }
         .padding()
         .frame(width: 320)

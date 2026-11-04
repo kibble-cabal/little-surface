@@ -757,11 +757,25 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     // MARK: Thumbnails
 
-    /// Renders the document to an image for the project list.
-    func thumbnail(engine: RetopoEngine, size: CGSize) -> UIImage? {
-        let width = Int(size.width), height = Int(size.height)
-        var camera = engine.camera
-        camera.viewSize = Vec2(Float(width), Float(height))
+    /// Somewhere to draw off screen, kept so that a video needn't make a new one for every frame.
+    final class OffscreenTarget {
+        let width: Int, height: Int
+        fileprivate let multisampled: MTLTexture, resolved: MTLTexture, depth: MTLTexture
+        /// Top row first, four bytes a pixel in BGRA order.
+        let pixels: MTLBuffer
+        var bytesPerRow: Int { width * 4 }
+
+        fileprivate init(width: Int, height: Int, multisampled: MTLTexture, resolved: MTLTexture, depth: MTLTexture, pixels: MTLBuffer) {
+            self.width = width
+            self.height = height
+            self.multisampled = multisampled
+            self.resolved = resolved
+            self.depth = depth
+            self.pixels = pixels
+        }
+    }
+
+    func makeOffscreenTarget(width: Int, height: Int) -> OffscreenTarget? {
         let ms = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Self.colorFormat, width: width, height: height, mipmapped: false)
         ms.textureType = .type2DMultisample
         ms.sampleCount = Self.sampleCount
@@ -775,19 +789,23 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         depth.sampleCount = Self.sampleCount
         depth.storageMode = .private
         depth.usage = .renderTarget
-        let bytesPerRow = width * 4
         guard let msTexture = device.makeTexture(descriptor: ms), let resolveTexture = device.makeTexture(descriptor: resolve),
               let depthTexture = device.makeTexture(descriptor: depth),
-              let readback = device.makeBuffer(length: bytesPerRow * height, options: .storageModeShared),
-              let commands = queue.makeCommandBuffer() else { return nil }
+              let pixels = device.makeBuffer(length: width * 4 * height, options: .storageModeShared) else { return nil }
+        return OffscreenTarget(width: width, height: height, multisampled: msTexture, resolved: resolveTexture, depth: depthTexture, pixels: pixels)
+    }
+
+    /// False if the GPU turned the work down, as it does once the app has gone to the background.
+    func renderOffscreen(engine: RetopoEngine, camera: Camera, into target: OffscreenTarget) -> Bool {
+        guard let commands = queue.makeCommandBuffer() else { return false }
         let style = ViewportStyle.make(dark: false, backgroundLevel: nil)
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = msTexture
-        pass.colorAttachments[0].resolveTexture = resolveTexture
+        pass.colorAttachments[0].texture = target.multisampled
+        pass.colorAttachments[0].resolveTexture = target.resolved
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].storeAction = .multisampleResolve
         pass.colorAttachments[0].clearColor = style.background
-        pass.depthAttachment.texture = depthTexture
+        pass.depthAttachment.texture = target.depth
         pass.depthAttachment.loadAction = .clear
         pass.depthAttachment.storeAction = .dontCare
         pass.depthAttachment.clearDepth = 1
@@ -796,20 +814,32 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         update(buffers[frameIndex], from: engine)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
             inFlight.signal()
-            return nil
+            return false
         }
         encode(encoder, engine: engine, style: style, camera: camera, includesInteraction: false)
         encoder.endEncoding()
         if let blit = commands.makeBlitCommandEncoder() {
-            blit.copy(from: resolveTexture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-                      sourceSize: MTLSize(width: width, height: height, depth: 1),
-                      to: readback, destinationOffset: 0, destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: bytesPerRow * height)
+            blit.copy(from: target.resolved, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                      sourceSize: MTLSize(width: target.width, height: target.height, depth: 1),
+                      to: target.pixels, destinationOffset: 0, destinationBytesPerRow: target.bytesPerRow,
+                      destinationBytesPerImage: target.bytesPerRow * target.height)
             blit.endEncoding()
         }
         commands.addCompletedHandler { [inFlight] _ in inFlight.signal() }
         commands.commit()
         commands.waitUntilCompleted()
-        guard let provider = CGDataProvider(data: Data(bytes: readback.contents(), count: bytesPerRow * height) as CFData),
+        return commands.status == .completed
+    }
+
+    /// Renders the document to an image for the project list.
+    func thumbnail(engine: RetopoEngine, size: CGSize) -> UIImage? {
+        let width = Int(size.width), height = Int(size.height)
+        var camera = engine.camera
+        camera.viewSize = Vec2(Float(width), Float(height))
+        guard let target = makeOffscreenTarget(width: width, height: height),
+              renderOffscreen(engine: engine, camera: camera, into: target) else { return nil }
+        let bytesPerRow = target.bytesPerRow
+        guard let provider = CGDataProvider(data: Data(bytes: target.pixels.contents(), count: bytesPerRow * height) as CFData),
               let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: bytesPerRow,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),

@@ -45,6 +45,7 @@ final class EditorModel {
     @ObservationIgnored private var gestureDepth = 0
     @ObservationIgnored private var knownGeneration: UInt64 = 0
     @ObservationIgnored private var importTask: Task<Void, Never>?
+    @ObservationIgnored private var timelapseTask: Task<Void, Never>?
     @ObservationIgnored private var surfaceTask: Task<Void, Never>?
     @ObservationIgnored private var subdivisionTask: Task<Void, Never>?
     @ObservationIgnored private var validationTask: Task<Void, Never>?
@@ -340,6 +341,7 @@ final class EditorModel {
 
     func cancelBusyTask() {
         importTask?.cancel()
+        timelapseTask?.cancel()
     }
 
     private func rebuildSurface(for sources: [SourceObject]) {
@@ -519,6 +521,7 @@ final class EditorModel {
 
     private func finishClosing(_ completion: @escaping () -> Void) {
         importTask?.cancel()
+        timelapseTask?.cancel()
         surfaceTask?.cancel()
         subdivisionTask?.cancel()
         validationTask?.cancel()
@@ -567,6 +570,37 @@ final class EditorModel {
         }
     }
 
+    func exportTimelapse() {
+        guard busy == nil, let device = renderer?.device else { return }
+        let snapshot = engine.makeSnapshot()
+        let name = engine.name
+        busy = BusyTask(title: "Making timelapse…", cancellable: true)
+        timelapseTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Exports", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent(ProjectLibrary.safeFileName("\(name) Timelapse")).appendingPathExtension("mp4")
+            do {
+                try TimelapseExporter.export(snapshot, device: device, to: url) { fraction in
+                    Task { @MainActor in self?.busy?.title = "Making timelapse… \(Int(fraction * 100))%" }
+                }
+                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                await MainActor.run {
+                    self?.busy = nil
+                    self?.timelapseTask = nil
+                    self?.exportedFile = ExportedFile(url: url, format: nil, byteCount: size)
+                }
+            } catch {
+                await MainActor.run {
+                    self?.busy = nil
+                    self?.timelapseTask = nil
+                    if !(error is CancellationError) {
+                        self?.engine.say("The timelapse couldn't be made. \(error.localizedDescription)", kind: .error)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Tutorial
 
     private func handle(_ event: RetopoEngine.EngineEvent) {
@@ -597,7 +631,8 @@ final class EditorModel {
 struct ExportedFile: Identifiable, Equatable {
     var id: URL { url }
     let url: URL
-    let format: ExportFormat
+    /// Nil for a timelapse video.
+    let format: ExportFormat?
     let byteCount: Int
 }
 
