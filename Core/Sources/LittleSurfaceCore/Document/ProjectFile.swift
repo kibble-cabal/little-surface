@@ -445,6 +445,8 @@ public enum ProjectCodec {
                 }
             }
         }
+        // Older saves can hold these, and they're no reason to refuse someone's project.
+        mesh.dropBrokenMirrorPartners()
         if let problem = mesh.firstInvariantViolation() {
             throw ProjectFileError.damaged("its mesh is inconsistent (\(problem))")
         }

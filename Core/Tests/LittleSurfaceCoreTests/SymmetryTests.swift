@@ -263,3 +263,38 @@ final class SymmetryTests: XCTestCase {
         XCTAssertEqual(mesh.mirrorPartner[Int(left)], right)
     }
 }
+
+final class MirrorPairConsistencyTests: XCTestCase {
+    func testChangingAPartnerReleasesTheOldOne() {
+        var mesh = Mesh()
+        let a = mesh.addVertex(Vec3(1, 0, 0)), b = mesh.addVertex(Vec3(-1, 0, 0)), c = mesh.addVertex(Vec3(0, 1, 0))
+        mesh.setMirrorPartner(a, b)
+        mesh.setMirrorPartner(b, a)
+        mesh.setMirrorPartner(a, a)
+        XCTAssertEqual(mesh.mirrorPartner[Int(b)], invalidID)
+        assertValid(mesh)
+
+        mesh.setMirrorPartner(b, c)
+        mesh.setMirrorPartner(c, b)
+        mesh.setMirrorPartner(a, c)
+        mesh.setMirrorPartner(c, a)
+        XCTAssertEqual(mesh.mirrorPartner[Int(b)], invalidID)
+        assertValid(mesh)
+    }
+
+    /// Files written before this was fixed can hold these links. They're rebuilt from positions anyway,
+    /// so they're never a reason to refuse someone's project.
+    func testAProjectSavedWithBrokenPairsStillOpens() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setSymmetryEnabled(true)
+        Fixtures.draw(engine, from: Vec2(540, 400), to: Vec2(640, 420))
+        var snapshot = engine.makeSnapshot()
+        let vertices = snapshot.mesh.aliveVertices
+        let first = Int(vertices[0]), second = Int(vertices[1])
+        snapshot.mesh.mirrorPartner[first] = vertices[1]     // Not returned.
+        snapshot.mesh.mirrorPartner[second] = Int32(snapshot.mesh.positions.count + 5)
+        let reopened = try ProjectCodec.decode(try ProjectCodec.encode(snapshot))
+        assertValid(reopened.mesh)
+        XCTAssertEqual(reopened.mesh.vertexCount, snapshot.mesh.vertexCount)
+    }
+}

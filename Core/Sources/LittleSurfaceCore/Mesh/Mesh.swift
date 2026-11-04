@@ -424,7 +424,22 @@ public struct Mesh {
     }
 
     public mutating func setMirrorPartner(_ v: VertexID, _ partner: VertexID) {
+        // Partners are mutual, so whoever this vertex was paired with is left free.
+        let old = mirrorPartner[Int(v)]
+        if old >= 0, old != v, old != partner, mirrorPartner[Int(old)] == v {
+            mirrorPartner[Int(old)] = invalidID
+        }
         mirrorPartner[Int(v)] = partner
+    }
+
+    /// Lets go of pairs that aren't mutual or lead nowhere. They can always be worked out again from positions.
+    mutating func dropBrokenMirrorPartners() {
+        for i in mirrorPartner.indices {
+            let partner = mirrorPartner[i]
+            guard partner >= 0 else { continue }
+            let isMutual = Int(partner) < mirrorPartner.count && vertexAlive[Int(partner)] && mirrorPartner[Int(partner)] == Int32(i)
+            if !vertexAlive[i] || !isMutual { mirrorPartner[i] = invalidID }
+        }
     }
 
     // MARK: Edge splitting
