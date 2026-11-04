@@ -27,11 +27,6 @@ final class AppModel {
 
     init() {
         ViewportRenderer.warmUp()
-        let arguments = ProcessInfo.processInfo.arguments
-        if let i = arguments.firstIndex(of: "-oneFingerAction"), i + 1 < arguments.count,
-           let action = OneFingerAction(rawValue: arguments[i + 1]) {
-            AppSettings.shared.oneFingerAction = action
-        }
     }
 
     enum Start {

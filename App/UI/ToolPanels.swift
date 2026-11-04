@@ -19,23 +19,23 @@ struct ContextPanel: View {
                 }
             }
             if !collapsed {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        toolControls(engine)
-                        Divider()
-                        SurfaceControls(model: model)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 10)
+                let content = VStack(alignment: .leading, spacing: 12) {
+                    toolControls(engine)
+                    Divider()
+                    SurfaceControls(model: model)
                 }
-                .scrollBounceBehavior(.basedOnSize)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
+                // Only as tall as it needs to be, so it leaves the model visible.
+                ViewThatFits(in: .vertical) {
+                    content
+                    ScrollView(.vertical, showsIndicators: false) { content }
+                }
             }
         }
         .padding(4)
         .frame(width: collapsed ? nil : 268)
-        .fixedSize(horizontal: false, vertical: false)
         .panel()
-        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder
@@ -361,8 +361,8 @@ struct DisplayPopover: View {
                 }
                 .pickerStyle(.segmented)
                 HStack {
-                    Button("Frame Model") { model.engine.frameAll(); model.cameraDidChange() }.buttonStyle(PillButtonStyle())
-                    Button("Frame Selection") { model.engine.frameSelection(); model.cameraDidChange() }.buttonStyle(PillButtonStyle())
+                    Button("Frame Model") { model.engine.frameAll(); model.cameraDidChange() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Frame Model")
+                    Button("Frame Selection") { model.engine.frameSelection(); model.cameraDidChange() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Frame Selection")
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 6) {
                     ForEach(ViewPreset.allCases, id: \.self) { preset in

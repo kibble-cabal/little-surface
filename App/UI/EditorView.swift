@@ -26,6 +26,7 @@ struct EditorView: View {
     @State private var settings = AppSettings.shared
     @State private var panelCollapsed = false
     @State private var importsModel = false
+    @State private var sizedPanel = false
 
     var body: some View {
         ZStack {
@@ -45,7 +46,7 @@ struct EditorView: View {
                         ContextPanel(model: model, collapsed: $panelCollapsed)
                     }
                 }
-                Spacer(minLength: 0)
+                .frame(maxHeight: .infinity, alignment: .top)
                 VStack(spacing: 8) {
                     MessageToast(model: model)
                     DecisionChips(model: model)
@@ -63,6 +64,13 @@ struct EditorView: View {
             }
         }
         .background(Theme.page)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            // Portrait is narrow enough that the panel starts out of the way.
+            if !sizedPanel {
+                sizedPanel = true
+                panelCollapsed = width < 1000
+            }
+        }
         .fileImporter(isPresented: $importsModel, allowedContentTypes: [.objModel, .glbModel, .gltfModel, .data]) { result in
             switch result {
             case .success(let url): model.importModel(from: url)
@@ -259,26 +267,30 @@ private struct ToolBar: View {
 
     var body: some View {
         let engine = model.state
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 2) {
+        // Read here, so SwiftUI sees the change. ForEach content only reruns when what it captures differs.
+        let activeTool = engine.activeTool
+        let symmetryOn = engine.symmetry.isEnabled
+        let tools = VStack(spacing: 2) {
                 ForEach(groups.indices, id: \.self) { g in
                     if g > 0 { Divider().frame(width: 24).padding(.vertical, 3) }
                     ForEach(groups[g], id: \.self) { tool in
-                        IconButton(symbol: tool.symbol, label: tool.label, isActive: engine.activeTool == tool, identifier: "tool-\(tool.rawValue)") {
+                        IconButton(symbol: tool.symbol, label: tool.label, isActive: activeTool == tool, identifier: "tool-\(tool.rawValue)") {
                             model.select(tool: tool)
                         }
                     }
                 }
                 Divider().frame(width: 24).padding(.vertical, 3)
-                IconButton(symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", label: "Symmetry", isActive: engine.symmetry.isEnabled, identifier: "Symmetry") {
+                IconButton(symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", label: "Symmetry", isActive: symmetryOn, identifier: "Symmetry") {
                     showsSymmetry = true
                 }
                 .popover(isPresented: $showsSymmetry, arrowEdge: .leading) { SymmetryPopover(model: model) }
             }
             .padding(4)
+        ViewThatFits(in: .vertical) {
+            tools
+            ScrollView(.vertical, showsIndicators: false) { tools }
         }
         .fixedSize(horizontal: true, vertical: false)
-        .scrollBounceBehavior(.basedOnSize)
         .panel()
     }
 }

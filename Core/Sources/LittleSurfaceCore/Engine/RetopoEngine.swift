@@ -668,7 +668,8 @@ public final class RetopoEngine {
             return
         }
         let overFaces = plans.contains(where: \.droppedOverFaces)
-        if broken {
+        // One part means the stroke only ran off the silhouette at an end. That needs no question.
+        if broken && paths.count > 1 {
             pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: false, closedPlan: nil, note: "The stroke crossed a gap in the surface and broke into \(paths.count) parts. Nothing fills the gap automatically.")
             return
         }
@@ -839,11 +840,10 @@ public final class RetopoEngine {
             notify()
             return
         }
+        // Nothing stays selected, so the next drag in Select moves one vertex rather than all of this.
         let ok = perform("Quad strip") { mesh, selection in
-            let result = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
+            _ = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
             selection.clear()
-            selection.mode = .face
-            selection.faces = Set(result.faces)
         }
         if ok {
             if !plan.notes.isEmpty { say(plan.notes.joined(separator: " ")) }
@@ -927,11 +927,10 @@ public final class RetopoEngine {
             if let patchError { say(patchError, kind: .error) }
             return
         }
+        // Nothing stays selected, so the next drag in Select moves one vertex rather than all of this.
         let ok = perform("Quad patch") { mesh, selection in
-            let result = try PlanApplier.apply(preview.plan, to: &mesh, symmetry: symmetry, projector: projector)
+            _ = try PlanApplier.apply(preview.plan, to: &mesh, symmetry: symmetry, projector: projector)
             selection.clear()
-            selection.mode = .face
-            selection.faces = Set(result.faces)
         }
         guard ok else { return }
         if !preview.plan.notes.isEmpty { say(preview.plan.notes.joined(separator: " ")) }

@@ -32,8 +32,8 @@ enum Appearance: String, CaseIterable, Identifiable {
     var label: String { rawValue.capitalized }
 }
 
-/// Preferences that belong to the person, not the document. Launch arguments can set them too,
-/// for example `-oneFingerAction draw`, which is how the simulator drives drawing.
+/// Preferences that belong to the person, not the document. UserDefaults also reads launch arguments,
+/// so `-oneFingerAction draw` is how the simulator and UI tests draw without a Pencil.
 @Observable
 final class AppSettings {
     static let shared = AppSettings()

@@ -24,8 +24,8 @@ struct SurfaceOut {
 };
 
 vertex SurfaceOut surface_vertex(uint vid [[vertex_id]],
-                                 const float3 *positions [[buffer(0)]],
-                                 const float3 *normals [[buffer(1)]],
+                                 const device float3 *positions [[buffer(0)]],
+                                 const device float3 *normals [[buffer(1)]],
                                  constant Uniforms &u [[buffer(2)]],
                                  constant float &bias [[buffer(3)]]) {
     SurfaceOut out;
@@ -66,9 +66,9 @@ struct FaceOut {
 };
 
 vertex FaceOut face_vertex(uint vid [[vertex_id]],
-                           const float3 *positions [[buffer(0)]],
-                           const uint *corners [[buffer(1)]],
-                           const uchar *flags [[buffer(2)]],
+                           const device float3 *positions [[buffer(0)]],
+                           const device uint *corners [[buffer(1)]],
+                           const device uchar *flags [[buffer(2)]],
                            constant Uniforms &u [[buffer(3)]],
                            constant float4 *palette [[buffer(4)]]) {
     FaceOut out;
@@ -102,7 +102,7 @@ struct LineOut {
     float side;
 };
 
-static const float2 quadCorners[6] = {
+constant float2 quadCorners[6] = {
     float2(0, -1), float2(1, -1), float2(1, 1), float2(0, -1), float2(1, 1), float2(0, 1)
 };
 
@@ -126,9 +126,9 @@ static float4 thickLine(float4 a, float4 b, float2 corner, float width, float2 v
 }
 
 vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
-                           const float3 *positions [[buffer(0)]],
-                           const uint2 *edges [[buffer(1)]],
-                           const uchar *flags [[buffer(2)]],
+                           const device float3 *positions [[buffer(0)]],
+                           const device uint2 *edges [[buffer(1)]],
+                           const device uchar *flags [[buffer(2)]],
                            constant Uniforms &u [[buffer(3)]],
                            constant float4 *palette [[buffer(4)]],
                            constant float &alphaScale [[buffer(5)]]) {
@@ -159,9 +159,9 @@ struct DotOut {
 };
 
 vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
-                         const float3 *positions [[buffer(0)]],
-                         const uint *slots [[buffer(1)]],
-                         const uchar *flags [[buffer(2)]],
+                         const device float3 *positions [[buffer(0)]],
+                         const device uint *slots [[buffer(1)]],
+                         const device uchar *flags [[buffer(2)]],
                          constant Uniforms &u [[buffer(3)]],
                          constant float4 *palette [[buffer(4)]],
                          constant float &alphaScale [[buffer(5)]]) {
@@ -198,7 +198,7 @@ struct WorldLine {
 };
 
 vertex LineOut world_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
-                                 const WorldLine *lines [[buffer(0)]],
+                                 const device WorldLine *lines [[buffer(0)]],
                                  constant Uniforms &u [[buffer(1)]]) {
     LineOut out;
     WorldLine l = lines[iid];
@@ -218,7 +218,7 @@ struct ScreenLine {
 };
 
 vertex LineOut screen_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
-                                  const ScreenLine *lines [[buffer(0)]],
+                                  const device ScreenLine *lines [[buffer(0)]],
                                   constant Uniforms &u [[buffer(1)]]) {
     LineOut out;
     ScreenLine l = lines[iid];
@@ -239,7 +239,7 @@ struct WorldPoint {
 };
 
 vertex DotOut world_point_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
-                                 const WorldPoint *points [[buffer(0)]],
+                                 const device WorldPoint *points [[buffer(0)]],
                                  constant Uniforms &u [[buffer(1)]]) {
     DotOut out;
     WorldPoint p = points[iid];
@@ -259,7 +259,7 @@ struct FlatOut {
 };
 
 vertex FlatOut flat_vertex(uint vid [[vertex_id]],
-                           const float3 *positions [[buffer(0)]],
+                           const device float3 *positions [[buffer(0)]],
                            constant Uniforms &u [[buffer(1)]]) {
     FlatOut out;
     out.position = u.viewProj * float4(positions[vid], 1);

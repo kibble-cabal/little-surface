@@ -68,8 +68,8 @@ struct WelcomeView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Little Surface").font(.system(size: 30, weight: .semibold, design: .default))
-                Text("Retopology for iPad").font(.subheadline).foregroundStyle(.secondary)
+                Text("Little Surface").font(.system(size: 30, weight: .semibold, design: .default)).lineLimit(1).fixedSize()
+                Text("Retopology for iPad").font(.subheadline).foregroundStyle(.secondary).lineLimit(1).fixedSize()
             }
             Spacer()
             Button { app.newProject() } label: { Label("New", systemImage: "plus") }

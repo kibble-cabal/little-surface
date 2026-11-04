@@ -465,7 +465,6 @@ final class ProjectFileTests: XCTestCase {
             return BoundaryChain(vertices: v, edges: e, isClosed: false)
         }()
         engine.addPatchChain(chain)
-        engine.setTool(.face)
         var snapshot = engine.makeSnapshot()
         snapshot.faceBuilderVertices = [chain.vertices[0]]
         let back = RetopoEngine(snapshot: try ProjectCodec.decode(try ProjectCodec.encode(snapshot)))

@@ -619,7 +619,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 i += 2
             }
         }
-        add(overlay.previewEdges, color: style.preview, width: 2)
+        add(overlay.previewEdges, color: style.preview, width: 1.5)
         add(overlay.mirrorEdges, color: style.mirror, width: 1.5)
         add(overlay.warningEdges, color: style.warning, width: 2.4)
         for chain in overlay.chains { add(chain, color: style.chain, width: 3.2) }
@@ -627,7 +627,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         setWorldLines(e, lines, uniforms: &uniforms)
 
         if !overlay.previewPoints.isEmpty {
-            let points = overlay.previewPoints.map { WorldPoint(position: $0, color: style.preview, size: 9) }
+            let points = overlay.previewPoints.map { WorldPoint(position: $0, color: style.preview, size: 5.5) }
             e.setRenderPipelineState(worldPointPipeline)
             let length = points.count * MemoryLayout<WorldPoint>.stride
             if length <= 4096 {

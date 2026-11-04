@@ -67,6 +67,8 @@ struct PillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 14)
             .frame(minHeight: 38)
             .foregroundStyle(prominent ? Color.white : Color.primary)

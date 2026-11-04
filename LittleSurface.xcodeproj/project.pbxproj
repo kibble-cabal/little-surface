@@ -22,6 +22,7 @@
 		A0472A208CA67BA35D0F511B /* ViewportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6AA6E9C3423B67DD74022A /* ViewportView.swift */; };
 		B615EFF448BFFED6C41F6E0A /* ProjectLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A34BA98C55686516ECB57D1 /* ProjectLibrary.swift */; };
 		B9A00326904285BBBDA6C803 /* LittleSurfaceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 86455407BC6AD5E65434F015 /* LittleSurfaceCore */; };
+		D37C1C98DCA6F7AAA185CFBC /* WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */; };
 		E365E75625D10F561FE679CB /* Example.glb in Resources */ = {isa = PBXBuildFile; fileRef = 2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */; };
 		F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77C29AE9EE3901E9C42619B /* EditorView.swift */; };
 /* End PBXBuildFile section */
@@ -46,6 +47,7 @@
 /* Begin PBXFileReference section */
 		069771140D1C2C22DE3B20A8 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0C14F13202AB04BD5058FFD3 /* ViewportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportRenderer.swift; sourceTree = "<group>"; };
+		2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowUITests.swift; sourceTree = "<group>"; };
 		2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */ = {isa = PBXFileReference; path = Example.glb; sourceTree = "<group>"; };
 		427777B204E522D62BB79495 /* LittleSurfaceUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LittleSurfaceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A6AA6E9C3423B67DD74022A /* ViewportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportView.swift; sourceTree = "<group>"; };
@@ -196,6 +198,7 @@
 		FDE198F942D6953EA336427E /* UITests */ = {
 			isa = PBXGroup;
 			children = (
+				2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -327,6 +330,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D37C1C98DCA6F7AAA185CFBC /* WorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
