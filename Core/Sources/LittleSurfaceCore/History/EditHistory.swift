@@ -5,10 +5,26 @@ import Foundation
 public struct EditSnapshot {
     public var mesh: Mesh
     public var selection: Selection
+    /// The geometry of every source that has been updated, so undo can go back across an update.
+    public var sculpts: [UUID: SculptVersion]
 
-    public init(mesh: Mesh, selection: Selection) {
+    public init(mesh: Mesh, selection: Selection, sculpts: [UUID: SculptVersion] = [:]) {
         self.mesh = mesh
         self.selection = selection
+        self.sculpts = sculpts
+    }
+}
+
+/// One version of a source's geometry. Its arrays are shared with the source itself until replaced.
+public struct SculptVersion {
+    public var positions: [Vec3]
+    public var normals: [Vec3]
+    public var indices: [UInt32]
+    public var bvh: TriangleBVH?
+    public var revision: UInt64
+
+    var approximateBytes: Int {
+        positions.count * MemoryLayout<Vec3>.stride * 2 + indices.count * MemoryLayout<UInt32>.stride
     }
 }
 
@@ -41,7 +57,10 @@ public struct EditHistory {
 
     /// Records `before` as the state to return to, with `label` naming the edit that followed it.
     public mutating func record(before: EditSnapshot, label: String) {
-        let bytes = before.mesh.approximateBytes(sharedWith: undoStack.last?.snapshot.mesh)
+        var bytes = before.mesh.approximateBytes(sharedWith: undoStack.last?.snapshot.mesh)
+        for (id, version) in before.sculpts where undoStack.last?.snapshot.sculpts[id]?.revision != version.revision {
+            bytes += version.approximateBytes
+        }
         undoStack.append(Entry(label: label, snapshot: before, uniqueBytes: bytes))
         redoStack.removeAll()
         generation &+= 1

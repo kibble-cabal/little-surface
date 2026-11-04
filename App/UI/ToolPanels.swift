@@ -404,6 +404,9 @@ struct DisplayPopover: View {
 struct ObjectsPopover: View {
     let model: EditorModel
     @State private var pendingRemoval: SourceObject?
+    // Dismissing the picker clears its binding before the result arrives, so the target is kept apart.
+    @State private var sculptToUpdate: UUID?
+    @State private var picksSculpt = false
 
     var body: some View {
         let engine = model.state
@@ -411,6 +414,8 @@ struct ObjectsPopover: View {
             Text("Source Objects").font(.headline)
             if engine.sources.isEmpty {
                 Text("No source models yet. Import one to draw on it.").font(.footnote).foregroundStyle(Theme.quiet)
+            } else {
+                Text("Changed the sculpt? Update it with \(Image(systemName: "arrow.triangle.2.circlepath")) and your topology follows the new surface.").font(.footnote).foregroundStyle(Theme.quiet)
             }
             ScrollView {
                 VStack(spacing: 2) {
@@ -429,6 +434,10 @@ struct ObjectsPopover: View {
                                 model.engine.setSourceSnapTarget(id: object.id, !object.isSnapTarget)
                                 model.settingChanged()
                             }
+                            IconButton(symbol: "arrow.triangle.2.circlepath", label: "Update \(object.name) from a file", identifier: "update-sculpt") {
+                                sculptToUpdate = object.id
+                                picksSculpt = true
+                            }
                             IconButton(symbol: "minus.circle", label: "Remove \(object.name)") { pendingRemoval = object }
                         }
                     }
@@ -437,7 +446,16 @@ struct ObjectsPopover: View {
             .frame(maxHeight: 380)
         }
         .padding()
-        .frame(width: 340)
+        .frame(width: 380)
+        .fileImporter(isPresented: $picksSculpt, allowedContentTypes: [.objModel, .glbModel, .gltfModel, .data]) { result in
+            switch result {
+            case .success(let url):
+                if let sculptToUpdate { model.updateSculpt(id: sculptToUpdate, from: url) }
+            case .failure(let error):
+                model.engine.say(error.localizedDescription, kind: .error)
+            }
+            sculptToUpdate = nil
+        }
         .confirmationDialog("Remove \(pendingRemoval?.name ?? "") from this project?", isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }), titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 if let pendingRemoval { model.engine.removeSource(id: pendingRemoval.id) }

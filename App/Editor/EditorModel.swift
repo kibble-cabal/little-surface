@@ -203,6 +203,59 @@ final class EditorModel {
         }
     }
 
+    /// Replaces a source with a changed version from a file, and snaps the topology onto it. Until the
+    /// new surface is ready nothing changes, so cancelling or a bad file leaves everything as it was.
+    func updateSculpt(id: UUID, from url: URL) {
+        guard importTask == nil, let name = engine.sources.first(where: { $0.id == id })?.name else { return }
+        busy = BusyTask(title: "Reading \(url.lastPathComponent)…", cancellable: true)
+        importTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let needsScope = url.startAccessingSecurityScopedResource()
+            defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let model = try ModelImporter.load(url: url, isCancelled: { Task.isCancelled })
+                let merged = SourceObject.merged(model.objects, id: id, name: name)
+                await MainActor.run { self?.busy?.title = "Preparing the surface…" }
+                let isCancelled: () -> Bool = { Task.isCancelled }
+                let bvh = TriangleBVH(object: merged, isCancelled: isCancelled)
+                try Task.checkCancellation()
+                guard let bvh else { throw ImportError.noGeometry }
+                await MainActor.run { self?.finishSculptUpdate(id: id, merged: merged, bvh: bvh) }
+            } catch is CancellationError {
+                await MainActor.run { self?.endImport() }
+            } catch ImportError.cancelled {
+                await MainActor.run { self?.endImport() }
+            } catch {
+                await MainActor.run {
+                    self?.endImport()
+                    self?.engine.say(error.localizedDescription, kind: .error)
+                }
+            }
+        }
+    }
+
+    private func finishSculptUpdate(id: UUID, merged: SourceObject, bvh: TriangleBVH) {
+        endImport()
+        guard let result = engine.updateSource(id: id, with: merged, bvh: bvh) else { return }
+        engine.say(Self.describe(result, name: merged.name), kind: result.unreachableVertices > 0 || !result.snapped ? .warning : .success)
+        refreshSubdivisionPreview()
+        save()
+        viewport?.setNeedsDisplay()
+    }
+
+    private static func describe(_ result: RetopoEngine.SculptUpdate, name: String) -> String {
+        guard result.snapped else {
+            return "Updated \(name). It isn't a surface to draw on right now, so your topology stayed where it was. Undo puts the old version back."
+        }
+        var text = "Updated \(name) and moved \(result.movedVertices.formatted()) vertices onto it."
+        if result.unreachableVertices > 0 {
+            text += " \(result.unreachableVertices.formatted()) were too far away to follow and are selected."
+        }
+        if result.sizeRatio > 2 || result.sizeRatio < 0.5 {
+            text += " The new file is a very different size, so check its export scale. Undo puts the old version back."
+        }
+        return text
+    }
+
     func importExample() {
         guard let url = Bundle.main.url(forResource: "Example", withExtension: "glb") else {
             engine.say("The example model is missing from this build.", kind: .error)

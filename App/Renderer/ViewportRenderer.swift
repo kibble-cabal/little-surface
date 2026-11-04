@@ -171,6 +171,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var buffers = [RetopoBuffers(), RetopoBuffers(), RetopoBuffers()]
     private var topology = TopologyCache()
     private var sourceBuffers: [UUID: SourceBuffers] = [:]
+    private var sourceBufferRevisions: [UUID: UInt64] = [:]
     var subdivision: SubdivisionBuffers?
 
     weak var engine: RetopoEngine?
@@ -402,8 +403,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private func syncSources(_ engine: RetopoEngine) {
         let ids = Set(engine.sources.map(\.id))
         for id in sourceBuffers.keys where !ids.contains(id) { sourceBuffers[id] = nil }
-        for object in engine.sources where sourceBuffers[object.id] == nil {
+        for object in engine.sources where sourceBuffers[object.id] == nil || sourceBufferRevisions[object.id] != object.geometryRevision {
             sourceBuffers[object.id] = SourceBuffers(device: device, object: object)
+            sourceBufferRevisions[object.id] = object.geometryRevision
         }
     }
 

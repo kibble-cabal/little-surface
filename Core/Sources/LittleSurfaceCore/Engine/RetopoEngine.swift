@@ -256,6 +256,104 @@ public final class RetopoEngine {
         notify()
     }
 
+    /// What updating a sculpt did to the topology.
+    public struct SculptUpdate {
+        public var movedVertices: Int
+        /// Too far from the new surface to follow it. They stayed where they were and are now selected.
+        public var unreachableVertices: Int
+        public var largestMove: Float
+        /// New size over old. A long way from 1 usually means the file was exported at another scale.
+        public var sizeRatio: Float
+        /// False when the source isn't a surface to draw on, so nothing was snapped to it.
+        public var snapped: Bool
+    }
+
+    /// Swaps a source for a changed version of itself and snaps the topology onto it. Connectivity,
+    /// symmetry partners and everything else about the mesh stay, and one undo reverses all of it.
+    @discardableResult
+    public func updateSource(id: UUID, with replacement: SourceObject, bvh: TriangleBVH) -> SculptUpdate? {
+        guard let index = sources.firstIndex(where: { $0.id == id }) else { return nil }
+        if isMidGesture { pencilCancelled() }
+        cancelTransientState()
+        var before = currentSnapshot
+        before.sculpts[id] = SculptVersion(positions: sources[index].positions, normals: sources[index].normals, indices: sources[index].indices, bvh: bvhs[id], revision: sources[index].geometryRevision)
+        let oldDiagonal = sources[index].bounds.diagonal
+
+        let oldSurface = projector
+        sculptRevisionCounter &+= 1
+        let version = SculptVersion(positions: replacement.positions, normals: replacement.normals, indices: replacement.indices, bvh: bvh, revision: sculptRevisionCounter)
+        install(version, sourceAt: index)
+        rebuildProjector()
+        updateCameraScale()
+
+        let newDiagonal = sources[index].bounds.diagonal
+        var result = SculptUpdate(movedVertices: 0, unreachableVertices: 0, largestMove: 0, sizeRatio: newDiagonal / max(oldDiagonal, 1e-6), snapped: sources[index].isSnapTarget)
+        if result.snapped, let projector {
+            // Past this, the nearest surface is a different part of the model, not the same part moved.
+            let reach = newDiagonal * 0.25
+            var updates: [(VertexID, Vec3)] = []
+            var unreachable = Set<VertexID>()
+            for v in mesh.aliveVertices {
+                let p = mesh.position(v)
+                guard var target = Self.followSurface(from: p, faceNormal: mesh.vertexNormal(v), old: oldSurface, new: projector, reach: reach) else {
+                    unreachable.insert(v)
+                    continue
+                }
+                if let plane = symmetry.activePlane, mesh.mirrorPartner[Int(v)] == v { target = plane.snap(target) }
+                updates.append((v, target))
+                result.largestMove = max(result.largestMove, simd_length(target - p))
+            }
+            mesh.setPositions(updates)
+            result.movedVertices = updates.count
+            result.unreachableVertices = unreachable.count
+            if !unreachable.isEmpty {
+                selection.clear()
+                selection.mode = .vertex
+                selection.vertices = unreachable
+            }
+        }
+        recordEdit(before: before, label: "Update sculpt")
+        return result
+    }
+
+    /// Where a vertex goes when the surface under it changes. It travels along the old surface's normal,
+    /// which keeps neighbours in order. The nearest point is only the fallback, because a bump can pull
+    /// one vertex toward it and leave the next behind, which is what makes lines wobble.
+    private static func followSurface(from p: Vec3, faceNormal: Vec3, old: SurfaceProjector?, new: SurfaceProjector, reach: Float) -> Vec3? {
+        let hint = simd_length_squared(faceNormal) > 0 ? faceNormal : nil
+        if let normal = old?.closest(to: p, normalHint: hint, maxDistance: reach)?.normal ?? hint {
+            var best: SurfaceHit?
+            for direction in [normal, -normal] {
+                guard let hit = new.raycast(Ray(origin: p, direction: direction), tMax: reach), simd_dot(hit.normal, normal) > 0.2 else { continue }
+                if hit.distance < (best?.distance ?? .infinity) { best = hit }
+            }
+            if let best { return best.offsetPosition(new.surfaceOffset) }
+        }
+        return new.project(p, normalHint: hint, maxDistance: reach)?.position
+    }
+
+    private func install(_ version: SculptVersion, sourceAt index: Int) {
+        sources[index].positions = version.positions
+        sources[index].normals = version.normals
+        sources[index].indices = version.indices
+        sources[index].geometryRevision = version.revision
+        bvhs[sources[index].id] = version.bvh
+        sculpts[sources[index].id] = version
+    }
+
+    private func installSculpts(_ recorded: [UUID: SculptVersion]) {
+        var changed = false
+        for (id, version) in recorded {
+            guard let index = sources.firstIndex(where: { $0.id == id }), sources[index].geometryRevision != version.revision else { continue }
+            install(version, sourceAt: index)
+            changed = true
+        }
+        if changed {
+            rebuildProjector()
+            updateCameraScale()
+        }
+    }
+
     public var sourceBounds: AABB {
         var box = AABB.empty
         for bvh in bvhs.values where bvh.triangleCount > 0 { box.grow(bvh.bounds) }
@@ -417,7 +515,7 @@ public final class RetopoEngine {
         recordEdit(before: before, label: label)
     }
 
-    private var currentSnapshot: EditSnapshot { EditSnapshot(mesh: mesh, selection: selection) }
+    private var currentSnapshot: EditSnapshot { EditSnapshot(mesh: mesh, selection: selection, sculpts: sculpts) }
 
     /// Every committed change to the mesh passes through here, whichever tool made it, so undo and
     /// everything that follows an edit treat them all alike. `before` is the state the edit started from.
@@ -486,6 +584,7 @@ public final class RetopoEngine {
 
     private func restore(_ snapshot: EditSnapshot) {
         install(snapshot)
+        installSculpts(snapshot.sculpts)
         // Symmetry may have been turned on since this state was recorded, and it wouldn't have partners.
         if let plane = symmetry.activePlane { repairPairs(&mesh, plane: plane) }
         didEdit()
@@ -507,6 +606,8 @@ public final class RetopoEngine {
     }
 
     private var snapshotVersionFloor: (UInt64, UInt64) = (0, 0)
+    private var sculpts: [UUID: SculptVersion] = [:]
+    private var sculptRevisionCounter: UInt64 = 0
 
     private func cancelTransientState() {
         pendingStroke = nil

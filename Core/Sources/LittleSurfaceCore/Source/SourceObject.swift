@@ -13,6 +13,8 @@ public struct SourceObject: Identifiable {
     public var isVisible: Bool = true
     /// Available as a surface to draw on and project to.
     public var isSnapTarget: Bool = true
+    /// Changes whenever the geometry is replaced, so what's drawn from it knows to refresh.
+    public var geometryRevision: UInt64 = 0
 
     public init(id: UUID = UUID(), name: String, positions: [Vec3], normals: [Vec3] = [], indices: [UInt32]) {
         self.id = id
@@ -23,6 +25,18 @@ public struct SourceObject: Identifiable {
     }
 
     public var triangleCount: Int { indices.count / 3 }
+
+    /// All of these as one object, for a file that holds a sculpt in several parts.
+    public static func merged(_ objects: [SourceObject], id: UUID = UUID(), name: String) -> SourceObject {
+        var positions: [Vec3] = [], normals: [Vec3] = [], indices: [UInt32] = []
+        for object in objects {
+            let base = UInt32(positions.count)
+            positions.append(contentsOf: object.positions)
+            normals.append(contentsOf: object.normals)
+            indices.append(contentsOf: object.indices.map { $0 + base })
+        }
+        return SourceObject(id: id, name: name, positions: positions, normals: normals, indices: indices)
+    }
     public var bounds: AABB { AABB(points: positions) }
 
     /// Six times the signed volume. Only meaningful for closed meshes, which is what decides whether
