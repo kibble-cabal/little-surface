@@ -26,6 +26,7 @@ struct EditorView: View {
     @State private var settings = AppSettings.shared
     @State private var showsInspector = false
     @State private var importsModel = false
+    @State private var importsAsMesh = false
     @State private var sizedPanel = false
 
     private func applyDrawingSettings() {
@@ -58,7 +59,7 @@ struct EditorView: View {
                 .padding(10)
 
                 if model.state.sources.isEmpty, model.busy == nil {
-                    EmptyViewportPrompt(model: model, importsModel: $importsModel)
+                    EmptyViewportPrompt(model: model, importsModel: $importsModel, importsAsMesh: $importsAsMesh)
                 }
                 if let busy = model.busy {
                     BusyBanner(task: busy) { model.cancelBusyTask() }
@@ -67,7 +68,7 @@ struct EditorView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if settings.showsStatusBar { StatusBar(model: model) }
             }
-            .toolbar { EditorToolbar(model: model, importsModel: $importsModel, showsInspector: $showsInspector) }
+            .toolbar { EditorToolbar(model: model, importsModel: $importsModel, importsAsMesh: $importsAsMesh, showsInspector: $showsInspector) }
             .navigationBarTitleDisplayMode(.inline)
             .inspector(isPresented: $showsInspector) {
                 ContextPanel(model: model)
@@ -87,7 +88,8 @@ struct EditorView: View {
         .onChange(of: settings.suggestsFills) { applyDrawingSettings() }
         .fileImporter(isPresented: $importsModel, allowedContentTypes: [.objModel, .glbModel, .gltfModel, .data]) { result in
             switch result {
-            case .success(let url): model.importModel(from: url)
+            case .success(let url):
+                if importsAsMesh { model.openMeshForEditing(from: url) } else { model.importModel(from: url) }
             case .failure(let error): model.engine.say(error.localizedDescription, kind: .error)
             }
         }
@@ -109,6 +111,7 @@ struct EditorView: View {
 private struct EmptyViewportPrompt: View {
     let model: EditorModel
     @Binding var importsModel: Bool
+    @Binding var importsAsMesh: Bool
 
     var body: some View {
         ContentUnavailableView {
@@ -116,7 +119,17 @@ private struct EmptyViewportPrompt: View {
         } description: {
             Text("Import a model. It stays separate from the topology you draw on it.")
         } actions: {
-            Button("Import Model") { importsModel = true }.pillButton(prominent: true).accessibilityIdentifier("Empty Import")
+            Button("Import Model") {
+                importsAsMesh = false
+                importsModel = true
+            }
+            .pillButton(prominent: true).accessibilityIdentifier("Empty Import")
+            Button("Open a Mesh to Edit") {
+                importsAsMesh = true
+                importsModel = true
+            }
+            .pillButton()
+            .accessibilityIdentifier("Empty Open Mesh")
             Button("Use the Example") { model.importExample() }.pillButton().accessibilityIdentifier("Use Example")
         }
     }
@@ -146,6 +159,7 @@ private struct BusyBanner: View {
 private struct EditorToolbar: ToolbarContent {
     let model: EditorModel
     @Binding var importsModel: Bool
+    @Binding var importsAsMesh: Bool
     @Binding var showsInspector: Bool
     @Environment(AppModel.self) private var app
     @State private var renames = false
@@ -161,7 +175,18 @@ private struct EditorToolbar: ToolbarContent {
         }
         ToolbarItem(placement: .topBarLeading) { projectName }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { importsModel = true } label: { Label("Import", systemImage: "square.and.arrow.down") }
+            Menu {
+                Button {
+                    importsAsMesh = false
+                    importsModel = true
+                } label: { Label("Model to Draw On…", systemImage: "cube") }
+                .accessibilityIdentifier("Import Model to Draw On")
+                Button {
+                    importsAsMesh = true
+                    importsModel = true
+                } label: { Label("Mesh to Keep Editing…", systemImage: "square.and.pencil") }
+                .accessibilityIdentifier("Import Mesh to Edit")
+            } label: { Label("Import", systemImage: "square.and.arrow.down") }
                 .accessibilityIdentifier("Import")
             Button { showsObjects = true } label: { Label("Objects", systemImage: "square.stack.3d.up") }
                 .accessibilityIdentifier("Objects")

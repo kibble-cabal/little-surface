@@ -51,6 +51,7 @@ struct WelcomeView: View {
             case .success(let url):
                 switch filePick {
                 case .model: app.newProject(name: url.deletingPathExtension().lastPathComponent, start: .model(url))
+                case .mesh: app.newProject(name: url.deletingPathExtension().lastPathComponent, start: .mesh(url))
                 case .project: app.open(url)
                 }
             case .failure(let error):
@@ -86,6 +87,8 @@ struct WelcomeView: View {
                 .accessibilityIdentifier("Open Example")
             Button { pick(.project) } label: { Label("Open", systemImage: "folder") }
                 .accessibilityIdentifier("Open Project")
+            Button { pick(.mesh) } label: { Label("Open Mesh to Edit", systemImage: "square.and.pencil") }
+                .accessibilityIdentifier("Open Mesh")
             Button { showsSettings = true } label: { Label("Settings", systemImage: "gearshape") }
                 .accessibilityIdentifier("Settings")
         }
@@ -110,11 +113,11 @@ struct WelcomeView: View {
 }
 
 private enum FilePick {
-    case model, project
+    case model, mesh, project
 
     var types: [UTType] {
         switch self {
-        case .model: return [.objModel, .glbModel, .gltfModel, .data]
+        case .model, .mesh: return [.objModel, .glbModel, .gltfModel, .data]
         case .project: return [.littleSurfaceProject]
         }
     }

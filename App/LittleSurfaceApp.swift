@@ -33,6 +33,7 @@ final class AppModel {
     enum Start {
         case empty
         case model(URL)
+        case mesh(URL)
         case example
     }
 
@@ -57,6 +58,7 @@ final class AppModel {
             switch start {
             case .empty: break
             case .model(let modelURL): editor.importModel(from: modelURL)
+            case .mesh(let meshURL): editor.openMeshForEditing(from: meshURL)
             case .example: editor.importExample()
             }
             if !AppSettings.shared.hasSeenTutorial {

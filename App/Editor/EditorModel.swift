@@ -203,6 +203,61 @@ final class EditorModel {
         }
     }
 
+    /// Opens a mesh from another app to keep editing, with its faces as they are in the file.
+    func openMeshForEditing(from url: URL) {
+        guard importTask == nil else { return }
+        busy = BusyTask(title: "Reading \(url.lastPathComponent)…", cancellable: true)
+        let needsSurface = engine.sources.isEmpty
+        importTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let needsScope = url.startAccessingSecurityScopedResource()
+            defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let imported = try MeshImporter.load(url: url, isCancelled: { Task.isCancelled })
+                var surface: (object: SourceObject, bvh: TriangleBVH)?
+                if needsSurface, imported.mesh.faceCount > 0 {
+                    let object = imported.mesh.asSurface(named: "\(imported.name) (copy to draw on)")
+                    let isCancelled: () -> Bool = { Task.isCancelled }
+                    if let bvh = TriangleBVH(object: object, isCancelled: isCancelled) { surface = (object, bvh) }
+                }
+                try Task.checkCancellation()
+                await MainActor.run { [surface] in self?.finishMeshImport(imported, surface: surface) }
+            } catch is CancellationError {
+                await MainActor.run { self?.endImport() }
+            } catch ImportError.cancelled {
+                await MainActor.run { self?.endImport() }
+            } catch {
+                await MainActor.run {
+                    self?.endImport()
+                    self?.engine.say(error.localizedDescription, kind: .error)
+                }
+            }
+        }
+    }
+
+    private func finishMeshImport(_ imported: ImportedMesh, surface: (object: SourceObject, bvh: TriangleBVH)?) {
+        endImport()
+        guard engine.addEditableMesh(imported, surface: surface) else { return }
+        surfaceIsReady = true
+        if engine.name == "Untitled" || engine.name.isEmpty { engine.name = imported.name }
+        engine.say(Self.describe(imported, hasSurfaceCopy: surface != nil), kind: imported.skippedFaces > 0 ? .warning : .success)
+        save()
+        viewport?.setNeedsDisplay()
+    }
+
+    private static func describe(_ imported: ImportedMesh, hasSurfaceCopy: Bool) -> String {
+        var text = "Opened \(imported.name) with \(imported.mesh.faceCount.formatted()) faces, ready to edit."
+        if imported.skippedFaces > 0 {
+            text += " \(imported.skippedFaces.formatted()) faces couldn't be kept, because they repeat a corner or give an edge more than two faces."
+        }
+        if imported.isTriangleFormat {
+            text += " This format only stores triangles. Use OBJ to keep quads."
+        }
+        if hasSurfaceCopy {
+            text += " A copy of it is the surface to draw on until you add your own."
+        }
+        return text
+    }
+
     /// Replaces a source with a changed version from a file, and snaps the topology onto it. Until the
     /// new surface is ready nothing changes, so cancelling or a bad file leaves everything as it was.
     func updateSculpt(id: UUID, from url: URL) {

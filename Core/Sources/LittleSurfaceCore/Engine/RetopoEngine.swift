@@ -256,6 +256,26 @@ public final class RetopoEngine {
         notify()
     }
 
+    /// Brings a mesh from another app into the topology, as one undoable edit. With nothing to draw on
+    /// yet, a copy of it becomes the surface so tools work straight away. Vertices then move freely
+    /// instead of sticking to that copy, which would stop the mesh from ever changing shape.
+    @discardableResult
+    public func addEditableMesh(_ imported: ImportedMesh, surface: (object: SourceObject, bvh: TriangleBVH)?) -> Bool {
+        let ok = perform("Import mesh") { mesh, selection in
+            try mesh.append(imported.mesh)
+            selection.clear()
+        }
+        guard ok else { return false }
+        if let surface, sources.isEmpty {
+            addSources([surface.object], bvhs: [surface.object.id: surface.bvh])
+            tools.surfaceSnapping = false
+        } else {
+            updateCameraScale()
+            frameAll()
+        }
+        return true
+    }
+
     /// What updating a sculpt did to the topology.
     public struct SculptUpdate {
         public var movedVertices: Int
