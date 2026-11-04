@@ -387,7 +387,11 @@ public final class RetopoEngine {
         return box
     }
 
+    /// A replay has no surface built to measure, so it's told how big the scene is.
+    public var replayBounds: AABB?
+
     public var sceneBounds: AABB {
+        if let replayBounds { return replayBounds }
         var box = sourceBounds
         if !mesh.isEmpty { box.grow(mesh.bounds) }
         return box

@@ -37,6 +37,7 @@ enum TimelapseExporter {
             for p in source.positions { bounds.grow(p) }
         }
         if let last = try? frames[frames.count - 1].decoded(), !last.mesh.isEmpty { bounds.grow(last.mesh.bounds) }
+        replay.replayBounds = bounds
         // Twice the size in pixels as in points, so lines come out as they do on an iPad's screen.
         let viewSize = Vec2(repeating: Float(pixelSize) / 2)
         let shots = TimelapseDirector.shots(for: frames, bounds: bounds, camera: snapshot.camera.applied(to: Camera()), viewSize: viewSize)

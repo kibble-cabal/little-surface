@@ -34,8 +34,11 @@ public final class TimelapseRecorder {
 
     /// Waits for anything still being packed.
     public var frames: [TimelapseFrame] { queue.sync { stored } }
+    /// Answers at once, for an interface that only needs to know whether there's anything to replay.
+    public private(set) var hasFrames = false
 
     public func record(mesh: Mesh, sketches: [SketchStroke], orientation: simd_quatf) {
+        hasFrames = true
         queue.async { [self] in
             append(mesh: mesh, sketches: sketches, focus: Self.focus(of: mesh, sketches, after: lastMesh, lastSketches), orientation: orientation)
         }
@@ -51,6 +54,7 @@ public final class TimelapseRecorder {
             if frames.isEmpty, mesh.vertexCount > 0 || !sketches.isEmpty {
                 append(mesh: mesh, sketches: sketches, focus: nil, orientation: orientation)
             }
+            hasFrames = !stored.isEmpty
         }
     }
 

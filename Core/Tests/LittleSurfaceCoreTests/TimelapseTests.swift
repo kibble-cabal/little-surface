@@ -164,6 +164,16 @@ final class TimelapseTests: XCTestCase {
         XCTAssertEqual(reopened.mesh.vertexCount, engine.mesh.vertexCount)
     }
 
+    func testKnowingThereIsSomethingToReplayDoesNotWait() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        XCTAssertFalse(engine.timelapse.hasFrames)
+        engine.setTool(.drawEdges)
+        Fixtures.draw(engine, from: Vec2(420, 380), to: Vec2(600, 380))
+        XCTAssertTrue(engine.timelapse.hasFrames)
+        let reopened = RetopoEngine(snapshot: try ProjectCodec.decode(try ProjectCodec.encode(engine.makeSnapshot())))
+        XCTAssertTrue(reopened.timelapse.hasFrames)
+    }
+
     func testReplayingDoesNotCountAsEditing() throws {
         let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
         engine.setTool(.drawEdges)

@@ -513,7 +513,7 @@ struct ExportPopover: View {
                 isPresented = false
             }
             .pillButton()
-            .disabled(model.engine.timelapse.frames.isEmpty)
+            .disabled(!model.engine.timelapse.hasFrames)
             .accessibilityIdentifier("Make Timelapse")
         }
         .padding()
