@@ -135,6 +135,22 @@ public struct Camera: Equatable {
     // MARK: Navigation
 
     /// Rotates about the camera's own axes: drag right turns the model right, drag down tips it toward you.
+    /// Turns to look straight at a surface with this normal, keeping the model's up the right way.
+    public mutating func look(along normal: Vec3) {
+        guard simd_length_squared(normal) > 0 else { return }
+        orientation = Camera.orientation(facing: simd_normalize(normal), near: up)
+    }
+
+    /// The orientation whose eye sits out along `z`, with its up as close as possible to `up`.
+    public static func orientation(facing z: Vec3, near up: Vec3) -> simd_quatf {
+        var x = simd_cross(Vec3(0, 1, 0), z)
+        // Looking straight up or down, the world's up says nothing, so the current view decides.
+        if simd_length_squared(x) < 1e-4 { x = simd_cross(up, z) }
+        if simd_length_squared(x) < 1e-8 { x = Vec3(1, 0, 0) }
+        x = simd_normalize(x)
+        return simd_quatf(simd_float3x3(columns: (x, simd_cross(z, x), z)))
+    }
+
     public mutating func orbit(deltaPoints: Vec2) {
         let speed: Float = 2 * .pi / max(viewSize.y, 1) * 0.6
         let yaw = simd_quatf(angle: -deltaPoints.x * speed, axis: up)

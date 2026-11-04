@@ -420,6 +420,7 @@ private struct StatusBar: View {
                     .lineLimit(1).fixedSize()
                     .accessibilityIdentifier("selection-status")
             }
+            BudgetChip(model: model)
             // The hint gives way first: the counts are what people glance at.
             Text(statsText(stats)).monospacedDigit().lineLimit(1).fixedSize().accessibilityIdentifier("mesh-stats")
         }
@@ -444,6 +445,37 @@ private struct StatusBar: View {
         if s.ngons > 0 { parts.append("N-gons \(s.ngons)") }
         parts.append("Parts \(s.components)")
         return parts.joined(separator: "   ")
+    }
+}
+
+/// The live count against the target. Tapping it opens the budget and the jumps to what needs a look.
+private struct BudgetChip: View {
+    let model: EditorModel
+    @State private var showsCheck = false
+
+    var body: some View {
+        let engine = model.state
+        let count = engine.statistics.triangleEquivalent
+        let budget = engine.polyBudget
+        let isOver = budget.map { count > $0 } ?? false
+        let isClose = budget.map { Double(count) >= Double($0) * 0.9 } ?? false
+        Button { showsCheck = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: isOver ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.33percent")
+                Text(budget.map { "\(count.formatted()) / \($0.formatted()) tris" } ?? "\(count.formatted()) tris")
+                    .monospacedDigit()
+                    .accessibilityIdentifier("budget-count")
+            }
+            .foregroundStyle(isOver ? Color.red : (isClose ? Color.orange : Color.accentColor))
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityIdentifier("budget-status")
+        .accessibilityHint("Set a triangle budget and find what needs a look")
+        .popover(isPresented: $showsCheck, arrowEdge: .bottom) { TopologyCheckPopover(model: model) }
     }
 }
 

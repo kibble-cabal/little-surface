@@ -489,6 +489,80 @@ public final class RetopoEngine {
         notify()
     }
 
+    // MARK: Poly budget and topology check
+
+    /// The target for the finished mesh, in triangles.
+    public private(set) var polyBudget: Int?
+
+    public func setPolyBudget(_ budget: Int?) {
+        polyBudget = budget.map { max($0, 1) }
+        notify()
+    }
+
+    private var jumpPositions: [TopologyCheck: Int] = [:]
+
+    /// One place each of what's being looked for. `report` supplies bad geometry, which takes too long
+    /// to work out as often as the others.
+    public func spots(of check: TopologyCheck, report: ValidationReport?) -> [TopologySpot] {
+        switch check {
+        case .triangles: return mesh.aliveFaces.filter { mesh.loop($0).count == 3 }.map(TopologySpot.face)
+        case .ngons: return mesh.aliveFaces.filter { mesh.loop($0).count > 4 }.map(TopologySpot.face)
+        case .poles: return MeshValidator.poles(mesh).map(TopologySpot.vertex)
+        case .badGeometry:
+            var out: [TopologySpot] = []
+            for issue in report?.issues ?? [] where issue.kind.isError {
+                out += issue.faces.sorted().filter(mesh.isFaceAlive).map(TopologySpot.face)
+                out += issue.edges.sorted().filter(mesh.isEdgeAlive).map(TopologySpot.edge)
+                out += issue.vertices.sorted().filter(mesh.isVertexAlive).map(TopologySpot.vertex)
+            }
+            return out
+        }
+    }
+
+    /// Takes the view to the next one, selected and facing the viewer. Each call moves on to another and
+    /// comes back round after the last. Returns which it is, counting from one, and how many there are.
+    @discardableResult
+    public func jump(to check: TopologyCheck, report: ValidationReport? = nil) -> (position: Int, count: Int)? {
+        let spots = spots(of: check, report: report)
+        guard !spots.isEmpty else { return nil }
+        let index = (jumpPositions[check] ?? -1) + 1
+        let wrapped = index % spots.count
+        jumpPositions[check] = wrapped
+        let spot = spots[wrapped]
+        cancelTransientState()
+        activeTool = .select
+
+        var next = Selection()
+        var normal = Vec3(repeating: 0)
+        var center = Vec3(repeating: 0)
+        switch spot {
+        case .face(let f):
+            next.mode = .face
+            next.faces = [f]
+            normal = mesh.faceNormal(f)
+            center = mesh.faceCenter(f)
+        case .edge(let e):
+            next.mode = .edge
+            next.edges = [e]
+            let (a, b) = mesh.ends(e)
+            normal = mesh.vertexNormal(a) + mesh.vertexNormal(b)
+            center = (mesh.position(a) + mesh.position(b)) * 0.5
+        case .vertex(let v):
+            next.mode = .vertex
+            next.vertices = [v]
+            normal = mesh.vertexNormal(v)
+            center = mesh.position(v)
+        }
+        selection = next
+        camera.look(along: normal)
+        // Far enough back to see what's around it, not just the one element.
+        let size = max(sceneBounds.diagonal * 0.14, mesh.averageEdgeLength * 2, 1e-3)
+        camera.frame(AABB(points: [center]).expanded(by: size), padding: 1.4)
+        rebuildOverlay()
+        notify()
+        return (wrapped + 1, spots.count)
+    }
+
     public func selectIssue(_ issue: MeshIssue) {
         var next = Selection()
         if !issue.faces.isEmpty {
@@ -2213,6 +2287,7 @@ public final class RetopoEngine {
         snapshot.tools = tools
         snapshot.activeTool = activeTool
         snapshot.patchChains = patchChains
+        snapshot.polyBudget = polyBudget
         snapshot.faceBuilderVertices = faceCorners.compactMap { corner in
             if case .vertex(let v) = corner { return v }
             return nil
@@ -2234,6 +2309,7 @@ public final class RetopoEngine {
         tools = snapshot.tools
         activeTool = snapshot.activeTool
         patchChains = snapshot.patchChains.filter { $0.isAlive(in: mesh) }
+        polyBudget = snapshot.polyBudget
         faceCorners = snapshot.faceBuilderVertices.filter(mesh.isVertexAlive).map { .vertex($0) }
         rebuildOverlay()
     }
@@ -2245,6 +2321,28 @@ public final class RetopoEngine {
         case .glb: return GLBExporter.export(mesh: mesh, name: name, sources: sources, options: options)
         }
     }
+}
+
+/// The things worth finding on a mesh before calling it done.
+public enum TopologyCheck: String, CaseIterable, Identifiable, Hashable {
+    case triangles, ngons, poles, badGeometry
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .triangles: return MeshIssueKind.triangles.title
+        case .ngons: return MeshIssueKind.ngons.title
+        case .poles: return MeshIssueKind.poles.title
+        case .badGeometry: return "Bad geometry"
+        }
+    }
+}
+
+public enum TopologySpot: Equatable {
+    case face(FaceID)
+    case edge(EdgeID)
+    case vertex(VertexID)
 }
 
 public enum ExportFormat: String, CaseIterable, Identifiable, Codable {

@@ -505,6 +505,105 @@ struct ExportPopover: View {
     }
 }
 
+struct TopologyCheckPopover: View {
+    let model: EditorModel
+    @State private var draft = ""
+    @State private var positions: [TopologyCheck: (position: Int, count: Int)] = [:]
+    @FocusState private var editsBudget: Bool
+
+    private let presets = [1_000, 5_000, 10_000, 25_000]
+
+    var body: some View {
+        let engine = model.state
+        let count = engine.statistics.triangleEquivalent
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Poly Budget").font(.headline)
+            if let budget = engine.polyBudget {
+                ProgressView(value: min(Double(count) / Double(budget), 1))
+                    .tint(count > budget ? Color.red : Color.accentColor)
+                Text(count > budget ? "\((count - budget).formatted()) triangles over \(budget.formatted())" : "\((budget - count).formatted()) triangles left of \(budget.formatted())")
+                    .font(.footnote).foregroundStyle(count > budget ? Color.red : Theme.quiet)
+                    .accessibilityIdentifier("budget-summary")
+            } else {
+                Text("\(count.formatted()) triangles so far. Set a target to watch against.")
+                    .font(.footnote).foregroundStyle(Theme.quiet)
+                    .accessibilityIdentifier("budget-summary")
+            }
+            HStack(spacing: 6) {
+                ForEach(presets, id: \.self) { preset in
+                    Button(preset >= 1000 ? "\(preset / 1000)k" : "\(preset)") { set(preset) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityIdentifier("budget-preset-\(preset)")
+                }
+                TextField("Other", text: $draft)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($editsBudget)
+                    .onChange(of: draft) { _, text in
+                        if let value = Int(text.filter(\.isNumber)), value > 0 { set(value, fromField: true) }
+                    }
+                    .accessibilityIdentifier("budget-field")
+                if engine.polyBudget != nil {
+                    Button("Clear") {
+                        draft = ""
+                        engine.setPolyBudget(nil)
+                        model.settingChanged()
+                    }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("budget-clear")
+                }
+            }
+            Text("Quads count as two triangles, and an n-gon as its sides minus two.")
+                .font(.caption).foregroundStyle(Theme.quiet)
+            Divider()
+            Text("Find").font(.headline)
+            ForEach(TopologyCheck.allCases) { check in
+                row(check, engine: engine)
+            }
+            Text("Tap again to go to the next one.").font(.caption).foregroundStyle(Theme.quiet)
+        }
+        .padding()
+        .frame(width: 340)
+        .onAppear {
+            if model.report == nil { model.runValidation() }
+        }
+    }
+
+    private func set(_ value: Int, fromField: Bool = false) {
+        if !fromField { draft = "" }
+        model.engine.setPolyBudget(value)
+        model.settingChanged()
+    }
+
+    @ViewBuilder private func row(_ check: TopologyCheck, engine: RetopoEngine) -> some View {
+        let waiting = check == .badGeometry && model.report == nil
+        let total = waiting ? 0 : engine.spots(of: check, report: model.report).count
+        Button {
+            positions[check] = engine.jump(to: check, report: model.report)
+            model.cameraDidChange()
+        } label: {
+            HStack {
+                Text(check.title).foregroundStyle(total == 0 ? Theme.quiet : Color.primary)
+                Spacer()
+                if waiting {
+                    ProgressView().controlSize(.mini)
+                } else if let at = positions[check], at.count == total {
+                    Text("\(at.position) of \(total)").monospacedDigit().foregroundStyle(Theme.quiet)
+                } else {
+                    Text("\(total)").monospacedDigit().foregroundStyle(Theme.quiet)
+                }
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(total == 0 ? Color.clear : Theme.quiet)
+            }
+            .frame(minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(total == 0)
+        .accessibilityIdentifier("jump-\(check.rawValue)")
+    }
+}
+
 struct ValidationView: View {
     let model: EditorModel
     @Environment(\.dismiss) private var dismiss

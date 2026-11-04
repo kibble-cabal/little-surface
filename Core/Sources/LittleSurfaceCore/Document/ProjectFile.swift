@@ -95,6 +95,8 @@ public struct ProjectSnapshot {
     public var activeTool: Tool
     public var patchChains: [BoundaryChain]
     public var faceBuilderVertices: [VertexID]
+    /// The target for the finished mesh, in triangles.
+    public var polyBudget: Int?
 
     public init(name: String) {
         self.name = name
@@ -110,6 +112,7 @@ public struct ProjectSnapshot {
         activeTool = .drawEdges
         patchChains = []
         faceBuilderVertices = []
+        polyBudget = nil
     }
 }
 
@@ -165,6 +168,8 @@ public enum ProjectCodec {
         var selectedFaces: [FaceID]
         var patchChains: [BoundaryChain]
         var faceBuilderVertices: [VertexID]
+        // Optional, so projects saved before this existed still open.
+        var polyBudget: Int?
     }
 
     // MARK: Encode
@@ -185,7 +190,8 @@ public enum ProjectCodec {
             selectedEdges: snapshot.selection.edges.sorted(),
             selectedFaces: snapshot.selection.faces.sorted(),
             patchChains: snapshot.patchChains,
-            faceBuilderVertices: snapshot.faceBuilderVertices
+            faceBuilderVertices: snapshot.faceBuilderVertices,
+            polyBudget: snapshot.polyBudget
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -316,6 +322,7 @@ public enum ProjectCodec {
         snapshot.activeTool = meta.activeTool
         snapshot.patchChains = meta.patchChains
         snapshot.faceBuilderVertices = meta.faceBuilderVertices
+        snapshot.polyBudget = meta.polyBudget
         snapshot.mesh = try decodeMesh(meshData)
         for (info, chunk) in zip(meta.sources, sourceData) {
             if isCancelled() { throw ImportError.cancelled }

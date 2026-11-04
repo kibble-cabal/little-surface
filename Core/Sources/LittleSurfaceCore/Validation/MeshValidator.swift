@@ -10,6 +10,9 @@ public struct MeshStatistics: Equatable {
     public var quads = 0
     public var ngons = 0
     public var components = 0
+    /// What the mesh comes to once triangulated: a face of n sides makes n - 2.
+    public var triangleEquivalent = 0
+    public var poles = 0
 
     public init() {}
 
@@ -18,6 +21,7 @@ public struct MeshStatistics: Equatable {
         edges = mesh.edgeCount
         faces = mesh.faceCount
         for f in mesh.aliveFaces {
+            triangleEquivalent += mesh.loop(f).count - 2
             switch mesh.loop(f).count {
             case 3: triangles += 1
             case 4: quads += 1
@@ -25,6 +29,7 @@ public struct MeshStatistics: Equatable {
             }
         }
         components = MeshValidator.connectedComponents(mesh).count
+        poles = MeshValidator.poles(mesh).count
     }
 }
 
@@ -39,6 +44,7 @@ public enum MeshIssueKind: String, CaseIterable, Identifiable {
     case isolatedComponents
     case triangles
     case ngons
+    case poles
     case selfIntersections
 
     public var id: String { rawValue }
@@ -55,6 +61,7 @@ public enum MeshIssueKind: String, CaseIterable, Identifiable {
         case .isolatedComponents: return "Separate pieces"
         case .triangles: return "Triangles"
         case .ngons: return "N-gons"
+        case .poles: return "Odd poles"
         case .selfIntersections: return "Possible self-intersections"
         }
     }
@@ -73,6 +80,7 @@ public enum MeshIssueKind: String, CaseIterable, Identifiable {
         case .isolatedComponents: return "Parts not connected to the largest piece."
         case .triangles: return "Three-sided faces. Fine in many places, but they can interrupt edge loops."
         case .ngons: return "Faces with more than four sides. They subdivide and deform less predictably."
+        case .poles: return "Vertices where other than four edges meet, away from any boundary. A few are needed to turn edge flow, so check they're where you want them."
         case .selfIntersections: return "Faces that may pass through each other. This check is approximate."
         }
     }
@@ -82,7 +90,7 @@ public enum MeshIssueKind: String, CaseIterable, Identifiable {
         switch self {
         case .nonManifoldEdges, .nonManifoldVertices, .duplicateVertices, .degenerateFaces, .inconsistentNormals, .selfIntersections:
             return true
-        case .holes, .looseEdges, .isolatedComponents, .triangles, .ngons:
+        case .holes, .looseEdges, .isolatedComponents, .triangles, .ngons, .poles:
             return false
         }
     }
@@ -115,6 +123,15 @@ public struct ValidationReport: Equatable {
 }
 
 public enum MeshValidator {
+    /// Vertices fully surrounded by faces where other than four edges meet. Along a boundary, or on a
+    /// loose edge, a count other than four is normal and says nothing about edge flow.
+    public static func poles(_ mesh: Mesh) -> [VertexID] {
+        mesh.aliveVertices.filter { v in
+            let edges = mesh.edgesOf(v)
+            return edges.count != 4 && !edges.isEmpty && edges.allSatisfy { mesh.faceCountOf(edge: $0) == 2 }
+        }
+    }
+
     /// Connected components by edge connectivity, largest first.
     public static func connectedComponents(_ mesh: Mesh) -> [[VertexID]] {
         var visited = [Bool](repeating: false, count: mesh.positions.count)
@@ -170,6 +187,11 @@ public enum MeshValidator {
         }
         if !pinched.isEmpty {
             report.issues.append(MeshIssue(kind: .nonManifoldVertices, vertices: pinched, count: pinched.count))
+        }
+
+        let poles = Self.poles(mesh)
+        if !poles.isEmpty {
+            report.issues.append(MeshIssue(kind: .poles, vertices: Set(poles), count: poles.count))
         }
 
         let tolerance = duplicateTolerance ?? max(diagonal * 1e-5, 1e-7)

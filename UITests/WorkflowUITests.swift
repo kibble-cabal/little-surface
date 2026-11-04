@@ -321,6 +321,40 @@ final class WorkflowUITests: XCTestCase {
     }
 
     /// Opens the example, draws two lines and makes a patch, which the other tests then work on.
+    func testPolyBudgetCountsLiveAndJumpsToTriangles() {
+        let patched = openPatchedExample()
+        let count = app.staticTexts["budget-count"]
+        XCTAssertEqual(count.label, "\(patched.quads * 2) tris", "quads count as two")
+
+        button("budget-status").tap()
+        settle()
+        button("budget-preset-1000").tap()
+        settle()
+        dismissPopover()
+        XCTAssertEqual(count.label, "\(patched.quads * 2) / 1,000 tris")
+        XCTAssertEqual(stats.quads, patched.quads, "the budget changes nothing about the mesh")
+
+        // A three-cornered face, away from the patch.
+        button("tool-face").tap()
+        tap(370, 750)
+        tap(450, 750)
+        tap(410, 800)
+        button("Create Face").tap()
+        settle()
+        XCTAssertEqual(count.label, "\(patched.quads * 2 + 1) / 1,000 tris", "the count follows edits as they happen")
+
+        button("budget-status").tap()
+        settle()
+        XCTAssertTrue(button("jump-badGeometry").waitForExistence(timeout: 5))
+        button("jump-triangles").tap()
+        settle()
+        shot("jumped to a triangle")
+        dismissPopover()
+        XCTAssertEqual(app.staticTexts["selection-status"].label, "1 selected")
+        XCTAssertEqual(stats.faces, patched.faces + 1, "looking doesn't edit")
+        assertUndoRestores(patched)
+    }
+
     private func openPatchedExample() -> Stats {
         button("Open Example").tap()
         XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
