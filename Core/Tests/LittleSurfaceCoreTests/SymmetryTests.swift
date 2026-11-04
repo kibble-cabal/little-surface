@@ -250,4 +250,16 @@ final class SymmetryTests: XCTestCase {
             assertValid(mesh)
         }
     }
+
+    func testWeldingACenterlineVertexIntoAPairedOneKeepsPartnersReciprocal() throws {
+        var mesh = Mesh()
+        let center = mesh.addVertex(Vec3(0, 0, 0))
+        let left = mesh.addVertex(Vec3(-1, 0, 0)), right = mesh.addVertex(Vec3(1, 0, 0))
+        mesh.setMirrorPartner(center, center)
+        mesh.setMirrorPartner(left, right)
+        mesh.setMirrorPartner(right, left)
+        try mesh.mergeVertex(center, into: left)
+        XCTAssertNil(mesh.firstInvariantViolation())
+        XCTAssertEqual(mesh.mirrorPartner[Int(left)], right)
+    }
 }

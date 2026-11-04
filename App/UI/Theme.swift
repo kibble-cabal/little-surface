@@ -6,7 +6,8 @@ enum Theme {
 
     static let page = Color(light: UIColor(red: 0.965, green: 0.955, blue: 0.935, alpha: 1), dark: UIColor(red: 0.11, green: 0.11, blue: 0.115, alpha: 1))
     static let card = Color(light: UIColor(red: 0.995, green: 0.99, blue: 0.98, alpha: 1), dark: UIColor(red: 0.17, green: 0.17, blue: 0.175, alpha: 1))
-    static let quiet = Color.secondary
+    // Solid rather than `.secondary`, whose vibrancy vanishes on a material inside a scroll view.
+    static let quiet = Color(uiColor: .secondaryLabel)
 }
 
 extension Color {
@@ -93,7 +94,7 @@ struct ValueSlider: View {
             HStack {
                 Text(title).font(.footnote)
                 Spacer()
-                Text(format(value)).font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                Text(format(value)).font(.footnote.monospacedDigit()).foregroundStyle(Theme.quiet)
             }
             Slider(value: $value, in: range) { editing in
                 if !editing { onEditingEnded?() }
@@ -115,7 +116,7 @@ struct IntStepper: View {
             HStack {
                 Text(title).font(.footnote)
                 Spacer()
-                Text(value == 0 ? (zeroLabel ?? "0") : "\(value)").font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                Text(value == 0 ? (zeroLabel ?? "0") : "\(value)").font(.footnote.monospacedDigit()).foregroundStyle(Theme.quiet)
             }
         }
         .accessibilityLabel(title)

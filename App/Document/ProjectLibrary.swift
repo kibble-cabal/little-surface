@@ -139,7 +139,11 @@ final class ProjectLibrary {
     // MARK: Thumbnails
 
     private func thumbnailURL(for url: URL) -> URL {
-        let digest = SHA256.hash(data: Data(url.standardizedFileURL.path.utf8)).map { String(format: "%02x", $0) }.joined()
+        // Relative for projects in the app's own folder, whose absolute path changes when the app updates.
+        let path = url.standardizedFileURL.path
+        let own = projectsFolder.standardizedFileURL.path + "/"
+        let key = path.hasPrefix(own) ? String(path.dropFirst(own.count)) : path
+        let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
         return thumbnailsFolder.appendingPathComponent(digest).appendingPathExtension("png")
     }
 

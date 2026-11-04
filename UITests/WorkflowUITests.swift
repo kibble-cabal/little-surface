@@ -58,6 +58,11 @@ final class WorkflowUITests: XCTestCase {
         settle()
     }
 
+    private func flip(_ toggle: XCUIElement) {
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        settle()
+    }
+
     private func shot(_ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
@@ -144,7 +149,7 @@ final class WorkflowUITests: XCTestCase {
         button("Symmetry").tap()
         let symmetry = app.switches["Symmetry Toggle"]
         XCTAssertTrue(symmetry.waitForExistence(timeout: 5))
-        symmetry.switches.firstMatch.tap()
+        flip(symmetry)
         settle()
         shot("symmetry popover")
         dismissPopover()
@@ -161,16 +166,15 @@ final class WorkflowUITests: XCTestCase {
         button("Display").tap()
         let subdivision = app.switches["Subdivision Preview"]
         XCTAssertTrue(subdivision.waitForExistence(timeout: 5))
-        if !subdivision.isHittable { app.swipeUp() }
-        subdivision.switches.firstMatch.tap()
+        if !subdivision.isHittable { button("Frame Selection").swipeUp() }
+        flip(subdivision)
         XCTAssertTrue(app.staticTexts["subdivision-note"].waitForExistence(timeout: 10))
         dismissPopover()
         XCTAssertEqual(stats.faces, mirrored.faces)
         shot("subdivision")
-        let display = button("Display")
-        display.tap()
-        if !subdivision.isHittable { app.swipeUp() }
-        subdivision.switches.firstMatch.tap()
+        button("Display").tap()
+        if !subdivision.isHittable { button("Frame Selection").swipeUp() }
+        flip(subdivision)
         dismissPopover()
 
         // Save, close, and reopen.
@@ -217,6 +221,20 @@ final class WorkflowUITests: XCTestCase {
         XCTAssertTrue(button("project-\(name)").waitForExistence(timeout: 10))
     }
 
+    func testDarkLandscapeLook() throws {
+        app.terminate()
+        app.launchArguments += ["-appearance", "dark"]
+        app.launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        settle(1)
+        shot("dark welcome")
+        button("Open Example").tap()
+        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
+        shot("dark landscape editor")
+        XCUIDevice.shared.orientation = .portrait
+        settle(1)
+    }
+
     func testRefusedPatchExplainsAndChangesNothing() throws {
         button("Open Example").tap()
         XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
@@ -226,5 +244,172 @@ final class WorkflowUITests: XCTestCase {
         tap(410, 480)
         XCTAssertFalse(button("Create Patch").isEnabled, "one line isn't enough to patch")
         XCTAssertEqual(stats.edges, before.edges)
+    }
+
+    /// Opens the example, draws two lines and makes a patch, which the other tests then work on.
+    private func openPatchedExample() -> Stats {
+        button("Open Example").tap()
+        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
+        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
+        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
+        button("tool-quadPatch").tap()
+        tap(410, 480)
+        tap(410, 585)
+        button("Create Patch").tap()
+        settle()
+        return stats
+    }
+
+    private func press(_ id: String) {
+        let element = button(id)
+        if !element.isHittable { app.swipeUp() }
+        element.tap()
+        settle(0.3)
+    }
+
+    private func pickSelectionMode(_ title: String) {
+        app.segmentedControls["Selection Mode"].buttons[title].tap()
+        settle(0.2)
+    }
+
+    private func assertUndoRestores(_ expected: Stats, file: StaticString = #filePath, line: UInt = #line) {
+        button("Undo").tap()
+        settle(0.3)
+        XCTAssertEqual(stats.vertices, expected.vertices, file: file, line: line)
+        XCTAssertEqual(stats.edges, expected.edges, file: file, line: line)
+        XCTAssertEqual(stats.faces, expected.faces, file: file, line: line)
+    }
+
+    func testEveryEditKeepsItsPromiseAndUndoes() throws {
+        let start = openPatchedExample()
+        XCTAssertGreaterThan(start.faces, 20)
+        button("tool-select").tap()
+        button("Toggle Options").tap()
+        settle()
+        shot("select panel")
+
+        // Whole-mesh operations.
+        press("All")
+        press("Subdivide")
+        XCTAssertEqual(stats.faces, start.faces * 4, "subdividing every quad makes four")
+        assertUndoRestores(start)
+        press("Relax")
+        XCTAssertEqual(stats.faces, start.faces)
+        assertUndoRestores(start)
+        press("Reverse")
+        press("Fix Normals")
+        XCTAssertEqual(stats.faces, start.faces)
+        press("None")
+
+        // The boundary, extruded.
+        pickSelectionMode("Edge")
+        tap(410, 530)
+        XCTAssertTrue(app.staticTexts["selection-status"].exists, "a tap selects an edge")
+        press("Loop")
+        press("Ring")
+        press("Connected")
+        press("Boundary")
+        press("Extrude")
+        XCTAssertGreaterThan(stats.faces, start.faces)
+        shot("extruded")
+        assertUndoRestores(start)
+        press("Split")
+        XCTAssertGreaterThan(stats.vertices, start.vertices)
+        assertUndoRestores(start)
+        press("None")
+
+        // A face deleted, then filled back.
+        pickSelectionMode("Face")
+        tap(410, 530)
+        press("Delete")
+        XCTAssertEqual(stats.faces, start.faces - 1)
+        press("Fill")
+        XCTAssertEqual(stats.faces, start.faces)
+        assertUndoRestores(Stats(vertices: start.vertices, edges: start.edges, faces: start.faces - 1, quads: start.faces - 1))
+        assertUndoRestores(start)
+        press("None")
+
+        // A vertex dissolved.
+        pickSelectionMode("Vertex")
+        tap(410, 530)
+        press("Dissolve")
+        XCTAssertLessThan(stats.vertices, start.vertices)
+        assertUndoRestores(start)
+
+        // Nothing selected is never a crash, only a note.
+        press("None")
+        for id in ["Weld", "Connect", "Flip", "Make Face", "Dissolve", "Delete"] { press(id) }
+        XCTAssertEqual(stats.faces, start.faces)
+        button("Toggle Options").tap()
+
+        // The report reads the same mesh.
+        button("Check Mesh").tap()
+        XCTAssertTrue(app.staticTexts["Connected parts"].waitForExistence(timeout: 10))
+        shot("report")
+        app.buttons["Done"].firstMatch.tap()
+        settle()
+    }
+
+    func testStripBrushesAndFingerUndo() throws {
+        let start = openPatchedExample()
+
+        // A strip from one stroke, previewed before it's real.
+        button("tool-quadStrip").tap()
+        draw(CGPoint(x: 340, y: 770), CGPoint(x: 480, y: 770))
+        XCTAssertEqual(stats.faces, start.faces, "still a preview")
+        shot("strip preview")
+        button("Create Strip").tap()
+        settle()
+        XCTAssertGreaterThan(stats.faces, start.faces)
+        let stripped = stats
+        shot("strip")
+
+        // Two fingers tapping undoes the strip in one step.
+        app.otherElements["viewport"].twoFingerTap()
+        settle()
+        XCTAssertEqual(stats.faces, start.faces)
+        button("Redo").tap()
+        settle()
+        XCTAssertEqual(stats.faces, stripped.faces)
+        assertUndoRestores(start)
+
+        // Brushes.
+        button("tool-moveBrush").tap()
+        draw(CGPoint(x: 400, y: 530), CGPoint(x: 420, y: 530))
+        XCTAssertEqual(stats.faces, start.faces)
+        assertUndoRestores(start)
+        button("tool-relaxBrush").tap()
+        draw(CGPoint(x: 340, y: 530), CGPoint(x: 480, y: 530))
+        XCTAssertEqual(stats.faces, start.faces)
+        assertUndoRestores(start)
+        button("tool-erase").tap()
+        draw(CGPoint(x: 380, y: 530), CGPoint(x: 440, y: 530))
+        XCTAssertLessThan(stats.faces, start.faces)
+        shot("erased")
+        assertUndoRestores(start)
+    }
+
+    func testDisplayModes() throws {
+        _ = openPatchedExample()
+        button("Display").tap()
+        let modes = app.segmentedControls["Display Mode"]
+        XCTAssertTrue(modes.waitForExistence(timeout: 5))
+        for mode in ["Wireframe", "X-ray", "Solid"] {
+            modes.buttons[mode].tap()
+            settle()
+            dismissPopover()
+            shot("display \(mode)")
+            button("Display").tap()
+            XCTAssertTrue(modes.waitForExistence(timeout: 5))
+        }
+        for toggle in ["Show Source", "Show Topology"] {
+            flip(app.switches[toggle])
+            dismissPopover()
+            shot("hidden \(toggle)")
+            button("Display").tap()
+            XCTAssertTrue(app.switches[toggle].waitForExistence(timeout: 5))
+            flip(app.switches[toggle])
+        }
+        dismissPopover()
     }
 }

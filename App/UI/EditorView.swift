@@ -98,10 +98,10 @@ private struct EmptyViewportPrompt: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "cube.transparent").font(.system(size: 32, weight: .light)).foregroundStyle(.secondary)
+            Image(systemName: "cube.transparent").font(.system(size: 32, weight: .light)).foregroundStyle(Theme.quiet)
             Text("Nothing to draw on yet").font(.headline)
             Text("Import a model. It stays separate from the topology you draw on it.")
-                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 320)
+                .font(.subheadline).foregroundStyle(Theme.quiet).multilineTextAlignment(.center).frame(maxWidth: 320)
             HStack {
                 Button("Import Model") { importsModel = true }.buttonStyle(PillButtonStyle(prominent: true)).accessibilityIdentifier("Empty Import")
                 Button("Use the Example") { model.importExample() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Use Example")
@@ -367,7 +367,7 @@ private struct StatusBar: View {
         let engine = model.state
         let stats = engine.statistics
         HStack(spacing: 14) {
-            Text(engine.activeTool.hint).lineLimit(1).foregroundStyle(.secondary)
+            Text(engine.activeTool.hint).lineLimit(1).foregroundStyle(Theme.quiet)
             Spacer(minLength: 8)
             if !engine.selection.isEmpty {
                 Text(selectionText(engine.selection)).foregroundStyle(Color.accentColor)
@@ -491,7 +491,7 @@ private struct DecisionChips: View {
     private func chipRow<Buttons: View>(note: String?, @ViewBuilder buttons: () -> Buttons) -> some View {
         HStack(spacing: 8) {
             if let note {
-                Text(note).font(.footnote).foregroundStyle(.secondary).padding(.leading, 6).frame(maxWidth: 420, alignment: .leading)
+                Text(note).font(.footnote).foregroundStyle(Theme.quiet).padding(.leading, 6).frame(maxWidth: 420, alignment: .leading)
                     .accessibilityIdentifier("decision-note")
             }
             buttons()
@@ -509,7 +509,7 @@ private struct TutorialCard: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(step.rawValue + 1) of \(TutorialStep.allCases.count)  ·  \(step.title)").font(.footnote.weight(.semibold))
-                Text(step.detail).font(.footnote).foregroundStyle(.secondary)
+                Text(step.detail).font(.footnote).foregroundStyle(Theme.quiet)
             }
             Spacer(minLength: 4)
             Button("Skip") { model.endTutorial() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Skip Tutorial")

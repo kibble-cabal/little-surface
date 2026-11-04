@@ -82,4 +82,23 @@ final class SelectionTests: XCTestCase {
         let inside = picker.select(inside: ring, mode: .vertex)
         XCTAssertEqual(inside.vertices.count, 3, "only the left column")
     }
+
+    func testEdgeAndFaceOperationsAcceptAVertexSelection() {
+        let engine = RetopoEngine()
+        engine.perform("seed") { mesh, _ in
+            let v = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0)].map { mesh.addVertex($0) }
+            _ = try mesh.addFace(v)
+        }
+        XCTAssertEqual(engine.selection.mode, .vertex)
+        engine.selectAll()
+        engine.subdivideSelection()
+        XCTAssertEqual(engine.mesh.faceCount, 4, "every corner selected means the face is")
+        engine.undo()
+        XCTAssertEqual(engine.mesh.faceCount, 1)
+
+        engine.setSelectionMode(.vertex)
+        engine.selectAll()
+        engine.extrudeSelectedEdges()
+        XCTAssertEqual(engine.mesh.faceCount, 5, "the four boundary edges each grow a quad")
+    }
 }

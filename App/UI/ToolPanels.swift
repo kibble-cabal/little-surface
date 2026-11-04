@@ -162,7 +162,7 @@ private struct PatchControls: View {
         let patch = engine.tools.patch
         VStack(alignment: .leading, spacing: 10) {
             Text(engine.patchChains.isEmpty ? "Tap two lines, four sides, or one closed loop." : "\(engine.patchChains.count) picked")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(.footnote).foregroundStyle(Theme.quiet)
             Button("Use Selected Edges") { engine.addPatchChainFromSelection() }
                 .buttonStyle(PillButtonStyle())
             IntStepper(title: "Rows", value: Binding(get: { patch.rows }, set: { v in change { $0.rows = v } }), range: 0...100, zeroLabel: "Auto")
@@ -179,7 +179,7 @@ private struct FaceControls: View {
     let model: EditorModel
     var body: some View {
         Text("Tap vertices or edges with the Pencil. Four corners complete a quad right away. To make a triangle or an n-gon, tap Create Face.")
-            .font(.footnote).foregroundStyle(.secondary)
+            .font(.footnote).foregroundStyle(Theme.quiet)
     }
 }
 
@@ -289,7 +289,7 @@ private struct SelectionControls: View {
     }
 
     private func sectionTitle(_ text: String) -> some View {
-        Text(text).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 2)
+        Text(text).font(.caption.weight(.semibold)).foregroundStyle(Theme.quiet).padding(.top, 2)
     }
 }
 
@@ -328,7 +328,7 @@ struct SymmetryPopover: View {
                 Button("Apply") { model.engine.applySymmetry() }.buttonStyle(PillButtonStyle()).help("Mirror the kept side into plain geometry")
             }
             Text("Apply replaces one side with a mirror of the other, then welds the center. It can be undone.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(Theme.quiet)
         }
         .padding()
         .frame(width: 300)
@@ -398,12 +398,12 @@ struct DisplayPopover: View {
                     }
                     .pickerStyle(.segmented)
                     if let note = model.subdivisionNote {
-                        Text(note).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("subdivision-note")
+                        Text(note).font(.caption).foregroundStyle(Theme.quiet).accessibilityIdentifier("subdivision-note")
                     }
                 }
                 Button("Subdivide Real Geometry") { model.engine.applySubdivision() }.buttonStyle(PillButtonStyle())
                 Text("The preview never changes the mesh. This button does, and can be undone.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(Theme.quiet)
             }
             .padding()
         }
@@ -420,7 +420,7 @@ struct ObjectsPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Source Objects").font(.headline)
             if engine.sources.isEmpty {
-                Text("No source models yet. Import one to draw on it.").font(.footnote).foregroundStyle(.secondary)
+                Text("No source models yet. Import one to draw on it.").font(.footnote).foregroundStyle(Theme.quiet)
             }
             ScrollView {
                 VStack(spacing: 2) {
@@ -428,7 +428,7 @@ struct ObjectsPopover: View {
                         HStack(spacing: 2) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(object.name).font(.footnote).lineLimit(1)
-                                Text("\(object.triangleCount.formatted()) triangles").font(.caption2).foregroundStyle(.secondary)
+                                Text("\(object.triangleCount.formatted()) triangles").font(.caption2).foregroundStyle(Theme.quiet)
                             }
                             Spacer()
                             IconButton(symbol: object.isVisible ? "eye" : "eye.slash", label: "Show \(object.name)", isActive: false) {
@@ -478,9 +478,9 @@ struct ExportPopover: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("Export Format")
             Text(format == .obj ? "Keeps quads as quads. Loose edges are written too. This is the best choice for Blender." : "Faces are triangulated, as glTF requires. Loose edges aren't included.")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(.footnote).foregroundStyle(Theme.quiet)
             Toggle("Include source as a separate object", isOn: $includesSource).font(.footnote).accessibilityIdentifier("Include Source")
-            Text("\(stats.vertices) vertices, \(stats.faces) faces").font(.footnote).foregroundStyle(.secondary)
+            Text("\(stats.vertices) vertices, \(stats.faces) faces").font(.footnote).foregroundStyle(Theme.quiet)
             Button("Export…") {
                 var options = ExportOptions()
                 options.includeSource = includesSource
@@ -517,7 +517,7 @@ struct ValidationView: View {
                     }
                     Section {
                         if report.issues.isEmpty {
-                            Text("Nothing to report.").foregroundStyle(.secondary)
+                            Text("Nothing to report.").foregroundStyle(Theme.quiet)
                         }
                         ForEach(report.issues) { issue in
                             Button {
@@ -529,17 +529,17 @@ struct ValidationView: View {
                                         .foregroundStyle(issue.kind.isError ? .orange : .secondary)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(issue.kind.title)
-                                        Text(issue.kind.explanation).font(.caption).foregroundStyle(.secondary)
+                                        Text(issue.kind.explanation).font(.caption).foregroundStyle(Theme.quiet)
                                     }
                                     Spacer()
-                                    Text("\(issue.count)").monospacedDigit().foregroundStyle(.secondary)
+                                    Text("\(issue.count)").monospacedDigit().foregroundStyle(Theme.quiet)
                                 }
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("issue-\(issue.kind.rawValue)")
                         }
                         if report.selfIntersectionCheckWasPartial {
-                            Text("The self-intersection check stopped early on this large mesh, so it may be incomplete.").font(.caption).foregroundStyle(.secondary)
+                            Text("The self-intersection check stopped early on this large mesh, so it may be incomplete.").font(.caption).foregroundStyle(Theme.quiet)
                         }
                     } header: {
                         Text("Findings")
@@ -549,7 +549,7 @@ struct ValidationView: View {
                 } else if model.isValidating {
                     HStack { ProgressView(); Text("Checking…") }
                 } else {
-                    Text("Tap Check to look for structural problems.").foregroundStyle(.secondary)
+                    Text("Tap Check to look for structural problems.").foregroundStyle(Theme.quiet)
                 }
             }
             .navigationTitle("Check Mesh")

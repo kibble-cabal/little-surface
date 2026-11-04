@@ -209,7 +209,9 @@ public extension Mesh {
                 throw MeshError.invalid("Welding these would give an edge three faces, which isn't valid for export, so nothing was merged.")
             }
         }
-        if partner == into || partner == from { setMirrorPartner(into, into) }
+        // A pair welded together is on the centerline now. So is what takes in a centerline vertex, unless
+        // it already has a partner of its own, which must keep pointing back at it.
+        if partner == into || (partner == from && mirrorPartner[Int(into)] < 0) { setMirrorPartner(into, into) }
     }
 
     /// Welds a set into one vertex at their average position, or at `position` if given.

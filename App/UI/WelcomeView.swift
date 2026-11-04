@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 struct WelcomeView: View {
     @Environment(AppModel.self) private var app
     @State private var library = ProjectLibrary.shared
-    @State private var importsModel = false
-    @State private var opensProject = false
+    @State private var filePick = FilePick.model
+    @State private var picksFile = false
     @State private var showsSettings = false
     @State private var pendingDelete: ProjectItem?
     @Environment(\.scenePhase) private var scenePhase
@@ -42,13 +42,17 @@ struct WelcomeView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { library.refresh() }
         }
-        .fileImporter(isPresented: $importsModel, allowedContentTypes: [.objModel, .glbModel, .gltfModel, .data]) { result in
-            if case .success(let url) = result {
-                app.newProject(name: url.deletingPathExtension().lastPathComponent, start: .model(url))
+        // One importer for both jobs: SwiftUI only honors the last of several on the same view.
+        .fileImporter(isPresented: $picksFile, allowedContentTypes: filePick.types) { result in
+            switch result {
+            case .success(let url):
+                switch filePick {
+                case .model: app.newProject(name: url.deletingPathExtension().lastPathComponent, start: .model(url))
+                case .project: app.open(url)
+                }
+            case .failure(let error):
+                app.alert = error.localizedDescription
             }
-        }
-        .fileImporter(isPresented: $opensProject, allowedContentTypes: [.littleSurfaceProject]) { result in
-            if case .success(let url) = result { app.open(url) }
         }
         .sheet(isPresented: $showsSettings) { SettingsView() }
         .confirmationDialog(
@@ -65,20 +69,25 @@ struct WelcomeView: View {
         }
     }
 
+    private func pick(_ kind: FilePick) {
+        filePick = kind
+        picksFile = true
+    }
+
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Little Surface").font(.system(size: 30, weight: .semibold, design: .default)).lineLimit(1).fixedSize()
-                Text("Retopology for iPad").font(.subheadline).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                Text("Retopology for iPad").font(.subheadline).foregroundStyle(Theme.quiet).lineLimit(1).fixedSize()
             }
             Spacer()
             Button { app.newProject() } label: { Label("New", systemImage: "plus") }
                 .buttonStyle(PillButtonStyle()).accessibilityIdentifier("New Project")
-            Button { importsModel = true } label: { Label("Import Model", systemImage: "square.and.arrow.down") }
+            Button { pick(.model) } label: { Label("Import Model", systemImage: "square.and.arrow.down") }
                 .buttonStyle(PillButtonStyle(prominent: true)).accessibilityIdentifier("Import Model")
             Button { app.newProject(name: "Example", start: .example) } label: { Label("Example", systemImage: "cube") }
                 .buttonStyle(PillButtonStyle()).accessibilityIdentifier("Open Example")
-            Button { opensProject = true } label: { Label("Open", systemImage: "folder") }
+            Button { pick(.project) } label: { Label("Open", systemImage: "folder") }
                 .buttonStyle(PillButtonStyle()).accessibilityIdentifier("Open Project")
             IconButton(symbol: "gearshape", label: "Settings") { showsSettings = true }
         }
@@ -90,13 +99,24 @@ struct WelcomeView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
-            Image(systemName: "square.grid.3x3").font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
+            Image(systemName: "square.grid.3x3").font(.system(size: 34, weight: .light)).foregroundStyle(Theme.quiet)
             Text("No projects yet").font(.title3)
             Text("Import an OBJ or GLB model to start drawing topology on it, or try the example.")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary).frame(maxWidth: 380)
+                .multilineTextAlignment(.center).foregroundStyle(Theme.quiet).frame(maxWidth: 380)
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private enum FilePick {
+    case model, project
+
+    var types: [UTType] {
+        switch self {
+        case .model: return [.objModel, .glbModel, .gltfModel, .data]
+        case .project: return [.littleSurfaceProject]
+        }
     }
 }
 
@@ -115,7 +135,7 @@ private struct ProjectCard: View {
                         Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
                     } else {
                         Rectangle().fill(Color.primary.opacity(0.05))
-                            .overlay(Image(systemName: "cube.transparent").font(.title).foregroundStyle(.secondary))
+                            .overlay(Image(systemName: "cube.transparent").font(.title).foregroundStyle(Theme.quiet))
                     }
                 }
                 .frame(height: 150)
@@ -127,7 +147,7 @@ private struct ProjectCard: View {
                         if item.isExternal { Image(systemName: "icloud").font(.caption2) }
                         Text(item.modified, format: .relative(presentation: .named)).font(.caption)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.quiet)
                 }
                 .padding(.horizontal, 4)
             }

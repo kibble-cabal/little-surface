@@ -1422,6 +1422,7 @@ public final class RetopoEngine {
     }
 
     public func splitSelectedEdges(cuts: Int = 1) {
+        if selection.mode == .vertex, !selection.vertices.isEmpty { setSelectionMode(.edge) }
         guard !selection.edges.isEmpty else {
             say("Select edges to split.")
             return
@@ -1472,6 +1473,7 @@ public final class RetopoEngine {
     }
 
     public func extrudeSelectedEdges() {
+        if selection.mode == .vertex, !selection.vertices.isEmpty { setSelectionMode(.edge) }
         guard !selection.edges.isEmpty else {
             say("Select boundary edges to extrude.")
             return
@@ -1496,6 +1498,10 @@ public final class RetopoEngine {
             if loops.count == 1, selection.vertices.isEmpty {
                 say("This mesh has one open boundary, which might be its outline rather than a hole. Select one of its edges and fill again to confirm.")
                 return
+            }
+            // With several, the longest is taken for the outline and left open unless it's picked by hand.
+            if loops.count > 1, selection.vertices.isEmpty, let outline = loops.indices.max(by: { loops[$0].edges.count < loops[$1].edges.count }) {
+                loops.remove(at: outline)
             }
         } else {
             var seen = Set<EdgeID>()
@@ -1572,6 +1578,7 @@ public final class RetopoEngine {
     }
 
     public func flipSelectedEdges() {
+        if selection.mode == .vertex, !selection.vertices.isEmpty { setSelectionMode(.edge) }
         guard !selection.edges.isEmpty else {
             say("Select an edge between two faces to flip it.")
             return
@@ -1584,6 +1591,7 @@ public final class RetopoEngine {
     }
 
     public func subdivideSelection() {
+        if selection.mode == .vertex, !selection.vertices.isEmpty { setSelectionMode(.face) }
         let projector = activeProjector
         if !selection.faces.isEmpty {
             let faces = workingFaces

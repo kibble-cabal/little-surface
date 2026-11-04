@@ -111,7 +111,8 @@ schemes:
       targets:
         LittleSurface: all
     run:
-      config: Debug
+      # Geometry is much slower unoptimized, so Run uses Release. Tests stay in Debug for @testable.
+      config: Release
     test:
       config: Debug
       targets:
