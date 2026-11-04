@@ -273,6 +273,7 @@ private struct SaveIndicator: View {
 extension Tool {
     var symbol: String {
         switch self {
+        case .pencil: return "pencil"
         case .select: return "cursorarrow"
         case .drawEdges: return "pencil.tip"
         case .edgeLoop: return "lasso"
@@ -288,6 +289,7 @@ extension Tool {
 
     var label: String {
         switch self {
+        case .pencil: return "Pencil"
         case .select: return "Select and Edit"
         case .drawEdges: return "Draw Edges"
         case .edgeLoop: return "Edge Loop"
@@ -303,6 +305,7 @@ extension Tool {
 
     var hint: String {
         switch self {
+        case .pencil: return "Draw on the surface."
         case .select: return "Tap to select, drag a selected element to move it, drag elsewhere to lasso."
         case .drawEdges: return "Draw on the surface to add edges, or tap two lines to fill between them."
         case .edgeLoop: return "Draw around a form to make a closed loop."

@@ -2,11 +2,11 @@ import Foundation
 import simd
 
 public enum Tool: String, Codable, CaseIterable {
-    case select, sketch, drawEdges, edgeLoop, quadStrip, quadPatch, face, moveBrush, relaxBrush, erase
+    case pencil, select, sketch, drawEdges, edgeLoop, quadStrip, quadPatch, face, moveBrush, relaxBrush, erase
 
     public var isDrawingTool: Bool {
         switch self {
-        case .drawEdges, .edgeLoop, .quadStrip, .quadPatch: return true
+        case .pencil, .drawEdges, .edgeLoop, .quadStrip, .quadPatch: return true
         default: return false
         }
     }
@@ -841,6 +841,15 @@ public final class RetopoEngine {
     public func pencilBegan(at screen: Vec2, pressure: Float = 1) {
         hoverElement = nil
         switch activeTool {
+        case .pencil:
+            guard let projector else {
+                gesture = .idle
+                return
+            }
+            var capture = StrokeCapture(camera: camera, projector: projector)
+            capture.add(screen: screen, pressure: pressure)
+            gesture = .stroke(capture)
+            inkPath = [screen]
         case .drawEdges, .edgeLoop, .quadStrip, .quadPatch:
             guard let projector else {
                 if sources.isEmpty {
@@ -1003,7 +1012,7 @@ public final class RetopoEngine {
             hoverElement = picker.pick(at: screen, mode: selection.mode, radius: pickRadius)
         case .quadPatch:
             hoverElement = picker.pickEdge(at: screen, radius: pickRadius).map { .edge($0.0, t: $0.t) }
-        case .face, .drawEdges, .edgeLoop, .quadStrip:
+        case .pencil, .face, .drawEdges, .edgeLoop, .quadStrip:
             hoverElement = picker.pickVertex(at: screen, radius: tools.stroke.snapRadiusPoints).map { .vertex($0) }
         default:
             hoverElement = nil
@@ -1016,6 +1025,10 @@ public final class RetopoEngine {
     // MARK: Stroke handling
 
     private func finishStroke(_ capture: StrokeCapture, tapPoint: Vec2) {
+        if activeTool == .pencil {
+            finishPencilStroke(capture, tapPoint: tapPoint)
+            return
+        }
         overlay.mirrorEdges = []
         if capture.screenLength < minimumStrokeLength {
             if activeTool == .quadPatch || (activeTool == .drawEdges && hasFreeEdge(at: tapPoint)) {
@@ -1116,6 +1129,108 @@ public final class RetopoEngine {
         let result = apply(plans: plans, label: "Draw edges", event: .strokeCommitted)
         report(plans, result: result)
         offerFill(after: result)
+    }
+
+    // MARK: The pencil
+
+    /// How long a quad's side comes out on screen when nothing nearby says otherwise. Quad size follows
+    /// the zoom, as line weight does on paper: come in close to draw finer.
+    public static let quadSizePoints: Float = 28
+
+    /// The Pencil has rested on a point for long enough to pick it up rather than draw from it.
+    public func pencilHeld() {
+        guard activeTool == .pencil, case .stroke(let capture) = gesture,
+              capture.screenLength < tapSlop, let start = capture.screenPath.first else { return }
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        guard let vertex = picker.pickVertex(at: start, radius: pickRadius) else { return }
+        inkPath = []
+        selection.clear()
+        selection.mode = .vertex
+        selection.vertices = [vertex]
+        beginSelectGesture(at: start)
+        rebuildOverlay()
+        notify()
+    }
+
+    private func finishPencilStroke(_ capture: StrokeCapture, tapPoint: Vec2) {
+        overlay.mirrorEdges = []
+        guard capture.screenLength >= minimumStrokeLength else {
+            pencilTap(at: tapPoint)
+            return
+        }
+        guard let projector else { return }
+        let runs = capture.usableRuns
+        guard !runs.isEmpty else { return }
+        let scale = camera.worldPerPoint(at: runs[0][runs[0].count / 2].position)
+        let closeRadius = tools.stroke.closeRadiusPoints * scale
+
+        func paths(spacing: Float) -> [ProcessedPath] {
+            tools.stroke.edgeLength = spacing
+            return runs.compactMap { StrokeProcessor.process(run: $0, settings: tools.stroke, projector: projector, closeRadius: closeRadius) }
+        }
+        var spacing = pencilSpacing(capture, scale: scale)
+        var drawn = paths(spacing: spacing)
+        guard !drawn.isEmpty else { return }
+        // A closed loop with an even count can always be filled with quads.
+        if drawn.count == 1, drawn[0].canClose, closesLoopsAutomatically {
+            let count = max(2, Int((drawn[0].length / spacing).rounded()))
+            if !count.isMultiple(of: 2) {
+                spacing = drawn[0].length / Float(count + 1)
+                drawn = paths(spacing: spacing)
+            }
+        }
+        let options = strokeOptions(scale: scale)
+        let plans = pencilPlans(drawn, options: options)
+        guard !plans.isEmpty else { return }
+        let result = apply(plans: plans, label: plans.contains(where: \.isClosed) ? "Draw loop" : "Draw line", event: plans.contains(where: \.isClosed) ? .loopClosed : .strokeCommitted)
+        report(plans, result: result)
+        clearMessage()
+    }
+
+    private func pencilPlans(_ paths: [ProcessedPath], options: StrokePlanOptions) -> [StrokePlan] {
+        if paths.count == 1, paths[0].canClose, closesLoopsAutomatically {
+            let closed = closedPlan(paths[0], options: options)
+            if !closed.plan.isEmpty { return [closed] }
+        }
+        return paths.map { StrokePlanner.plan(path: prepared($0), mesh: mesh, options: options) }.filter { !$0.plan.isEmpty }
+    }
+
+    /// The zoom sets the size, unless the stroke starts or ends on topology, which it then matches.
+    private func pencilSpacing(_ capture: StrokeCapture, scale: Float) -> Float {
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        var touched: [Float] = []
+        for end in [capture.screenPath.first, capture.screenPath.last].compactMap({ $0 }) {
+            guard let v = picker.pickVertex(at: end, radius: tools.stroke.snapRadiusPoints) else { continue }
+            let edges = mesh.edgesOf(v)
+            guard !edges.isEmpty else { continue }
+            touched.append(edges.reduce(0) { $0 + mesh.edgeLength($1) } / Float(edges.count))
+        }
+        guard !touched.isEmpty else { return Self.quadSizePoints * scale }
+        return touched.reduce(0, +) / Float(touched.count)
+    }
+
+    /// A tap picks what's under it: a whole line, or a quad, with further quads adding to the pick.
+    private func pencilTap(at screen: Vec2) {
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        if let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius), mesh.isWire(edge),
+           let chain = ChainFinder.chain(through: edge, in: mesh) {
+            selection.clear()
+            selection.mode = .edge
+            selection.edges = Set(chain.edges)
+        } else if let face = picker.pickFace(at: screen) {
+            if selection.mode != .face { selection.clear() }
+            selection.mode = .face
+            if selection.faces.contains(face) {
+                selection.faces.remove(face)
+            } else {
+                selection.faces.insert(face)
+            }
+        } else {
+            selection.clear()
+        }
     }
 
     /// Says what a stroke did to the lines it met, when that's more than adding edges.

@@ -17,6 +17,7 @@ struct ContextPanel: View {
     @ViewBuilder
     private func toolControls(_ engine: RetopoEngine) -> some View {
         switch engine.activeTool {
+        case .pencil: EmptyView()
         case .select: SelectionControls(model: model)
         case .drawEdges, .edgeLoop: StrokeControls(model: model)
         case .quadStrip: StripControls(model: model)
