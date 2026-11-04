@@ -62,31 +62,33 @@ struct ViewportStyle {
     var plane: Vec4
     var wire: Vec4
 
-    static func make(dark: Bool, backgroundLevel: Float?) -> ViewportStyle {
-        // The mesh wears the app's emerald. Selection is the system's blue, so it stands out from it.
-        let emerald = dark ? Vec4(0.20, 0.83, 0.60, 1) : Vec4(0.02, 0.59, 0.41, 1)
-        let topo = dark ? Vec4(0.43, 0.91, 0.72, 1) : Vec4(0.01, 0.34, 0.25, 1)
+    static func make(dark: Bool) -> ViewportStyle {
+        // A drawing on paper: finished lines are ink, unfinished ones are graphite, and the model is
+        // matte. Selection is the system's blue, so it stands out from all of that.
+        let ink = dark ? Vec4(0.95, 0.93, 0.88, 1) : Vec4(0.10, 0.11, 0.16, 1)
+        let graphite = dark ? Vec4(0.72, 0.71, 0.68, 0.85) : Vec4(0.40, 0.40, 0.42, 0.8)
         let selected = dark ? Vec4(0.04, 0.52, 1.0, 1) : Vec4(0.0, 0.48, 1.0, 1)
         let hover = dark ? Vec4(1.0, 0.84, 0.04, 1) : Vec4(0.95, 0.72, 0.0, 1)
         let issue = Vec4(0.86, 0.16, 0.25, 1)
-        let level = backgroundLevel.map(Double.init) ?? (dark ? 0.11 : 0.949)
+        let wash = Vec4(ink.x, ink.y, ink.z, 0.14)
         return ViewportStyle(
-            background: MTLClearColor(red: level, green: level, blue: level + (dark ? 0.008 : 0.02), alpha: 1),
-            source: dark ? Vec4(0.55, 0.55, 0.57, 1) : Vec4(0.79, 0.79, 0.81, 1),
+            background: dark ? MTLClearColor(red: 0.13, green: 0.13, blue: 0.14, alpha: 1)
+                : MTLClearColor(red: 0.965, green: 0.955, blue: 0.93, alpha: 1),
+            source: dark ? Vec4(0.44, 0.43, 0.42, 1) : Vec4(0.86, 0.84, 0.80, 1),
             faces: [
-                Vec4(emerald.x, emerald.y, emerald.z, 0.32), Vec4(selected.x, selected.y, selected.z, 0.7),
+                wash, Vec4(selected.x, selected.y, selected.z, 0.7),
                 Vec4(hover.x, hover.y, hover.z, 0.7), Vec4(issue.x, issue.y, issue.z, 0.8),
-                Vec4(emerald.x, emerald.y, emerald.z, 0.32),
+                wash,
             ],
-            edges: [topo, selected, hover, issue, emerald],
-            dots: [topo, selected, hover, issue, topo],
+            edges: [ink, selected, hover, issue, graphite],
+            dots: [ink, selected, hover, issue, ink],
             backTint: Vec4(0.72, 0.18, 0.42, 0.7),
-            preview: emerald,
-            mirror: Vec4(topo.x, topo.y, topo.z, 0.65),
+            preview: graphite,
+            mirror: Vec4(graphite.x, graphite.y, graphite.z, 0.55),
             warning: issue,
             chain: selected,
-            ink: Vec4(emerald.x, emerald.y, emerald.z, 0.95),
-            plane: Vec4(emerald.x, emerald.y, emerald.z, 0.09),
+            ink: graphite,
+            plane: Vec4(ink.x, ink.y, ink.z, 0.06),
             wire: dark ? Vec4(0.70, 0.70, 0.72, 0.5) : Vec4(0.30, 0.30, 0.32, 0.42)
         )
     }
@@ -285,7 +287,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             inFlight.signal()
             return
         }
-        let style = ViewportStyle.make(dark: isDark, backgroundLevel: engine.viewport.backgroundLevel)
+        let style = ViewportStyle.make(dark: isDark)
         descriptor.colorAttachments[0].clearColor = style.background
         descriptor.colorAttachments[0].loadAction = .clear
         frameIndex = (frameIndex + 1) % buffers.count
@@ -391,7 +393,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             if issue?.edges.contains(e) == true { return ElementFlag.issue }
             if selection.edges.contains(e) || edgesOfSelectedFaces.contains(e) { return ElementFlag.selected }
             if e == hoverEdge { return ElementFlag.hovered }
-            if mesh.isBoundary(e) { return ElementFlag.boundary }
+            if mesh.isWire(e) { return ElementFlag.boundary }
             return ElementFlag.normal
         }, into: &b.edgeFlags)
         write(topology.dots.map { v -> UInt8 in
@@ -402,6 +404,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             return ElementFlag.normal
         }, into: &b.dotFlags)
     }
+
+    private var averageEdge: Float = 0
+    private var averageEdgeVersions = SIMD2<UInt64>(.max, .max)
+    private var sketchBufferStyleInk = Vec4.zero
 
     private func syncSources(_ engine: RetopoEngine) {
         let ids = Set(engine.sources.map(\.id))
@@ -430,7 +436,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             lightIntensity: viewport.lightIntensity,
             // Thumbnails show the model small, where full-size wires and dots would turn the mesh into a blob.
             edgeWidth: includesInteraction ? 1.6 : 0.7,
-            dotSize: includesInteraction ? 7 : 2,
+            dotSize: includesInteraction ? 6 : 2,
             depthBias: bias,
             faceOpacity: viewport.faceOpacity * 2.2,
             surfacePull: engine.sceneBounds.diagonal * 0.006
@@ -460,7 +466,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
 
         if cageVisible {
-            drawRetopology(e, style: style, uniforms: &uniforms, xray: xray)
+            drawRetopology(e, style: style, uniforms: &uniforms, xray: xray, dotAlpha: includesInteraction ? dotAlpha(engine, camera: camera) : 1)
         }
         drawOverlays(e, engine: engine, style: style, uniforms: &uniforms)
         if includesInteraction {
@@ -533,7 +539,18 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    private func drawRetopology(_ e: MTLRenderCommandEncoder, style: ViewportStyle, uniforms: inout Uniforms, xray: Bool) {
+    /// Points only come forward when you're close enough to mean one of them.
+    private func dotAlpha(_ engine: RetopoEngine, camera: Camera) -> Float {
+        let mesh = engine.mesh
+        if averageEdgeVersions != SIMD2(mesh.topologyVersion, mesh.positionVersion) {
+            averageEdgeVersions = SIMD2(mesh.topologyVersion, mesh.positionVersion)
+            averageEdge = mesh.averageEdgeLength
+        }
+        let onScreen = averageEdge / max(camera.worldPerPoint(at: camera.target), 1e-6)
+        return simd_smoothstep(36, 60, onScreen)
+    }
+
+    private func drawRetopology(_ e: MTLRenderCommandEncoder, style: ViewportStyle, uniforms: inout Uniforms, xray: Bool, dotAlpha: Float) {
         let b = buffers[frameIndex]
         guard let positions = b.positions else { return }
 
@@ -589,14 +606,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if xray {
             e.setDepthStencilState(depthOff)
             lines(alpha: 1)
-            dots(alpha: 1)
+            dots(alpha: dotAlpha)
         } else {
             // A faint pass for what's behind the model, so the far side stays readable while orbiting.
             e.setDepthStencilState(depthOccluded)
             lines(alpha: 0.14)
             e.setDepthStencilState(depthRead)
             lines(alpha: 1)
-            dots(alpha: 1)
+            dots(alpha: dotAlpha)
         }
     }
 
@@ -629,13 +646,15 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     /// The sketch can hold far more line than the overlays, so it's uploaded only when it changes.
-    private func drawSketch(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, uniforms: inout Uniforms) {
+    private func drawSketch(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, style: ViewportStyle, uniforms: inout Uniforms) {
         guard engine.showsSketch, !engine.sketches.isEmpty else { return }
-        if sketchBufferRevision != engine.sketchRevision {
+        if sketchBufferRevision != engine.sketchRevision || sketchBufferStyleInk != style.ink {
             sketchBufferRevision = engine.sketchRevision
+            sketchBufferStyleInk = style.ink
             var lines: [WorldLine] = []
-            for stroke in engine.sketches {
-                let color = SketchPalette.color(stroke.colorIndex)
+            for (index, stroke) in engine.sketches.enumerated() {
+                let color = index == engine.pickedMark ? style.chain
+                    : stroke.colorIndex == SketchPalette.graphite ? style.ink : SketchPalette.color(stroke.colorIndex)
                 for i in 1..<max(stroke.points.count, 1) {
                     lines.append(WorldLine(a: stroke.points[i - 1], b: stroke.points[i], color: color, width: 3))
                 }
@@ -652,7 +671,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     private func drawOverlays(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, style: ViewportStyle, uniforms: inout Uniforms) {
-        drawSketch(e, engine: engine, uniforms: &uniforms)
+        drawSketch(e, engine: engine, style: style, uniforms: &uniforms)
         let overlay = engine.overlay
         // Previews show whole, so what's about to be made can be judged even where it dips under the model.
         e.setDepthStencilState(depthOccluded)
@@ -798,7 +817,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     /// False if the GPU turned the work down, as it does once the app has gone to the background.
     func renderOffscreen(engine: RetopoEngine, camera: Camera, into target: OffscreenTarget) -> Bool {
         guard let commands = queue.makeCommandBuffer() else { return false }
-        let style = ViewportStyle.make(dark: false, backgroundLevel: nil)
+        let style = ViewportStyle.make(dark: false)
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target.multisampled
         pass.colorAttachments[0].resolveTexture = target.resolved

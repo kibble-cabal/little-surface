@@ -55,9 +55,14 @@ static float3 shade(float3 base, float3 n, float3 world, constant Uniforms &u) {
     float sky = 0.5 + 0.5 * n.y;
     float rim = pow(1 - saturate(dot(n, viewDir)), 3);
     float3 h = normalize(u.lightDir + viewDir);
-    float spec = pow(saturate(dot(n, h)), 28) * 0.07;
-    float light = (0.34 + 0.16 * sky) + wrap * 0.56 * u.lightIntensity;
-    return base * light + spec * u.lightIntensity + base * rim * 0.1;
+    float spec = pow(saturate(dot(n, h)), 12) * 0.015;
+    float light = (0.46 + 0.14 * sky) + wrap * 0.46 * u.lightIntensity;
+    return base * light + spec * u.lightIntensity + base * rim * 0.04;
+}
+
+/// The tooth of the paper: a little noise that stays put on the page while the model turns under it.
+static float paperGrain(float2 pixel) {
+    return fract(sin(dot(floor(pixel * 0.5), float2(12.9898, 78.233))) * 43758.5453) * 0.03 - 0.015;
 }
 
 fragment float4 surface_fragment(SurfaceOut in [[stage_in]],
@@ -66,7 +71,7 @@ fragment float4 surface_fragment(SurfaceOut in [[stage_in]],
                                  constant float4 &color [[buffer(1)]]) {
     float3 n = normalize(in.normal);
     if (!front) n = -n;
-    return float4(shade(color.rgb, n, in.world, u), color.a);
+    return float4(shade(color.rgb, n, in.world, u) + paperGrain(in.position.xy), color.a);
 }
 
 // MARK: Retopology faces
@@ -188,7 +193,8 @@ vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     clip.z -= u.depthBias * 2 * clip.w;
     out.position = clip;
     float4 c = palette[f];
-    out.color = float4(c.rgb, c.a * alphaScale);
+    // Picked, hovered and flagged points always show.
+    out.color = float4(c.rgb, (f == 1 || f == 2 || f == 3) ? c.a : c.a * alphaScale);
     out.uv = corner;
     return out;
 }

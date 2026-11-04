@@ -4,7 +4,12 @@ enum Theme {
     static let corner: CGFloat = 18
     static let touchTarget: CGFloat = 44
 
-    static let page = Color(uiColor: .systemGroupedBackground)
+    /// The same paper the model sits on.
+    static let page = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.13, green: 0.13, blue: 0.14, alpha: 1)
+            : UIColor(red: 0.965, green: 0.955, blue: 0.93, alpha: 1)
+    })
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
     // Solid rather than `.secondary`, whose vibrancy vanishes on a material inside a scroll view.
     static let quiet = Color(uiColor: .secondaryLabel)
