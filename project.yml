@@ -1,0 +1,119 @@
+name: LittleSurface
+options:
+  bundleIdPrefix: com.audreyserene
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+packages:
+  LittleSurfaceCore:
+    path: Core
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: 45PQ9B4M25
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "2"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  LittleSurface:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - Renderer/Shaders.msl
+      - path: App/Renderer/Shaders.msl
+        buildPhase: resources
+    dependencies:
+      - package: LittleSurfaceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.audreyserene.littlesurface
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Little Surface
+        LSRequiresIPhoneOS: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.audreyserene.littlesurface.project
+            UTTypeDescription: Little Surface Project
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [littlesurface]
+              public.mime-type: [application/x-littlesurface]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: public.wavefront-obj-model
+            UTTypeDescription: Wavefront OBJ Model
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [obj]
+          - UTTypeIdentifier: org.khronos.gltf-binary
+            UTTypeDescription: Binary glTF Model
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [glb]
+              public.mime-type: [model/gltf-binary]
+          - UTTypeIdentifier: org.khronos.gltf
+            UTTypeDescription: glTF Model
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [gltf]
+              public.mime-type: [model/gltf+json]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Little Surface Project
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.audreyserene.littlesurface.project]
+          - CFBundleTypeName: 3D Model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.wavefront-obj-model, org.khronos.gltf-binary, org.khronos.gltf]
+  LittleSurfaceTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: LittleSurface
+      - package: LittleSurfaceCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.audreyserene.littlesurface.tests
+  LittleSurfaceUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: LittleSurface
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.audreyserene.littlesurface.uitests
+schemes:
+  LittleSurface:
+    build:
+      targets:
+        LittleSurface: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - LittleSurfaceTests
+        - LittleSurfaceUITests

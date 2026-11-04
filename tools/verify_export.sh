@@ -9,7 +9,7 @@ tools=${CHECK_TOOLS:?Set CHECK_TOOLS to the folder with venv/ and node_modules/g
 blender=${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}
 out=$(mktemp -d)
 
-(cd "$root/Core" && LS_EXPORT_DIR="$out" swift test --filter WorkflowTests 2>&1 | tail -1)
+(cd "$root/Core" && LS_EXPORT_DIR="$out" swift test --filter WorkflowTests 2>&1 | grep -E "Executed [0-9]+ tests" | tail -1)
 "$blender" --background --factory-startup --python "$root/tools/blender_check.py" -- \
   "$out/workflow.obj" "$out/workflow.glb" "$out/workflow_with_source.obj" "$out/workflow_with_source.glb" > "$out/blender.log" 2>&1
 grep '^BLENDER' "$out/blender.log"

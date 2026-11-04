@@ -1,0 +1,272 @@
+#include <metal_stdlib>
+using namespace metal;
+
+struct Uniforms {
+    float4x4 viewProj;
+    float4x4 view;
+    float3 eye;
+    float3 lightDir;
+    float2 viewport;      // In points.
+    float lightIntensity;
+    float edgeWidth;
+    float dotSize;
+    float depthBias;
+    float faceOpacity;
+    float pad;
+};
+
+// MARK: Lit surfaces (source and subdivision preview)
+
+struct SurfaceOut {
+    float4 position [[position]];
+    float3 normal;
+    float3 world;
+};
+
+vertex SurfaceOut surface_vertex(uint vid [[vertex_id]],
+                                 const float3 *positions [[buffer(0)]],
+                                 const float3 *normals [[buffer(1)]],
+                                 constant Uniforms &u [[buffer(2)]],
+                                 constant float &bias [[buffer(3)]]) {
+    SurfaceOut out;
+    float3 p = positions[vid];
+    out.position = u.viewProj * float4(p, 1);
+    out.position.z -= bias * out.position.w;
+    out.normal = normals[vid];
+    out.world = p;
+    return out;
+}
+
+static float3 shade(float3 base, float3 n, float3 world, constant Uniforms &u) {
+    float3 viewDir = normalize(u.eye - world);
+    float wrap = saturate(dot(n, u.lightDir) * 0.7 + 0.3);
+    float sky = 0.5 + 0.5 * n.y;
+    float rim = pow(1 - saturate(dot(n, viewDir)), 3);
+    float3 h = normalize(u.lightDir + viewDir);
+    float spec = pow(saturate(dot(n, h)), 28) * 0.07;
+    float light = (0.34 + 0.16 * sky) + wrap * 0.56 * u.lightIntensity;
+    return base * light + spec * u.lightIntensity + base * rim * 0.1;
+}
+
+fragment float4 surface_fragment(SurfaceOut in [[stage_in]],
+                                 bool front [[front_facing]],
+                                 constant Uniforms &u [[buffer(0)]],
+                                 constant float4 &color [[buffer(1)]]) {
+    float3 n = normalize(in.normal);
+    if (!front) n = -n;
+    return float4(shade(color.rgb, n, in.world, u), color.a);
+}
+
+// MARK: Retopology faces
+
+struct FaceOut {
+    float4 position [[position]];
+    float3 world;
+    float4 color;
+};
+
+vertex FaceOut face_vertex(uint vid [[vertex_id]],
+                           const float3 *positions [[buffer(0)]],
+                           const uint *corners [[buffer(1)]],
+                           const uchar *flags [[buffer(2)]],
+                           constant Uniforms &u [[buffer(3)]],
+                           constant float4 *palette [[buffer(4)]]) {
+    FaceOut out;
+    float3 p = positions[corners[vid]];
+    out.position = u.viewProj * float4(p, 1);
+    out.position.z -= u.depthBias * out.position.w;
+    out.world = p;
+    out.color = palette[flags[vid / 3]];
+    return out;
+}
+
+fragment float4 face_fragment(FaceOut in [[stage_in]],
+                              bool front [[front_facing]],
+                              constant Uniforms &u [[buffer(0)]],
+                              constant float4 &backTint [[buffer(1)]]) {
+    float3 n = normalize(cross(dfdx(in.world), dfdy(in.world)));
+    float4 c = in.color;
+    if (!front) {
+        // Flipped faces read differently, so wrong winding shows at a glance.
+        c = float4(mix(c.rgb, backTint.rgb, backTint.a), c.a);
+    }
+    float light = 0.82 + 0.18 * saturate(abs(dot(n, normalize(u.eye - in.world))));
+    return float4(c.rgb * light, c.a * u.faceOpacity);
+}
+
+// MARK: Lines and dots
+
+struct LineOut {
+    float4 position [[position]];
+    float4 color;
+    float side;
+};
+
+static const float2 quadCorners[6] = {
+    float2(0, -1), float2(1, -1), float2(1, 1), float2(0, -1), float2(1, 1), float2(0, 1)
+};
+
+/// A screen-space quad from a to b, `width` points across, clipped against the near plane.
+static float4 thickLine(float4 a, float4 b, float2 corner, float width, float2 viewport) {
+    const float nearW = 1e-4;
+    if (a.w < nearW && b.w < nearW) return float4(2, 2, 2, 1);
+    if (a.w < nearW) a = mix(a, b, (nearW - a.w) / (b.w - a.w));
+    if (b.w < nearW) b = mix(b, a, (nearW - b.w) / (a.w - b.w));
+    float2 half_ = viewport * 0.5;
+    float2 sa = a.xy / a.w * half_, sb = b.xy / b.w * half_;
+    float2 d = sb - sa;
+    float len = length(d);
+    d = len > 1e-4 ? d / len : float2(1, 0);
+    float2 n = float2(-d.y, d.x);
+    float4 clip = corner.x < 0.5 ? a : b;
+    float ext = (corner.x < 0.5 ? -1 : 1) * width * 0.35;
+    float2 offset = (n * corner.y * width * 0.5 + d * ext) / half_;
+    clip.xy += offset * clip.w;
+    return clip;
+}
+
+vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                           const float3 *positions [[buffer(0)]],
+                           const uint2 *edges [[buffer(1)]],
+                           const uchar *flags [[buffer(2)]],
+                           constant Uniforms &u [[buffer(3)]],
+                           constant float4 *palette [[buffer(4)]],
+                           constant float &alphaScale [[buffer(5)]]) {
+    LineOut out;
+    uint2 e = edges[iid];
+    uchar f = flags[iid];
+    float2 corner = quadCorners[vid];
+    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : 1.0);
+    float4 a = u.viewProj * float4(positions[e.x], 1);
+    float4 b = u.viewProj * float4(positions[e.y], 1);
+    out.position = thickLine(a, b, corner, width, u.viewport);
+    out.position.z -= u.depthBias * 1.5 * out.position.w;
+    float4 c = palette[f];
+    out.color = float4(c.rgb, c.a * alphaScale);
+    out.side = corner.y;
+    return out;
+}
+
+fragment float4 line_fragment(LineOut in [[stage_in]]) {
+    float a = 1 - smoothstep(0.65, 1.0, abs(in.side));
+    return float4(in.color.rgb, in.color.a * a);
+}
+
+struct DotOut {
+    float4 position [[position]];
+    float4 color;
+    float2 uv;
+};
+
+vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                         const float3 *positions [[buffer(0)]],
+                         const uint *slots [[buffer(1)]],
+                         const uchar *flags [[buffer(2)]],
+                         constant Uniforms &u [[buffer(3)]],
+                         constant float4 *palette [[buffer(4)]],
+                         constant float &alphaScale [[buffer(5)]]) {
+    DotOut out;
+    uint slot = slots[iid];
+    uchar f = flags[iid];
+    float2 corner = quadCorners[vid] * float2(2, 1) - float2(1, 0);
+    float size = u.dotSize * ((f == 1 || f == 2 || f == 3) ? 1.7 : 1.0);
+    float4 clip = u.viewProj * float4(positions[slot], 1);
+    if (clip.w < 1e-4) clip = float4(2, 2, 2, 1);
+    clip.xy += corner * size * 0.5 / (u.viewport * 0.5) * clip.w;
+    clip.z -= u.depthBias * 2 * clip.w;
+    out.position = clip;
+    float4 c = palette[f];
+    out.color = float4(c.rgb, c.a * alphaScale);
+    out.uv = corner;
+    return out;
+}
+
+fragment float4 dot_fragment(DotOut in [[stage_in]]) {
+    float r = length(in.uv);
+    float a = 1 - smoothstep(0.82, 1.0, r);
+    if (a <= 0) discard_fragment();
+    return float4(in.color.rgb, in.color.a * a);
+}
+
+// MARK: Overlays
+
+struct WorldLine {
+    float3 a;
+    float3 b;
+    float4 color;
+    float width;
+};
+
+vertex LineOut world_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                                 const WorldLine *lines [[buffer(0)]],
+                                 constant Uniforms &u [[buffer(1)]]) {
+    LineOut out;
+    WorldLine l = lines[iid];
+    float2 corner = quadCorners[vid];
+    out.position = thickLine(u.viewProj * float4(l.a, 1), u.viewProj * float4(l.b, 1), corner, l.width, u.viewport);
+    out.position.z -= u.depthBias * 2 * out.position.w;
+    out.color = l.color;
+    out.side = corner.y;
+    return out;
+}
+
+struct ScreenLine {
+    float2 a;
+    float2 b;
+    float4 color;
+    float width;
+};
+
+vertex LineOut screen_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                                  const ScreenLine *lines [[buffer(0)]],
+                                  constant Uniforms &u [[buffer(1)]]) {
+    LineOut out;
+    ScreenLine l = lines[iid];
+    float2 corner = quadCorners[vid];
+    float2 half_ = u.viewport * 0.5;
+    float4 a = float4((l.a.x - half_.x) / half_.x, (half_.y - l.a.y) / half_.y, 0, 1);
+    float4 b = float4((l.b.x - half_.x) / half_.x, (half_.y - l.b.y) / half_.y, 0, 1);
+    out.position = thickLine(a, b, corner, l.width, u.viewport);
+    out.color = l.color;
+    out.side = corner.y;
+    return out;
+}
+
+struct WorldPoint {
+    float3 position;
+    float4 color;
+    float size;
+};
+
+vertex DotOut world_point_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
+                                 const WorldPoint *points [[buffer(0)]],
+                                 constant Uniforms &u [[buffer(1)]]) {
+    DotOut out;
+    WorldPoint p = points[iid];
+    float2 corner = quadCorners[vid] * float2(2, 1) - float2(1, 0);
+    float4 clip = u.viewProj * float4(p.position, 1);
+    if (clip.w < 1e-4) clip = float4(2, 2, 2, 1);
+    clip.xy += corner * p.size * 0.5 / (u.viewport * 0.5) * clip.w;
+    clip.z -= u.depthBias * 2 * clip.w;
+    out.position = clip;
+    out.color = p.color;
+    out.uv = corner;
+    return out;
+}
+
+struct FlatOut {
+    float4 position [[position]];
+};
+
+vertex FlatOut flat_vertex(uint vid [[vertex_id]],
+                           const float3 *positions [[buffer(0)]],
+                           constant Uniforms &u [[buffer(1)]]) {
+    FlatOut out;
+    out.position = u.viewProj * float4(positions[vid], 1);
+    out.position.z -= u.depthBias * 1.5 * out.position.w;
+    return out;
+}
+
+fragment float4 flat_fragment(constant float4 &color [[buffer(0)]]) {
+    return color;
+}

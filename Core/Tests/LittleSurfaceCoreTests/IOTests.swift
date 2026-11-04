@@ -453,6 +453,26 @@ final class ProjectFileTests: XCTestCase {
         assertValid(back.mesh)
     }
 
+    func testPatchPicksAndFaceCornersSurviveReopening() throws {
+        let engine = RetopoEngine()
+        let chain: BoundaryChain = {
+            var v: [VertexID] = []
+            var e: [EdgeID] = []
+            engine.perform("seed") { mesh, _ in
+                v = (0..<3).map { mesh.addVertex(Vec3(Float($0), 0, 0)) }
+                e = [try mesh.ensureEdge(v[0], v[1]), try mesh.ensureEdge(v[1], v[2])]
+            }
+            return BoundaryChain(vertices: v, edges: e, isClosed: false)
+        }()
+        engine.addPatchChain(chain)
+        engine.setTool(.face)
+        var snapshot = engine.makeSnapshot()
+        snapshot.faceBuilderVertices = [chain.vertices[0]]
+        let back = RetopoEngine(snapshot: try ProjectCodec.decode(try ProjectCodec.encode(snapshot)))
+        XCTAssertEqual(back.patchChains.map(\.vertices), [chain.vertices])
+        XCTAssertEqual(back.faceCorners.count, 1)
+    }
+
     func testReopenedMeshIsFullyEditable() throws {
         let engine = sampleEngine()
         let back = try ProjectCodec.decode(try ProjectCodec.encode(engine.makeSnapshot()))
