@@ -540,7 +540,8 @@ public final class RetopoEngine {
     public var sketchErases = false
     public var showsSketch = true
 
-    private func finishSketch(_ capture: StrokeCapture) {
+    private func finishSketch(_ capture: StrokeCapture, colorIndex: Int? = nil) {
+        let colorIndex = colorIndex ?? sketchColorIndex
         guard capture.screenLength >= minimumStrokeLength else { return }
         let before = currentSnapshot
         // Lifted just clear of the surface, so the model doesn't cut through the line.
@@ -555,9 +556,9 @@ public final class RetopoEngine {
                 points.append(p)
             }
             guard points.count >= 2 else { continue }
-            added.append(SketchStroke(points: points, colorIndex: sketchColorIndex))
+            added.append(SketchStroke(points: points, colorIndex: colorIndex))
             if let plane = symmetry.activePlane {
-                added.append(SketchStroke(points: points.map(plane.reflect), colorIndex: sketchColorIndex))
+                added.append(SketchStroke(points: points.map(plane.reflect), colorIndex: colorIndex))
             }
         }
         guard !added.isEmpty else { return }
@@ -569,28 +570,30 @@ public final class RetopoEngine {
     /// Takes out whole lines the Pencil touches. Those on the far side of the model are left alone.
     private func eraseSketch(at screen: Vec2) {
         guard case .sketchErase(let before, _) = gesture else { return }
-        let radius: Float = 18
-        let tolerance = sceneBounds.diagonal * 0.01
-        let kept = sketches.filter { stroke in
-            var previous: Vec2?
-            for p in stroke.points {
-                guard let projected = camera.project(p) else {
-                    previous = nil
-                    continue
-                }
-                defer { previous = projected.screen }
-                let a = previous ?? projected.screen, b = projected.screen
-                let along = simd_clamp(simd_dot(screen - a, b - a) / max(simd_length_squared(b - a), 1e-6), 0, 1)
-                guard simd_length(screen - (a + (b - a) * along)) <= radius else { continue }
-                if projector?.isOccluded(p, from: camera.occlusionEye(for: p), tolerance: tolerance) ?? false { continue }
-                return false
-            }
-            return true
-        }
+        let kept = sketches.filter { !touches($0, at: screen) }
         guard kept.count != sketches.count else { return }
         sketches = kept
         sketchRevision &+= 1
         gesture = .sketchErase(before: before, changed: true)
+    }
+
+    private func touches(_ stroke: SketchStroke, at screen: Vec2) -> Bool {
+        let radius: Float = 18
+        let tolerance = sceneBounds.diagonal * 0.01
+        var previous: Vec2?
+        for p in stroke.points {
+            guard let projected = camera.project(p) else {
+                previous = nil
+                continue
+            }
+            defer { previous = projected.screen }
+            let a = previous ?? projected.screen, b = projected.screen
+            let along = simd_clamp(simd_dot(screen - a, b - a) / max(simd_length_squared(b - a), 1e-6), 0, 1)
+            guard simd_length(screen - (a + (b - a) * along)) <= radius else { continue }
+            if projector?.isOccluded(p, from: camera.occlusionEye(for: p), tolerance: tolerance) ?? false { continue }
+            return true
+        }
+        return false
     }
 
     public func clearSketch() {
@@ -736,6 +739,7 @@ public final class RetopoEngine {
     }
 
     private func didEdit() {
+        pickedMark = nil
         // Here rather than at each tool, so that no edit, undo or redo can miss the timelapse.
         timelapse.record(mesh: mesh, sketches: sketches, orientation: camera.orientation)
         editGeneration &+= 1
@@ -1137,6 +1141,9 @@ public final class RetopoEngine {
     /// the zoom, as line weight does on paper: come in close to draw finer.
     public static let quadSizePoints: Float = 28
 
+    /// The pencil mark a tap picked, by its place in `sketches`.
+    public private(set) var pickedMark: Int?
+
     /// The Pencil has rested on a point for long enough to pick it up rather than draw from it.
     public func pencilHeld() {
         guard activeTool == .pencil, case .stroke(let capture) = gesture,
@@ -1159,6 +1166,7 @@ public final class RetopoEngine {
             pencilTap(at: tapPoint)
             return
         }
+        pickedMark = nil
         guard let projector else { return }
         let runs = capture.usableRuns
         guard !runs.isEmpty else { return }
@@ -1171,7 +1179,10 @@ public final class RetopoEngine {
         }
         var spacing = pencilSpacing(capture, scale: scale)
         var drawn = paths(spacing: spacing)
-        guard !drawn.isEmpty else { return }
+        guard !drawn.isEmpty else {
+            keepAsMark(capture)
+            return
+        }
         // A closed loop with an even count can always be filled with quads.
         if drawn.count == 1, drawn[0].canClose, closesLoopsAutomatically {
             let count = max(2, Int((drawn[0].length / spacing).rounded()))
@@ -1182,10 +1193,42 @@ public final class RetopoEngine {
         }
         let options = strokeOptions(scale: scale)
         let plans = pencilPlans(drawn, options: options)
-        guard !plans.isEmpty else { return }
+        guard !plans.isEmpty else {
+            keepAsMark(capture)
+            return
+        }
         let result = apply(plans: plans, label: plans.contains(where: \.isClosed) ? "Draw loop" : "Draw line", event: plans.contains(where: \.isClosed) ? .loopClosed : .strokeCommitted)
+        clearMessage()
+        guard result != nil else {
+            keepAsMark(capture)
+            return
+        }
         report(plans, result: result)
         clearMessage()
+    }
+
+    /// A mark that can't become topology stays on the model as a pencil line, as it would on paper.
+    private func keepAsMark(_ capture: StrokeCapture) {
+        showsSketch = true
+        finishSketch(capture, colorIndex: SketchPalette.graphite)
+    }
+
+    public var hasPick: Bool { pickedMark != nil || !selection.isEmpty }
+
+    /// Takes out the picked line, quads or pencil mark.
+    public func deletePick() {
+        if let index = pickedMark, sketches.indices.contains(index) {
+            let before = currentSnapshot
+            sketches.remove(at: index)
+            sketchRevision &+= 1
+            pickedMark = nil
+            recordEdit(before: before, label: "Erase mark")
+        } else {
+            deleteSelection()
+            clearMessage()
+        }
+        rebuildOverlay()
+        notify()
     }
 
     private func pencilPlans(_ paths: [ProcessedPath], options: StrokePlanOptions) -> [StrokePlan] {
@@ -1215,6 +1258,12 @@ public final class RetopoEngine {
     private func pencilTap(at screen: Vec2) {
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
         picker.ignoresOcclusion = ignoresOcclusionForPicking
+        pickedMark = showsSketch ? sketches.lastIndex { touches($0, at: screen) } : nil
+        if pickedMark != nil {
+            selection.clear()
+            sketchRevision &+= 1
+            return
+        }
         if let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius), mesh.isWire(edge),
            let chain = ChainFinder.chain(through: edge, in: mesh) {
             selection.clear()

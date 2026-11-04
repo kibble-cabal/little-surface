@@ -111,4 +111,55 @@ final class PencilTests: XCTestCase {
         XCTAssertEqual(simd_length(engine.mesh.position(v) - start), 0, accuracy: 1e-5)
         XCTAssertGreaterThan(engine.mesh.edgeCount, edges)
     }
+
+    // MARK: Nothing is refused
+
+    func testAMarkOverFinishedQuadsStaysAsAPencilLine() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
+        let chains = NeighborChains.openChains(in: engine.mesh)
+        XCTAssertEqual(chains.count, 2)
+        _ = engine.perform("Fill") { mesh, _ in
+            let plan = try QuadPatchBuilder.plan(chains: chains, parameters: QuadPatchParameters(), mesh: mesh, projector: engine.projector).plan
+            _ = try PlanApplier.apply(plan, to: &mesh, symmetry: engine.symmetry, projector: engine.projector)
+        }
+        let faces = engine.mesh.faceCount
+        XCTAssertGreaterThan(faces, 0)
+        Fixtures.draw(engine, from: Vec2(450, 400), to: Vec2(550, 420))
+        XCTAssertEqual(engine.sketches.count, 1)
+        XCTAssertEqual(engine.sketches[0].colorIndex, SketchPalette.graphite)
+        XCTAssertEqual(engine.mesh.faceCount, faces)
+        XCTAssertNil(engine.message, "and nothing was said about it")
+    }
+
+    func testTappingAMarkPicksItAndDeletingTakesItOutAndUndoes() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
+        let chains = NeighborChains.openChains(in: engine.mesh)
+        _ = engine.perform("Fill") { mesh, _ in
+            let plan = try QuadPatchBuilder.plan(chains: chains, parameters: QuadPatchParameters(), mesh: mesh, projector: engine.projector).plan
+            _ = try PlanApplier.apply(plan, to: &mesh, symmetry: engine.symmetry, projector: engine.projector)
+        }
+        Fixtures.draw(engine, from: Vec2(450, 400), to: Vec2(550, 400))
+        engine.pencilBegan(at: Vec2(500, 400))
+        engine.pencilEnded(at: Vec2(500, 400))
+        XCTAssertEqual(engine.pickedMark, 0)
+        XCTAssertTrue(engine.hasPick)
+        engine.deletePick()
+        XCTAssertTrue(engine.sketches.isEmpty)
+        XCTAssertFalse(engine.hasPick)
+        engine.undo()
+        XCTAssertEqual(engine.sketches.count, 1)
+    }
+
+    func testDeletingAPickedLineRemovesIt() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        engine.pencilBegan(at: Vec2(500, 400))
+        engine.pencilEnded(at: Vec2(500, 400))
+        engine.deletePick()
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
+    }
 }

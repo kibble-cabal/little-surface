@@ -22,9 +22,13 @@ public enum SketchPalette {
         Vec4(0.72, 0.20, 0.82, 1),
         Vec4(0.08, 0.62, 0.72, 1),
         Vec4(0.10, 0.10, 0.12, 1),
+        Vec4(0.33, 0.33, 0.35, 0.8),
     ]
 
-    public static let names = ["Red", "Orange", "Blue", "Purple", "Teal", "Black"]
+    public static let names = ["Red", "Orange", "Blue", "Purple", "Teal", "Black", "Graphite"]
+
+    /// A pencil mark that didn't become topology.
+    public static let graphite = 6
 
     public static func color(_ index: Int) -> Vec4 {
         colors[max(0, min(index, colors.count - 1))]
