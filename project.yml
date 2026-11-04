@@ -26,6 +26,8 @@ targets:
           - Renderer/Shaders.msl
       - path: App/Renderer/Shaders.msl
         buildPhase: resources
+      - path: blender/little_surface_link.py
+        buildPhase: resources
     dependencies:
       - package: LittleSurfaceCore
     settings:
@@ -39,6 +41,7 @@ targets:
         CFBundleDisplayName: Little Surface
         LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
+        NSLocalNetworkUsageDescription: Little Surface uses your local network to send meshes to and from Blender on your computer, when you turn on Blender Link.
         UIFileSharingEnabled: true
         UILaunchScreen: {}
         UIApplicationSceneManifest:

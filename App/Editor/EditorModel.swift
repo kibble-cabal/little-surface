@@ -46,6 +46,12 @@ final class EditorModel {
     @ObservationIgnored private var knownGeneration: UInt64 = 0
     @ObservationIgnored private var importTask: Task<Void, Never>?
     @ObservationIgnored private var timelapseTask: Task<Void, Never>?
+    @ObservationIgnored private var linkServer: BlenderLinkServer?
+    @ObservationIgnored private var outgoingMesh: (name: String, data: Data, faces: Int)?
+    private(set) var linkIsOn = false
+    private(set) var linkAddress: String?
+    private(set) var linkStatus = ""
+    let linkCode = BlenderLinkServer.savedCode()
     @ObservationIgnored private var surfaceTask: Task<Void, Never>?
     @ObservationIgnored private var subdivisionTask: Task<Void, Never>?
     @ObservationIgnored private var validationTask: Task<Void, Never>?
@@ -179,14 +185,17 @@ final class EditorModel {
 
     var isBusyImporting: Bool { importTask != nil }
 
-    func importModel(from url: URL) {
+    func importModel(from url: URL, mergedAs mergedName: String? = nil) {
         guard importTask == nil else { return }
         busy = BusyTask(title: "Reading \(url.lastPathComponent)…", cancellable: true)
         importTask = Task.detached(priority: .userInitiated) { [weak self] in
             let needsScope = url.startAccessingSecurityScopedResource()
             defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
             do {
-                let model = try ModelImporter.load(url: url, isCancelled: { Task.isCancelled })
+                var model = try ModelImporter.load(url: url, isCancelled: { Task.isCancelled })
+                if let mergedName {
+                    model = ImportedModel(objects: [SourceObject.merged(model.objects, name: mergedName)], warnings: model.warnings, name: mergedName)
+                }
                 await MainActor.run { self?.busy?.title = "Preparing the surface…" }
                 let bvhs = RetopoEngine.buildBVHs(for: model.objects, isCancelled: { Task.isCancelled })
                 try Task.checkCancellation()
@@ -205,7 +214,7 @@ final class EditorModel {
     }
 
     /// Opens a mesh from another app to keep editing, with its faces as they are in the file.
-    func openMeshForEditing(from url: URL) {
+    func openMeshForEditing(from url: URL, replacing: Bool = false) {
         guard importTask == nil else { return }
         busy = BusyTask(title: "Reading \(url.lastPathComponent)…", cancellable: true)
         let needsSurface = engine.sources.isEmpty
@@ -221,7 +230,7 @@ final class EditorModel {
                     if let bvh = TriangleBVH(object: object, isCancelled: isCancelled) { surface = (object, bvh) }
                 }
                 try Task.checkCancellation()
-                await MainActor.run { [surface] in self?.finishMeshImport(imported, surface: surface) }
+                await MainActor.run { [surface] in self?.finishMeshImport(imported, surface: surface, replacing: replacing) }
             } catch is CancellationError {
                 await MainActor.run { self?.endImport() }
             } catch ImportError.cancelled {
@@ -235,9 +244,9 @@ final class EditorModel {
         }
     }
 
-    private func finishMeshImport(_ imported: ImportedMesh, surface: (object: SourceObject, bvh: TriangleBVH)?) {
+    private func finishMeshImport(_ imported: ImportedMesh, surface: (object: SourceObject, bvh: TriangleBVH)?, replacing: Bool) {
         endImport()
-        guard engine.addEditableMesh(imported, surface: surface) else { return }
+        guard engine.addEditableMesh(imported, surface: surface, replacing: replacing) else { return }
         surfaceIsReady = true
         if engine.name == "Untitled" || engine.name.isEmpty { engine.name = imported.name }
         engine.say(Self.describe(imported, hasSurfaceCopy: surface != nil), kind: imported.skippedFaces > 0 ? .warning : .success)
@@ -522,6 +531,7 @@ final class EditorModel {
     private func finishClosing(_ completion: @escaping () -> Void) {
         importTask?.cancel()
         timelapseTask?.cancel()
+        setBlenderLink(false)
         surfaceTask?.cancel()
         subdivisionTask?.cancel()
         validationTask?.cancel()
@@ -599,6 +609,141 @@ final class EditorModel {
                 }
             }
         }
+    }
+
+    // MARK: Blender link
+
+    func setBlenderLink(_ on: Bool) {
+        guard on != linkIsOn else { return }
+        linkIsOn = on
+        outgoingMesh = nil
+        if on {
+            startLinkServer()
+        } else {
+            linkServer?.stop()
+            linkServer = nil
+        }
+    }
+
+    /// The system won't keep a listener alive for an app that's left the screen.
+    func blenderLinkSceneChanged(isActive: Bool) {
+        guard linkIsOn else { return }
+        if isActive {
+            startLinkServer()
+        } else {
+            linkServer?.stop()
+            linkServer = nil
+        }
+    }
+
+    private func startLinkServer() {
+        guard linkServer == nil else { return }
+        linkAddress = BlenderLinkServer.localAddress()
+        linkStatus = "Starting…"
+        let server = BlenderLinkServer(code: linkCode) { [weak self] request in
+            await self?.handleLinkRequest(request) ?? .message("The project has closed.", status: 409)
+        }
+        server.onStateChange = { [weak self] state in
+            Task { @MainActor in self?.linkStateChanged(state, from: server) }
+        }
+        linkServer = server
+        server.start()
+    }
+
+    private func linkStateChanged(_ state: BlenderLinkServer.State, from server: BlenderLinkServer) {
+        guard server === linkServer else { return }
+        switch state {
+        case .listening: linkStatus = "Waiting for Blender."
+        case .stopped: break
+        case .failed(let reason):
+            linkServer = nil
+            linkIsOn = false
+            linkStatus = ""
+            engine.say("Blender Link stopped. \(reason)", kind: .error)
+        }
+    }
+
+    /// Waits at the app for Blender's add-on to collect, since the iPad has no way to reach out to it.
+    func sendMeshToBlender() {
+        let snapshot = engine.makeSnapshot()
+        let name = engine.name
+        linkStatus = "Getting the mesh ready…"
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let data = OBJExporter.export(mesh: snapshot.mesh, name: name, sources: [], options: ExportOptions())
+            await MainActor.run {
+                self?.outgoingMesh = (name, data, snapshot.mesh.faceCount)
+                self?.linkStatus = "Waiting for Blender to collect it. Check Watch for Meshes is on there."
+            }
+        }
+    }
+
+    @MainActor
+    func handleLinkRequest(_ request: LinkRequest) async -> LinkResponse {
+        switch (request.method, request.path) {
+        case ("GET", "/status"):
+            let stats = engine.statistics
+            linkStatus = "Connected to Blender."
+            return .json(["project": engine.name, "vertices": stats.vertices, "faces": stats.faces, "sculpts": engine.sources.map(\.name)])
+        case ("GET", "/mesh"):
+            guard !engine.mesh.isEmpty else { return LinkResponse(status: 204) }
+            let snapshot = engine.makeSnapshot()
+            let name = engine.name
+            let data = await Task.detached { OBJExporter.export(mesh: snapshot.mesh, name: name, sources: [], options: ExportOptions()) }.value
+            linkStatus = "Sent \(snapshot.mesh.faceCount.formatted()) faces to Blender."
+            return Self.objResponse(data, name: name)
+        case ("GET", "/outbox"):
+            guard let outgoing = outgoingMesh else { return LinkResponse(status: 204) }
+            outgoingMesh = nil
+            linkStatus = "Blender collected \(outgoing.faces.formatted()) faces."
+            engine.say("Sent \(outgoing.faces.formatted()) faces to Blender.", kind: .success)
+            return Self.objResponse(outgoing.data, name: outgoing.name)
+        case ("POST", "/mesh"):
+            let replacing = request.query["replace"] == "1"
+            return await receiveFromBlender(request) { model, url, _ in model.openMeshForEditing(from: url, replacing: replacing) }
+        case ("POST", "/sculpt"):
+            return await receiveFromBlender(request) { model, url, name in
+                if let existing = model.engine.sources.first(where: { $0.name == name }) {
+                    model.updateSculpt(id: existing.id, from: url)
+                } else {
+                    model.importModel(from: url, mergedAs: name)
+                }
+            }
+        default:
+            return .message("The app doesn't know that request. Check the add-on matches this version.", status: 404)
+        }
+    }
+
+    private static func objResponse(_ data: Data, name: String) -> LinkResponse {
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "Little%20Surface"
+        return LinkResponse(status: 200, contentType: "text/plain", headers: ["X-Little-Surface-Name": encoded], body: data)
+    }
+
+    /// Runs the same import as a file picked here, so a mesh from Blender behaves like one from Files.
+    @MainActor
+    private func receiveFromBlender(_ request: LinkRequest, start: (EditorModel, URL, String) -> Void) async -> LinkResponse {
+        guard busy == nil, importTask == nil else {
+            return .message("Little Surface is busy with something else. Try again in a moment.", status: 409)
+        }
+        guard !request.body.isEmpty else { return .message("Nothing arrived to import.", status: 400) }
+        let name = request.query["name"].flatMap { $0.isEmpty ? nil : $0 } ?? "From Blender"
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Blender Link \(UUID().uuidString)", isDirectory: true)
+        let url = folder.appendingPathComponent(ProjectLibrary.safeFileName(name)).appendingPathExtension("obj")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try request.body.write(to: url)
+        } catch {
+            return .message("It couldn't be saved on the iPad. \(error.localizedDescription)", status: 422)
+        }
+        engine.clearMessage()
+        start(self, url, name)
+        await importTask?.value
+        // The import reports its outcome the way it does for a file: as the message on screen.
+        if let message = engine.message {
+            linkStatus = message.text
+            return .message(message.text, status: message.kind == .error ? 422 : 200)
+        }
+        return .message("It was stopped in Little Surface.", status: 409)
     }
 
     // MARK: Tutorial

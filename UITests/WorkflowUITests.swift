@@ -392,6 +392,44 @@ final class WorkflowUITests: XCTestCase {
         XCTAssertTrue(button("sketch-clear").isEnabled)
     }
 
+    func testBlenderLinkTakesAMeshOverTheNetwork() throws {
+        let patched = openPatchedExample()
+        button("Import").tap()
+        settle()
+        button("Blender Link").tap()
+        XCTAssertTrue(app.switches["Blender Link Toggle"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Blender Link Code"].exists, "the code stays hidden until the link is on")
+        flip(app.switches["Blender Link Toggle"])
+        let code = app.staticTexts["Blender Link Code"]
+        XCTAssertTrue(code.waitForExistence(timeout: 5))
+        // VoiceOver reads the row whole, so the digits may sit in its label or its value.
+        let shown = "\(code.label) \(code.value ?? "")".filter(\.isNumber)
+        XCTAssertEqual(shown.count, 6, "the code on screen")
+        shot("the Blender Link sheet")
+
+        // Stands in for the add-on, which has its own run against real Blender.
+        var request = URLRequest(url: try XCTUnwrap(URL(string: "http://127.0.0.1:48620/mesh?name=Card")))
+        request.httpMethod = "POST"
+        request.setValue(shown, forHTTPHeaderField: "X-Little-Surface-Code")
+        request.httpBody = Data("v 0 0 2\nv 1 0 2\nv 1 1 2\nv 0 1 2\nf 1 2 3 4\n".utf8)
+        let answered = expectation(description: "the app answers")
+        var status = 0
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            answered.fulfill()
+        }.resume()
+        wait(for: [answered], timeout: 30)
+        XCTAssertEqual(status, 200)
+
+        button("Blender Link Done").tap()
+        settle()
+        XCTAssertEqual(stats.vertices, patched.vertices + 4, "the mesh arrived beside what was there")
+        XCTAssertEqual(stats.faces, patched.faces + 1)
+        button("Undo").tap()
+        settle()
+        XCTAssertEqual(stats.faces, patched.faces, "undo here takes it back")
+    }
+
     private func openPatchedExample() -> Stats {
         button("Open Example").tap()
         XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))

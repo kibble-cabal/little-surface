@@ -107,6 +107,8 @@ struct EditorView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background || phase == .inactive { model.saveForBackground() }
+            if phase == .background { model.blenderLinkSceneChanged(isActive: false) }
+            if phase == .active { model.blenderLinkSceneChanged(isActive: true) }
         }
     }
 }
@@ -170,6 +172,7 @@ private struct EditorToolbar: ToolbarContent {
     @State private var showsDisplay = false
     @State private var showsExport = false
     @State private var showsObjects = false
+    @State private var showsBlenderLink = false
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
@@ -189,8 +192,11 @@ private struct EditorToolbar: ToolbarContent {
                     importsModel = true
                 } label: { Label("Mesh to Keep Editing…", systemImage: "square.and.pencil") }
                 .accessibilityIdentifier("Import Mesh to Edit")
+                Button { showsBlenderLink = true } label: { Label("Blender Link…", systemImage: "link") }
+                    .accessibilityIdentifier("Blender Link")
             } label: { Label("Import", systemImage: "square.and.arrow.down") }
                 .accessibilityIdentifier("Import")
+                .sheet(isPresented: $showsBlenderLink) { BlenderLinkView(model: model) }
             Button { showsObjects = true } label: { Label("Objects", systemImage: "square.stack.3d.up") }
                 .accessibilityIdentifier("Objects")
                 .popover(isPresented: $showsObjects) { ObjectsPopover(model: model) }

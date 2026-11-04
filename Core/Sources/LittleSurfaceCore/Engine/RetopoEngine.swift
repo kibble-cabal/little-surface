@@ -262,8 +262,12 @@ public final class RetopoEngine {
     /// yet, a copy of it becomes the surface so tools work straight away. Vertices then move freely
     /// instead of sticking to that copy, which would stop the mesh from ever changing shape.
     @discardableResult
-    public func addEditableMesh(_ imported: ImportedMesh, surface: (object: SourceObject, bvh: TriangleBVH)?) -> Bool {
-        let ok = perform("Import mesh") { mesh, selection in
+    public func addEditableMesh(_ imported: ImportedMesh, surface: (object: SourceObject, bvh: TriangleBVH)?, replacing: Bool = false) -> Bool {
+        // It can arrive from Blender at any moment, including under the Pencil.
+        if isMidGesture { pencilCancelled() }
+        cancelTransientState()
+        let ok = perform(replacing ? "Replace mesh" : "Import mesh") { mesh, selection in
+            if replacing { mesh = Mesh() }
             try mesh.append(imported.mesh)
             selection.clear()
         }
