@@ -2,7 +2,7 @@ import Foundation
 import simd
 
 public enum Tool: String, Codable, CaseIterable {
-    case select, drawEdges, edgeLoop, quadStrip, quadPatch, face, moveBrush, relaxBrush, erase
+    case select, sketch, drawEdges, edgeLoop, quadStrip, quadPatch, face, moveBrush, relaxBrush, erase
 
     public var isDrawingTool: Bool {
         switch self {
@@ -154,6 +154,8 @@ public final class RetopoEngine {
         case lasso([Vec2])
         case brush(before: EditSnapshot, lastHit: SurfaceHit?, label: String)
         case erase(before: EditSnapshot, changed: Bool)
+        case sketch(StrokeCapture)
+        case sketchErase(before: EditSnapshot, changed: Bool)
     }
 
     private struct SelectDrag {
@@ -325,6 +327,11 @@ public final class RetopoEngine {
             }
             mesh.setPositions(updates)
             result.movedVertices = updates.count
+            // The planning lines are drawn on the same surface, so they go with it.
+            for s in sketches.indices {
+                sketches[s].points = sketches[s].points.map { Self.followSurface(from: $0, faceNormal: .zero, old: oldSurface, new: projector, reach: reach) ?? $0 }
+            }
+            sketchRevision &+= 1
             result.unreachableVertices = unreachable.count
             if !unreachable.isEmpty {
                 selection.clear()
@@ -489,6 +496,76 @@ public final class RetopoEngine {
         notify()
     }
 
+    // MARK: Sketch layer
+
+    public private(set) var sketches: [SketchStroke] = []
+    /// Changes whenever the sketch does, so what's drawn from it knows to refresh.
+    public private(set) var sketchRevision: UInt64 = 0
+    public var sketchColorIndex = 0
+    public var sketchErases = false
+    public var showsSketch = true
+
+    private func finishSketch(_ capture: StrokeCapture) {
+        guard capture.screenLength >= minimumStrokeLength else { return }
+        let before = currentSnapshot
+        // Lifted just clear of the surface, so the model doesn't cut through the line.
+        let lift = max(tools.surfaceOffset * 2, sceneBounds.diagonal * 0.0008)
+        var added: [SketchStroke] = []
+        for run in capture.usableRuns {
+            var points: [Vec3] = []
+            for sample in run {
+                let p = sample.position + sample.normal * lift
+                // A loose line doesn't need every sample the Pencil sends.
+                if let last = points.last, simd_length(p - last) < camera.worldPerPoint(at: p) * 1.5, sample != run.last { continue }
+                points.append(p)
+            }
+            guard points.count >= 2 else { continue }
+            added.append(SketchStroke(points: points, colorIndex: sketchColorIndex))
+            if let plane = symmetry.activePlane {
+                added.append(SketchStroke(points: points.map(plane.reflect), colorIndex: sketchColorIndex))
+            }
+        }
+        guard !added.isEmpty else { return }
+        sketches += added
+        sketchRevision &+= 1
+        recordEdit(before: before, label: "Sketch")
+    }
+
+    /// Takes out whole lines the Pencil touches. Those on the far side of the model are left alone.
+    private func eraseSketch(at screen: Vec2) {
+        guard case .sketchErase(let before, _) = gesture else { return }
+        let radius: Float = 18
+        let tolerance = sceneBounds.diagonal * 0.01
+        let kept = sketches.filter { stroke in
+            var previous: Vec2?
+            for p in stroke.points {
+                guard let projected = camera.project(p) else {
+                    previous = nil
+                    continue
+                }
+                defer { previous = projected.screen }
+                let a = previous ?? projected.screen, b = projected.screen
+                let along = simd_clamp(simd_dot(screen - a, b - a) / max(simd_length_squared(b - a), 1e-6), 0, 1)
+                guard simd_length(screen - (a + (b - a) * along)) <= radius else { continue }
+                if projector?.isOccluded(p, from: camera.occlusionEye(for: p), tolerance: tolerance) ?? false { continue }
+                return false
+            }
+            return true
+        }
+        guard kept.count != sketches.count else { return }
+        sketches = kept
+        sketchRevision &+= 1
+        gesture = .sketchErase(before: before, changed: true)
+    }
+
+    public func clearSketch() {
+        guard !sketches.isEmpty else { return }
+        let before = currentSnapshot
+        sketches = []
+        sketchRevision &+= 1
+        recordEdit(before: before, label: "Clear sketch")
+    }
+
     // MARK: Poly budget and topology check
 
     /// The target for the finished mesh, in triangles.
@@ -609,7 +686,7 @@ public final class RetopoEngine {
         recordEdit(before: before, label: label)
     }
 
-    private var currentSnapshot: EditSnapshot { EditSnapshot(mesh: mesh, selection: selection, sculpts: sculpts) }
+    private var currentSnapshot: EditSnapshot { EditSnapshot(mesh: mesh, selection: selection, sculpts: sculpts, sketches: sketches) }
 
     /// Every committed change to the mesh passes through here, whichever tool made it, so undo and
     /// everything that follows an edit treat them all alike. `before` is the state the edit started from.
@@ -692,6 +769,10 @@ public final class RetopoEngine {
         mesh.topologyVersion = max(mesh.topologyVersion, snapshotVersionFloor.1) &+ 1
         snapshotVersionFloor = (mesh.positionVersion, mesh.topologyVersion)
         selection = snapshot.selection
+        if sketches != snapshot.sketches {
+            sketches = snapshot.sketches
+            sketchRevision &+= 1
+        }
     }
 
     /// Gives memory back when the system asks, by forgetting the oldest undo steps first.
@@ -752,6 +833,23 @@ public final class RetopoEngine {
             gesture = .erase(before: EditSnapshot(mesh: mesh, selection: selection), changed: false)
             brushCursor = screen
             eraseAt(screen)
+        case .sketch:
+            guard let projector else {
+                say(sources.isEmpty ? "Import a model first, then sketch on its surface." : "The surface is still being prepared.")
+                gesture = .idle
+                return
+            }
+            settlePending()
+            showsSketch = true
+            if sketchErases {
+                gesture = .sketchErase(before: currentSnapshot, changed: false)
+                eraseSketch(at: screen)
+            } else {
+                var capture = StrokeCapture(camera: camera, projector: projector)
+                capture.add(screen: screen, pressure: pressure)
+                gesture = .sketch(capture)
+                inkPath = [screen]
+            }
         }
         notify()
     }
@@ -780,6 +878,13 @@ public final class RetopoEngine {
         case .erase:
             brushCursor = screen
             eraseAt(screen)
+        case .sketch(var capture):
+            capture.add(screen: screen, pressure: pressure)
+            gesture = .sketch(capture)
+            inkPath = capture.screenPath
+            inkPrediction = predicted
+        case .sketchErase:
+            eraseSketch(at: screen)
         }
         notify()
     }
@@ -814,6 +919,12 @@ public final class RetopoEngine {
             if changed {
                 recordEdit(before: before, label: "Erase")
             }
+        case .sketch(var capture):
+            capture.add(screen: screen, pressure: pressure)
+            inkPath = []
+            finishSketch(capture)
+        case .sketchErase(let before, let changed):
+            if changed { recordEdit(before: before, label: "Erase sketch") }
         }
         rebuildOverlay()
         notify()
@@ -825,6 +936,8 @@ public final class RetopoEngine {
             install(before)
         case .select(let drag):
             if drag.moved { install(drag.before) }
+        case .sketchErase(let before, _):
+            install(before)
         default:
             break
         }
@@ -2288,6 +2401,9 @@ public final class RetopoEngine {
         snapshot.activeTool = activeTool
         snapshot.patchChains = patchChains
         snapshot.polyBudget = polyBudget
+        snapshot.sketches = sketches
+        snapshot.sketchColorIndex = sketchColorIndex
+        snapshot.showsSketch = showsSketch
         snapshot.faceBuilderVertices = faceCorners.compactMap { corner in
             if case .vertex(let v) = corner { return v }
             return nil
@@ -2310,6 +2426,9 @@ public final class RetopoEngine {
         activeTool = snapshot.activeTool
         patchChains = snapshot.patchChains.filter { $0.isAlive(in: mesh) }
         polyBudget = snapshot.polyBudget
+        sketches = snapshot.sketches
+        sketchColorIndex = snapshot.sketchColorIndex
+        showsSketch = snapshot.showsSketch
         faceCorners = snapshot.faceBuilderVertices.filter(mesh.isVertexAlive).map { .vertex($0) }
         rebuildOverlay()
     }

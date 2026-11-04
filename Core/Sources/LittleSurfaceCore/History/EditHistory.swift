@@ -7,11 +7,13 @@ public struct EditSnapshot {
     public var selection: Selection
     /// The geometry of every source that has been updated, so undo can go back across an update.
     public var sculpts: [UUID: SculptVersion]
+    public var sketches: [SketchStroke]
 
-    public init(mesh: Mesh, selection: Selection, sculpts: [UUID: SculptVersion] = [:]) {
+    public init(mesh: Mesh, selection: Selection, sculpts: [UUID: SculptVersion] = [:], sketches: [SketchStroke] = []) {
         self.mesh = mesh
         self.selection = selection
         self.sculpts = sculpts
+        self.sketches = sketches
     }
 }
 

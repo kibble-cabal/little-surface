@@ -355,6 +355,43 @@ final class WorkflowUITests: XCTestCase {
         assertUndoRestores(patched)
     }
 
+    func testSketchDrawsInColorStaysOutOfTheMeshAndUndoes() {
+        let patched = openPatchedExample()
+        button("tool-sketch").tap()
+        settle()
+        XCTAssertFalse(button("sketch-clear").isEnabled, "nothing to clear yet")
+        button("sketch-color-2").tap()
+        settle()
+        XCTAssertTrue(button("sketch-color-2").isSelected)
+
+        draw(CGPoint(x: 290, y: 760), CGPoint(x: 440, y: 790))
+        XCTAssertTrue(button("sketch-clear").isEnabled, "the line landed")
+        XCTAssertEqual(stats.vertices, patched.vertices, "a sketch isn't topology")
+        XCTAssertEqual(stats.faces, patched.faces)
+        shot("a blue planning line")
+
+        button("Undo").tap()
+        settle(0.3)
+        XCTAssertFalse(button("sketch-clear").isEnabled, "undo took the line back")
+        button("Redo").tap()
+        settle(0.3)
+        XCTAssertTrue(button("sketch-clear").isEnabled)
+        button("sketch-clear").tap()
+        settle(0.3)
+        XCTAssertFalse(button("sketch-clear").isEnabled)
+        button("Undo").tap()
+        settle(0.3)
+        XCTAssertTrue(button("sketch-clear").isEnabled, "clearing is one undo")
+
+        // Tracing over it makes real topology, and the sketch stays.
+        button("tool-drawEdges").tap()
+        draw(CGPoint(x: 290, y: 760), CGPoint(x: 440, y: 790))
+        XCTAssertGreaterThan(stats.vertices, patched.vertices)
+        button("tool-sketch").tap()
+        settle()
+        XCTAssertTrue(button("sketch-clear").isEnabled)
+    }
+
     private func openPatchedExample() -> Stats {
         button("Open Example").tap()
         XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))

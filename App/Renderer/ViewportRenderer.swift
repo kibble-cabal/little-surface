@@ -172,6 +172,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var topology = TopologyCache()
     private var sourceBuffers: [UUID: SourceBuffers] = [:]
     private var sourceBufferRevisions: [UUID: UInt64] = [:]
+    private var sketchBuffer: MTLBuffer?
+    private var sketchLineCount = 0
+    private var sketchBufferRevision: UInt64 = .max
     var subdivision: SubdivisionBuffers?
 
     weak var engine: RetopoEngine?
@@ -625,7 +628,31 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: triangles.count)
     }
 
+    /// The sketch can hold far more line than the overlays, so it's uploaded only when it changes.
+    private func drawSketch(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, uniforms: inout Uniforms) {
+        guard engine.showsSketch, !engine.sketches.isEmpty else { return }
+        if sketchBufferRevision != engine.sketchRevision {
+            sketchBufferRevision = engine.sketchRevision
+            var lines: [WorldLine] = []
+            for stroke in engine.sketches {
+                let color = SketchPalette.color(stroke.colorIndex)
+                for i in 1..<max(stroke.points.count, 1) {
+                    lines.append(WorldLine(a: stroke.points[i - 1], b: stroke.points[i], color: color, width: 3))
+                }
+            }
+            sketchLineCount = lines.count
+            sketchBuffer = lines.isEmpty ? nil : device.makeBuffer(bytes: lines, length: lines.count * MemoryLayout<WorldLine>.stride, options: .storageModeShared)
+        }
+        guard let sketchBuffer, sketchLineCount > 0 else { return }
+        e.setDepthStencilState(depthRead)
+        e.setRenderPipelineState(worldLinePipeline)
+        e.setVertexBuffer(sketchBuffer, offset: 0, index: 0)
+        e.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+        e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: sketchLineCount)
+    }
+
     private func drawOverlays(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, style: ViewportStyle, uniforms: inout Uniforms) {
+        drawSketch(e, engine: engine, uniforms: &uniforms)
         let overlay = engine.overlay
         // Previews show whole, so what's about to be made can be judged even where it dips under the model.
         e.setDepthStencilState(depthOccluded)
@@ -698,7 +725,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             for i in 1..<points.count { lines.append(ScreenLine(a: points[i - 1], b: points[i], color: color, width: width)) }
             if closed { lines.append(ScreenLine(a: points[points.count - 1], b: points[0], color: color, width: width)) }
         }
-        polyline(engine.inkPath, color: style.ink, width: 2.6)
+        polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : 2.6)
         if let last = engine.inkPath.last, !engine.inkPrediction.isEmpty {
             var faded = style.ink
             faded.w = 0.45

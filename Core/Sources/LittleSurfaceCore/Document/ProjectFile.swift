@@ -97,6 +97,9 @@ public struct ProjectSnapshot {
     public var faceBuilderVertices: [VertexID]
     /// The target for the finished mesh, in triangles.
     public var polyBudget: Int?
+    public var sketches: [SketchStroke] = []
+    public var sketchColorIndex = 0
+    public var showsSketch = true
 
     public init(name: String) {
         self.name = name
@@ -170,6 +173,8 @@ public enum ProjectCodec {
         var faceBuilderVertices: [VertexID]
         // Optional, so projects saved before this existed still open.
         var polyBudget: Int?
+        var sketchColorIndex: Int?
+        var showsSketch: Bool?
     }
 
     // MARK: Encode
@@ -191,7 +196,9 @@ public enum ProjectCodec {
             selectedFaces: snapshot.selection.faces.sorted(),
             patchChains: snapshot.patchChains,
             faceBuilderVertices: snapshot.faceBuilderVertices,
-            polyBudget: snapshot.polyBudget
+            polyBudget: snapshot.polyBudget,
+            sketchColorIndex: snapshot.sketchColorIndex,
+            showsSketch: snapshot.showsSketch
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -200,6 +207,7 @@ public enum ProjectCodec {
         chunks.append(("META", try encoder.encode(meta)))
         chunks.append(("MESH", encodeMesh(snapshot.mesh)))
         for source in snapshot.sources { chunks.append(("SRC ", encodeSource(source))) }
+        if !snapshot.sketches.isEmpty { chunks.append(("SKCH", encodeSketches(snapshot.sketches))) }
 
         var out = Data()
         out.append(magic)
@@ -225,6 +233,31 @@ public enum ProjectCodec {
     private static func appendArray<T>(_ data: inout Data, _ array: [T]) {
         appendValue(&data, UInt64(array.count))
         array.withUnsafeBytes { data.append(contentsOf: $0) }
+    }
+
+    private static func encodeSketches(_ sketches: [SketchStroke]) -> Data {
+        var out = Data()
+        appendArray(&out, sketches.map { Int32($0.points.count) })
+        appendArray(&out, sketches.map { Int32($0.colorIndex) })
+        appendArray(&out, sketches.flatMap(\.points))
+        return out
+    }
+
+    private static func decodeSketches(_ data: Data) throws -> [SketchStroke] {
+        var r = BinaryReader(data: data, offset: 0)
+        let sizes: [Int32] = try r.array()
+        let colors: [Int32] = try r.array()
+        let points: [Vec3] = try r.array()
+        guard sizes.count == colors.count, sizes.allSatisfy({ $0 >= 0 }), sizes.reduce(0, { $0 + Int($1) }) == points.count else {
+            throw ProjectFileError.damaged("the sketch doesn't add up")
+        }
+        var out: [SketchStroke] = []
+        var start = 0
+        for (size, color) in zip(sizes, colors) {
+            out.append(SketchStroke(points: Array(points[start..<(start + Int(size))]), colorIndex: Int(color)))
+            start += Int(size)
+        }
+        return out
     }
 
     private static func encodeSource(_ source: SourceObject) -> Data {
@@ -276,6 +309,7 @@ public enum ProjectCodec {
         var metaData: Data?
         var meshData: Data?
         var sourceData: [Data] = []
+        var sketchData: Data?
         for _ in 0..<count {
             if isCancelled() { throw ImportError.cancelled }
             let tag = String(decoding: try reader.bytes(4), as: UTF8.self)
@@ -298,6 +332,7 @@ public enum ProjectCodec {
             case "META": metaData = chunk
             case "MESH": meshData = chunk
             case "SRC ": sourceData.append(chunk)
+            case "SKCH": sketchData = chunk
             default: break
             }
         }
@@ -323,6 +358,9 @@ public enum ProjectCodec {
         snapshot.patchChains = meta.patchChains
         snapshot.faceBuilderVertices = meta.faceBuilderVertices
         snapshot.polyBudget = meta.polyBudget
+        snapshot.sketchColorIndex = meta.sketchColorIndex ?? 0
+        snapshot.showsSketch = meta.showsSketch ?? true
+        if let sketchData { snapshot.sketches = try decodeSketches(sketchData) }
         snapshot.mesh = try decodeMesh(meshData)
         for (info, chunk) in zip(meta.sources, sourceData) {
             if isCancelled() { throw ImportError.cancelled }

@@ -52,6 +52,9 @@ struct EditorView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                     VStack(spacing: 8) {
                         MessageToast(model: model)
+                        if model.state.activeTool == .sketch {
+                            SketchBar(model: model).padding(8).panel()
+                        }
                         DecisionChips(model: model)
                         if let step = model.tutorialStep { TutorialCard(model: model, step: step) }
                     }
@@ -273,6 +276,7 @@ extension Tool {
         case .moveBrush: return "hand.draw"
         case .relaxBrush: return "wind"
         case .erase: return "eraser"
+        case .sketch: return "scribble.variable"
         }
     }
 
@@ -287,6 +291,7 @@ extension Tool {
         case .moveBrush: return "Move Brush"
         case .relaxBrush: return "Relax Brush"
         case .erase: return "Erase"
+        case .sketch: return "Sketch"
         }
     }
 
@@ -301,6 +306,7 @@ extension Tool {
         case .moveBrush: return "Drag to push vertices along the surface."
         case .relaxBrush: return "Drag to even out vertices."
         case .erase: return "Drag over faces or edges to remove them."
+        case .sketch: return "Doodle planning lines to trace over. They stay out of your mesh and exports."
         }
     }
 }
@@ -309,7 +315,7 @@ private struct ToolBar: View {
     let model: EditorModel
     @State private var showsSymmetry = false
 
-    private let groups: [[Tool]] = [[.select], [.drawEdges, .edgeLoop, .quadStrip, .quadPatch, .face], [.moveBrush, .relaxBrush, .erase]]
+    private let groups: [[Tool]] = [[.select], [.sketch], [.drawEdges, .edgeLoop, .quadStrip, .quadPatch, .face], [.moveBrush, .relaxBrush, .erase]]
 
     var body: some View {
         let engine = model.state

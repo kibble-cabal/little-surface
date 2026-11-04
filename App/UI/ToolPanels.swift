@@ -23,6 +23,11 @@ struct ContextPanel: View {
         case .quadPatch: PatchControls(model: model)
         case .face: FaceControls(model: model)
         case .moveBrush, .relaxBrush, .erase: BrushControls(model: model)
+        case .sketch:
+            Section("Sketch") {
+                Text("Pick a color and doodle, then switch to Draw Edges and trace over it.").font(.footnote).foregroundStyle(Theme.quiet)
+                Toggle("Show sketch", isOn: Binding(get: { engine.showsSketch }, set: { model.engine.showsSketch = $0; model.settingChanged() })).accessibilityIdentifier("Show Sketch Panel")
+            }
         }
     }
 }
@@ -367,6 +372,7 @@ struct DisplayPopover: View {
                 Divider()
                 Toggle("Show source model", isOn: viewport(\.showSource)).accessibilityIdentifier("Show Source")
                 Toggle("Show topology", isOn: viewport(\.showRetopology)).accessibilityIdentifier("Show Topology")
+                Toggle("Show sketch", isOn: Binding(get: { model.state.showsSketch }, set: { model.engine.showsSketch = $0; model.settingChanged() })).accessibilityIdentifier("Show Sketch")
                 ValueSlider(title: "Source opacity", value: viewport(\.sourceOpacity), range: 0.05...1)
                 ValueSlider(title: "Face opacity", value: viewport(\.faceOpacity), range: 0...1)
                 Divider()
@@ -502,6 +508,54 @@ struct ExportPopover: View {
         .padding()
         .frame(width: 320)
         .onAppear { name = model.engine.name }
+    }
+}
+
+/// Sits over the viewport while sketching, so changing color never means opening a panel.
+struct SketchBar: View {
+    let model: EditorModel
+
+    var body: some View {
+        let engine = model.state
+        let isErasing = engine.sketchErases
+        let current = engine.sketchColorIndex
+        HStack(spacing: 6) {
+            ForEach(SketchPalette.colors.indices, id: \.self) { index in
+                let c = SketchPalette.colors[index]
+                Button {
+                    model.engine.sketchColorIndex = index
+                    model.engine.sketchErases = false
+                    model.settingChanged()
+                } label: {
+                    Circle()
+                        .fill(Color(red: Double(c.x), green: Double(c.y), blue: Double(c.z)))
+                        .frame(width: 26, height: 26)
+                        .overlay {
+                            if index == current && !isErasing {
+                                Circle().stroke(Color.primary, lineWidth: 2).frame(width: 33, height: 33)
+                            }
+                        }
+                        .frame(width: 38, height: 38)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(SketchPalette.names[index])
+                .accessibilityAddTraits(index == current && !isErasing ? .isSelected : [])
+                .accessibilityIdentifier("sketch-color-\(index)")
+            }
+            Divider().frame(height: 26)
+            IconButton(symbol: "eraser", label: "Erase sketch lines", isActive: isErasing, identifier: "sketch-erase") {
+                model.engine.sketchErases.toggle()
+                model.settingChanged()
+            }
+            IconButton(symbol: engine.showsSketch ? "eye" : "eye.slash", label: engine.showsSketch ? "Hide sketch" : "Show sketch", identifier: "sketch-visibility") {
+                model.engine.showsSketch.toggle()
+                model.settingChanged()
+            }
+            IconButton(symbol: "trash", label: "Clear sketch", isEnabled: !engine.sketches.isEmpty, identifier: "sketch-clear") {
+                model.engine.clearSketch()
+            }
+        }
     }
 }
 
