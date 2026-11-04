@@ -105,9 +105,9 @@ All of this ran on an M1 Max Mac using an iPad (A16) simulator on iOS 26.3. A fr
 
 | Suite | Result |
 | --- | --- |
-| Core tests (`swift test`, with third-party samples) | 206 run: 205 passed, 0 failed, and the timing test skipped by default |
+| Core tests (`swift test`, with third-party samples) | 225 run: 224 passed, 0 failed, and the timing test skipped by default |
 | App tests (document save and reopen, damaged file, bundled example, shaders compile) | 5 of 5 passed |
-| UI tests in the running app | 8 of 8 passed |
+| UI tests in the running app | 9 of 9 passed |
 
 The timing test was run separately, with the results under [Large models](#large-models).
 
