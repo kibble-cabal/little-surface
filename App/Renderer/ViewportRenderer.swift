@@ -15,7 +15,7 @@ private struct Uniforms {
     var dotSize: Float
     var depthBias: Float
     var faceOpacity: Float
-    var pad: Float = 0
+    var surfacePull: Float = 0
 }
 
 private struct WorldLine {
@@ -63,30 +63,31 @@ struct ViewportStyle {
     var wire: Vec4
 
     static func make(dark: Bool, backgroundLevel: Float?) -> ViewportStyle {
-        let accent = dark ? Vec4(0.95, 0.60, 0.36, 1) : Vec4(0.86, 0.43, 0.16, 1)
-        let topo = dark ? Vec4(0.45, 0.82, 0.90, 1) : Vec4(0.06, 0.32, 0.44, 1)
-        let hover = dark ? Vec4(1.0, 0.86, 0.45, 1) : Vec4(0.93, 0.62, 0.10, 1)
+        // The mesh wears the app's emerald. Selection is the system's blue, so it stands out from it.
+        let emerald = dark ? Vec4(0.20, 0.83, 0.60, 1) : Vec4(0.02, 0.59, 0.41, 1)
+        let topo = dark ? Vec4(0.43, 0.91, 0.72, 1) : Vec4(0.01, 0.34, 0.25, 1)
+        let selected = dark ? Vec4(0.04, 0.52, 1.0, 1) : Vec4(0.0, 0.48, 1.0, 1)
+        let hover = dark ? Vec4(1.0, 0.84, 0.04, 1) : Vec4(0.95, 0.72, 0.0, 1)
         let issue = Vec4(0.86, 0.16, 0.25, 1)
-        let level = backgroundLevel.map(Double.init) ?? (dark ? 0.135 : 0.93)
-        let warm = dark ? 0.0 : 0.012
+        let level = backgroundLevel.map(Double.init) ?? (dark ? 0.11 : 0.949)
         return ViewportStyle(
-            background: MTLClearColor(red: level + warm, green: level + warm * 0.4, blue: level - warm, alpha: 1),
-            source: dark ? Vec4(0.56, 0.55, 0.53, 1) : Vec4(0.80, 0.78, 0.74, 1),
+            background: MTLClearColor(red: level, green: level, blue: level + (dark ? 0.008 : 0.02), alpha: 1),
+            source: dark ? Vec4(0.55, 0.55, 0.57, 1) : Vec4(0.79, 0.79, 0.81, 1),
             faces: [
-                Vec4(topo.x, topo.y, topo.z, 0.32), Vec4(accent.x, accent.y, accent.z, 0.8),
+                Vec4(emerald.x, emerald.y, emerald.z, 0.32), Vec4(selected.x, selected.y, selected.z, 0.7),
                 Vec4(hover.x, hover.y, hover.z, 0.7), Vec4(issue.x, issue.y, issue.z, 0.8),
-                Vec4(topo.x, topo.y, topo.z, 0.32),
+                Vec4(emerald.x, emerald.y, emerald.z, 0.32),
             ],
-            edges: [topo, accent, hover, issue, dark ? Vec4(0.62, 0.92, 0.82, 1) : Vec4(0.03, 0.46, 0.43, 1)],
-            dots: [topo, accent, hover, issue, topo],
+            edges: [topo, selected, hover, issue, emerald],
+            dots: [topo, selected, hover, issue, topo],
             backTint: Vec4(0.72, 0.18, 0.42, 0.7),
-            preview: Vec4(accent.x, accent.y, accent.z, 1),
+            preview: emerald,
             mirror: Vec4(topo.x, topo.y, topo.z, 0.65),
             warning: issue,
-            chain: Vec4(0.20, 0.62, 0.34, 1),
-            ink: Vec4(accent.x, accent.y, accent.z, 0.95),
-            plane: Vec4(accent.x, accent.y, accent.z, 0.09),
-            wire: dark ? Vec4(0.70, 0.69, 0.66, 0.5) : Vec4(0.32, 0.31, 0.29, 0.42)
+            chain: selected,
+            ink: Vec4(emerald.x, emerald.y, emerald.z, 0.95),
+            plane: Vec4(emerald.x, emerald.y, emerald.z, 0.09),
+            wire: dark ? Vec4(0.70, 0.70, 0.72, 0.5) : Vec4(0.30, 0.30, 0.32, 0.42)
         )
     }
 }
@@ -422,10 +423,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             lightDir: simd_normalize(camera.orientation.act(lightLocal)),
             viewport: camera.viewSize,
             lightIntensity: viewport.lightIntensity,
-            edgeWidth: 1.6,
-            dotSize: 7,
+            // Thumbnails show the model small, where full-size wires and dots would turn the mesh into a blob.
+            edgeWidth: includesInteraction ? 1.6 : 0.7,
+            dotSize: includesInteraction ? 7 : 2,
             depthBias: bias,
-            faceOpacity: viewport.faceOpacity * 2.2
+            faceOpacity: viewport.faceOpacity * 2.2,
+            surfacePull: engine.sceneBounds.diagonal * 0.006
         )
         e.setFrontFacing(.counterClockwise)
         e.setCullMode(.none)
@@ -479,6 +482,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
         switch viewport.displayMode {
         case .solid, .xray:
+            // Pushed back where it slopes away, which is where flat quads otherwise sink into it.
+            e.setDepthBias(1, slopeScale: 1, clamp: 0.01)
+            defer { e.setDepthBias(0, slopeScale: 0, clamp: 0) }
             if opacity < 0.999 {
                 // Depth first, so only the nearest surface blends and the model doesn't show its insides.
                 e.setRenderPipelineState(depthOnlyPipeline)
@@ -528,15 +534,26 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
         if b.cornerCount > 0, let corners = b.corners, let flags = b.triFlags {
             e.setRenderPipelineState(facePipeline)
-            e.setDepthStencilState(xray ? depthOff : depthRead)
             e.setVertexBuffer(positions, offset: 0, index: 0)
             e.setVertexBuffer(corners, offset: 0, index: 1)
             e.setVertexBuffer(flags, offset: 0, index: 2)
             e.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 3)
             style.faces.withUnsafeBytes { e.setVertexBytes($0.baseAddress!, length: $0.count, index: 4) }
-            e.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             var back = style.backTint
             e.setFragmentBytes(&back, length: 16, index: 1)
+            if !xray {
+                // Where a face dips under the model, it tints the surface instead of disappearing.
+                // Only faces turned toward the viewer do this, so the far side of the model stays hidden.
+                var tint = uniforms
+                tint.faceOpacity *= 0.65
+                e.setFragmentBytes(&tint, length: MemoryLayout<Uniforms>.stride, index: 0)
+                e.setDepthStencilState(depthOccluded)
+                e.setCullMode(.back)
+                e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: b.cornerCount)
+                e.setCullMode(.none)
+            }
+            e.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+            e.setDepthStencilState(xray ? depthOff : depthRead)
             e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: b.cornerCount)
         }
 
@@ -571,7 +588,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         } else {
             // A faint pass for what's behind the model, so the far side stays readable while orbiting.
             e.setDepthStencilState(depthOccluded)
-            lines(alpha: 0.1)
+            lines(alpha: 0.14)
             e.setDepthStencilState(depthRead)
             lines(alpha: 1)
             dots(alpha: 1)
@@ -608,8 +625,18 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     private func drawOverlays(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, style: ViewportStyle, uniforms: inout Uniforms) {
         let overlay = engine.overlay
+        // Previews show whole, so what's about to be made can be judged even where it dips under the model.
+        e.setDepthStencilState(depthOccluded)
+        setFlatTriangles(e, overlay.previewTriangles, color: Vec4(style.preview.x, style.preview.y, style.preview.z, 0.14), uniforms: &uniforms)
+        var hiddenPreview: [WorldLine] = []
+        var previewIndex = 0
+        while previewIndex + 1 < overlay.previewEdges.count {
+            hiddenPreview.append(WorldLine(a: overlay.previewEdges[previewIndex], b: overlay.previewEdges[previewIndex + 1], color: Vec4(style.preview.x, style.preview.y, style.preview.z, 0.3), width: 1.2))
+            previewIndex += 2
+        }
+        setWorldLines(e, hiddenPreview, uniforms: &uniforms)
         e.setDepthStencilState(depthRead)
-        setFlatTriangles(e, overlay.previewTriangles, color: Vec4(style.preview.x, style.preview.y, style.preview.z, 0.2), uniforms: &uniforms)
+        setFlatTriangles(e, overlay.previewTriangles, color: Vec4(style.preview.x, style.preview.y, style.preview.z, 0.24), uniforms: &uniforms)
 
         var lines: [WorldLine] = []
         func add(_ pairs: [Vec3], color: Vec4, width: Float) {

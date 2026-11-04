@@ -465,4 +465,118 @@ final class QuadPatchTests: XCTestCase {
         XCTAssertFalse(chain.isClosed)
         XCTAssertNil(ChainFinder.chain(from: [edges[0], edges[2]], in: mesh), "a disconnected selection isn't a chain")
     }
+
+    // MARK: Drawing shapes and lines in place
+
+    func testDrawingAShapeWithQuadPatchPreviewsAFill() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.quadPatch)
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 120))
+        XCTAssertEqual(engine.patchChains.count, 1)
+        XCTAssertTrue(engine.patchChains[0].isClosed, "a shape whose ends nearly meet is a loop")
+        XCTAssertNotNil(engine.patchPreview)
+        engine.commitPatch()
+        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
+        assertValid(engine.mesh)
+    }
+
+    func testASmoothOvalFillsWithStraightRowsNotASliver() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.quadPatch)
+        let oval = (0...48).map { i -> Vec2 in
+            let a = Float.pi * 1.97 * Float(i) / 48
+            return Vec2(500 + cos(a) * 140 + sin(a * 7) * 1.5, 500 + sin(a) * 70 + cos(a * 5) * 1.5)
+        }
+        Fixtures.drawPath(engine, oval)
+        let preview = try XCTUnwrap(engine.patchPreview)
+        XCTAssertGreaterThanOrEqual(min(preview.rows, preview.columns) * 4, max(preview.rows, preview.columns), "\(preview.columns) x \(preview.rows)")
+        engine.commitPatch()
+        assertValid(engine.mesh)
+    }
+
+    func testClearingPatchPicksRefreshesTheInterface() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.quadPatch)
+        Fixtures.draw(engine, from: Vec2(400, 450), to: Vec2(600, 450))
+        XCTAssertEqual(engine.patchChains.count, 1)
+        var changes = 0
+        engine.onChange = { changes += 1 }
+        engine.clearPatchPicks()
+        XCTAssertTrue(engine.patchChains.isEmpty)
+        XCTAssertGreaterThan(changes, 0, "without a change notice the buttons stay on screen and seem dead")
+    }
+
+    func testALineBesideAnotherOffersToFill() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 450), to: Vec2(600, 450))
+        XCTAssertNil(engine.fillSuggestion, "one line has nothing beside it")
+        Fixtures.draw(engine, from: Vec2(400, 520), to: Vec2(600, 520))
+        let suggestion = try XCTUnwrap(engine.fillSuggestion)
+        XCTAssertEqual(suggestion.chains.count, 2)
+        XCTAssertEqual(engine.mesh.faceCount, 0, "it's an offer until accepted")
+        XCTAssertFalse(engine.overlay.previewTriangles.isEmpty, "the offer shows what it would make")
+
+        engine.commitFillSuggestion()
+        XCTAssertNil(engine.fillSuggestion)
+        XCTAssertEqual(engine.mesh.faceCount, suggestion.preview.columns * suggestion.preview.rows)
+        assertValid(engine.mesh)
+        engine.undo()
+        XCTAssertEqual(engine.mesh.faceCount, 0)
+    }
+
+    func testAFillOfferFollowsTheLinesWhicheverWayTheyWereDrawn() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 450), to: Vec2(600, 450))
+        Fixtures.draw(engine, from: Vec2(600, 520), to: Vec2(400, 520))
+        let suggestion = try XCTUnwrap(engine.fillSuggestion)
+        engine.commitFillSuggestion()
+        XCTAssertEqual(engine.mesh.faceCount, suggestion.preview.columns * suggestion.preview.rows)
+        assertValid(engine.mesh)
+    }
+
+    func testAFillOfferGoesAwayWithTheNextStroke() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(400, 450), to: Vec2(600, 450))
+        Fixtures.draw(engine, from: Vec2(400, 520), to: Vec2(600, 520))
+        XCTAssertNotNil(engine.fillSuggestion)
+        engine.pencilBegan(at: Vec2(300, 300))
+        XCTAssertNil(engine.fillSuggestion)
+        XCTAssertTrue(engine.overlay.previewTriangles.isEmpty)
+        engine.pencilCancelled()
+    }
+
+    func testLinesThatAreNotNeighboursOfferNothing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(engine, from: Vec2(440, 400), to: Vec2(560, 400))
+        Fixtures.draw(engine, from: Vec2(440, 620), to: Vec2(560, 620))
+        XCTAssertNil(engine.fillSuggestion, "further apart than they are long")
+
+        let other = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(other, from: Vec2(350, 450), to: Vec2(650, 450))
+        Fixtures.draw(other, from: Vec2(470, 500), to: Vec2(530, 500))
+        XCTAssertNil(other.fillSuggestion, "very different lengths")
+
+        let crossing = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.draw(crossing, from: Vec2(400, 450), to: Vec2(600, 450))
+        Fixtures.draw(crossing, from: Vec2(400, 450), to: Vec2(420, 650))
+        XCTAssertNil(crossing.fillSuggestion, "lines that fan out aren't side by side")
+    }
+
+    func testFillOfferCanBeTurnedOff() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.suggestsFills = false
+        Fixtures.draw(engine, from: Vec2(400, 450), to: Vec2(600, 450))
+        Fixtures.draw(engine, from: Vec2(400, 520), to: Vec2(600, 520))
+        XCTAssertNil(engine.fillSuggestion)
+    }
+
+    func testLinesOnOppositeSidesOfTheModelAreNotNeighbours() throws {
+        var mesh = Mesh()
+        let front = (0...5).map { mesh.addVertex(simd_normalize(Vec3(Float($0) * 0.04 - 0.1, 0, 1))) }
+        let back = (0...5).map { mesh.addVertex(simd_normalize(Vec3(Float($0) * 0.04 - 0.1, 0, -1))) }
+        for ids in [front, back] { for i in 0..<5 { _ = try mesh.ensureEdge(ids[i], ids[i + 1]) } }
+        let projector = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera()).projector
+        let chain = try XCTUnwrap(ChainFinder.chain(through: mesh.edge(between: front[0], front[1])!, in: mesh))
+        XCTAssertNil(NeighborChains.neighbor(of: chain, in: mesh, projector: projector, mirror: nil))
+    }
 }

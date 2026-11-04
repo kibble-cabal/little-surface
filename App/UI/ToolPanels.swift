@@ -1,41 +1,17 @@
 import LittleSurfaceCore
 import SwiftUI
 
-/// The collapsible panel on the right. It only ever shows what the active tool can use.
+/// The inspector on the right. It only ever shows what the active tool can use.
 struct ContextPanel: View {
     let model: EditorModel
-    @Binding var collapsed: Bool
 
     var body: some View {
         let engine = model.state
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                if !collapsed {
-                    Text(engine.activeTool.label).font(.subheadline.weight(.semibold)).padding(.leading, 6)
-                    Spacer()
-                }
-                IconButton(symbol: collapsed ? "sidebar.left" : "sidebar.right", label: collapsed ? "Show Options" : "Hide Options", identifier: "Toggle Options") {
-                    collapsed.toggle()
-                }
-            }
-            if !collapsed {
-                let content = VStack(alignment: .leading, spacing: 12) {
-                    toolControls(engine)
-                    Divider()
-                    SurfaceControls(model: model)
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 10)
-                // Only as tall as it needs to be, so it leaves the model visible.
-                ViewThatFits(in: .vertical) {
-                    content
-                    ScrollView(.vertical, showsIndicators: false) { content }
-                }
-            }
+        Form {
+            toolControls(engine)
+            SurfaceControls(model: model)
         }
-        .padding(4)
-        .frame(width: collapsed ? nil : 268)
-        .panel()
+        .formStyle(.grouped)
     }
 
     @ViewBuilder
@@ -63,12 +39,11 @@ private struct SurfaceControls: View {
     var body: some View {
         let engine = model.state
         let scale = sceneScale(engine)
-        VStack(alignment: .leading, spacing: 8) {
+        Section("Surface") {
             Toggle("Snap to surface", isOn: Binding(
                 get: { model.state.tools.surfaceSnapping },
                 set: { model.engine.tools.surfaceSnapping = $0; model.settingChanged() }
             ))
-            .font(.footnote)
             .accessibilityIdentifier("Snap to Surface")
             ValueSlider(
                 title: "Surface offset",
@@ -77,7 +52,6 @@ private struct SurfaceControls: View {
                 format: lengthText
             )
             Button("Reproject Selection") { model.engine.reproject() }
-                .buttonStyle(PillButtonStyle())
                 .accessibilityIdentifier("Reproject")
         }
     }
@@ -88,7 +62,7 @@ private struct StrokeControls: View {
 
     var body: some View {
         let scale = sceneScale(model.state)
-        VStack(alignment: .leading, spacing: 10) {
+        Section(model.state.activeTool.label) {
             ValueSlider(
                 title: "Edge length",
                 value: Binding(get: { model.state.tools.stroke.edgeLength }, set: { model.engine.tools.stroke.edgeLength = $0; model.settingChanged() }),
@@ -128,15 +102,15 @@ private struct StripControls: View {
     var body: some View {
         let strip = model.state.tools.strip
         let scale = sceneScale(model.state)
-        VStack(alignment: .leading, spacing: 10) {
+        Section(model.state.activeTool.label) {
             ValueSlider(title: "Width", value: Binding(get: { strip.width }, set: { v in change { $0.width = v } }), range: (scale * 0.002)...(scale * 0.3), format: lengthText)
             IntStepper(title: "Segments", value: Binding(get: { strip.segments }, set: { v in change { $0.segments = v } }), range: 0...400, zeroLabel: "From spacing")
             if strip.segments == 0 {
                 ValueSlider(title: "Vertex spacing", value: Binding(get: { strip.vertexSpacing }, set: { v in change { $0.vertexSpacing = v } }), range: (scale * 0.002)...(scale * 0.15), format: lengthText)
             }
             IntStepper(title: "Quads across", value: Binding(get: { strip.crossSegments }, set: { v in change { $0.crossSegments = v } }), range: 1...12)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Direction").font(.footnote)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Direction")
                 Picker("Direction", selection: Binding(get: { strip.direction }, set: { v in change { $0.direction = v } })) {
                     Text("Left").tag(StripDirection.left)
                     Text("Center").tag(StripDirection.centered)
@@ -160,17 +134,16 @@ private struct PatchControls: View {
     var body: some View {
         let engine = model.state
         let patch = engine.tools.patch
-        VStack(alignment: .leading, spacing: 10) {
-            Text(engine.patchChains.isEmpty ? "Tap two lines, four sides, or one closed loop." : "\(engine.patchChains.count) picked")
-                .font(.footnote).foregroundStyle(Theme.quiet)
+        Section(engine.activeTool.label) {
+            Text(engine.patchChains.isEmpty ? "Draw a closed shape, or pick two lines or four sides." : "\(engine.patchChains.count) picked")
+                .font(.subheadline).foregroundStyle(Theme.quiet)
             Button("Use Selected Edges") { engine.addPatchChainFromSelection() }
-                .buttonStyle(PillButtonStyle())
             IntStepper(title: "Rows", value: Binding(get: { patch.rows }, set: { v in change { $0.rows = v } }), range: 0...100, zeroLabel: "Auto")
             IntStepper(title: "Column density", value: Binding(get: { patch.columnDensity }, set: { v in change { $0.columnDensity = v } }), range: 1...8)
             IntStepper(title: "Row density", value: Binding(get: { patch.rowDensity }, set: { v in change { $0.rowDensity = v } }), range: 1...8)
             IntStepper(title: "Relax passes", value: Binding(get: { patch.relaxIterations }, set: { v in change { $0.relaxIterations = v } }), range: 0...30)
-            Toggle("Match vertex counts", isOn: Binding(get: { patch.matchVertexCounts }, set: { v in change { $0.matchVertexCounts = v } })).font(.footnote)
-            Toggle("Swap line ends", isOn: Binding(get: { patch.flipPairing }, set: { v in change { $0.flipPairing = v } })).font(.footnote)
+            Toggle("Match vertex counts", isOn: Binding(get: { patch.matchVertexCounts }, set: { v in change { $0.matchVertexCounts = v } }))
+            Toggle("Swap line ends", isOn: Binding(get: { patch.flipPairing }, set: { v in change { $0.flipPairing = v } }))
         }
     }
 }
@@ -178,8 +151,10 @@ private struct PatchControls: View {
 private struct FaceControls: View {
     let model: EditorModel
     var body: some View {
-        Text("Tap vertices or edges with the Pencil. Four corners complete a quad right away. To make a triangle or an n-gon, tap Create Face.")
-            .font(.footnote).foregroundStyle(Theme.quiet)
+        Section(model.state.activeTool.label) {
+            Text("Tap vertices or edges with the Pencil. Four corners complete a quad right away. To make a triangle or an n-gon, tap Create Face.")
+                .font(.subheadline).foregroundStyle(Theme.quiet)
+        }
     }
 }
 
@@ -187,11 +162,11 @@ private struct BrushControls: View {
     let model: EditorModel
     var body: some View {
         let brush = model.state.tools.brush
-        VStack(alignment: .leading, spacing: 10) {
+        Section(model.state.activeTool.label) {
             ValueSlider(title: "Radius", value: Binding(get: { brush.radiusPoints }, set: { model.engine.tools.brush.radiusPoints = $0; model.settingChanged() }), range: 8...240, format: { "\(Int($0)) pt" })
             if model.state.activeTool != .erase {
                 ValueSlider(title: "Strength", value: Binding(get: { brush.strength }, set: { model.engine.tools.brush.strength = $0; model.settingChanged() }), range: 0.05...1)
-                Toggle("Pressure sets strength", isOn: Binding(get: { brush.usesPressure }, set: { model.engine.tools.brush.usesPressure = $0; model.settingChanged() })).font(.footnote)
+                Toggle("Pressure sets strength", isOn: Binding(get: { brush.usesPressure }, set: { model.engine.tools.brush.usesPressure = $0; model.settingChanged() }))
             } else {
                 Picker("Erases", selection: Binding(get: { model.state.selection.mode }, set: { model.engine.setSelectionMode($0) })) {
                     Text("Vertices").tag(SelectionMode.vertex)
@@ -207,31 +182,48 @@ private struct BrushControls: View {
 private struct SelectionControls: View {
     let model: EditorModel
 
-    private let grid = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
+    private struct Action: Identifiable {
+        let title: String
+        let symbol: String
+        let perform: () -> Void
+        var id: String { title }
+    }
 
-    private func action(_ title: String, _ symbol: String, _ perform: @escaping () -> Void) -> some View {
-        Button(action: perform) {
-            Label(title, systemImage: symbol)
-                .labelStyle(.titleAndIcon)
-                .font(.footnote)
-                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-                .padding(.horizontal, 8)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .contentShape(Rectangle())
+    /// Buttons in two columns. Full rows would make this list too long to take in at a glance.
+    private func actions(_ items: [Action]) -> some View {
+        Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+            ForEach(Array(stride(from: 0, to: items.count, by: 2)), id: \.self) { i in
+                GridRow {
+                    actionButton(items[i])
+                    if i + 1 < items.count { actionButton(items[i + 1]) }
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(title)
+    }
+
+    private func actionButton(_ action: Action) -> some View {
+        Button(action: action.perform) {
+            VStack(spacing: 4) {
+                Image(systemName: action.symbol).font(.body).frame(height: 22)
+                Text(action.title).font(.caption).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel(action.title)
+        .accessibilityIdentifier(action.title)
     }
 
     var body: some View {
         let engine = model.state
-        VStack(alignment: .leading, spacing: 10) {
+        Section(engine.activeTool.label) {
             Picker("Select", selection: Binding(get: { engine.selection.mode }, set: { model.engine.setSelectionMode($0); model.settingChanged() })) {
                 Text("Vertex").tag(SelectionMode.vertex)
                 Text("Edge").tag(SelectionMode.edge)
                 Text("Face").tag(SelectionMode.face)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .accessibilityIdentifier("Selection Mode")
             Picker("Taps", selection: Binding(get: { engine.selectionOperation }, set: { model.engine.selectionOperation = $0; model.settingChanged() })) {
                 Text("Replace").tag(SelectionOperation.replace)
@@ -239,46 +231,48 @@ private struct SelectionControls: View {
                 Text("Remove").tag(SelectionOperation.remove)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             Picker("Dragging", selection: Binding(get: { engine.dragBehavior }, set: { model.engine.dragBehavior = $0; model.settingChanged() })) {
                 Text("Free Move").tag(DragBehavior.move)
                 Text("Slide on Edges").tag(DragBehavior.slide)
             }
             .pickerStyle(.segmented)
-
-            sectionTitle("Select")
-            LazyVGrid(columns: grid, spacing: 6) {
-                action("All", "checkmark.square") { engine.selectAll() }
-                action("None", "square") { engine.clearSelection() }
-                action("Loop", "circle.dashed") { engine.selectEdgeLoop() }
-                action("Ring", "circle.grid.cross") { engine.selectEdgeRing() }
-                action("Connected", "point.3.connected.trianglepath.dotted") { engine.selectConnected() }
-                action("Boundary", "square.dashed") { engine.selectBoundary() }
-            }
-
-            sectionTitle("Change Topology")
-            LazyVGrid(columns: grid, spacing: 6) {
-                action("Delete", "trash") { engine.deleteSelection() }
-                action("Dissolve", "drop") { engine.dissolveSelection() }
-                action("Split", "scissors") { engine.splitSelectedEdges() }
-                action("Connect", "point.topleft.down.to.point.bottomright.curvepath") { engine.connectSelectedVertices() }
-                action("Extrude", "arrow.up.square") { engine.extrudeSelectedEdges() }
-                action("Fill", "square.fill") { engine.fillHoles() }
-                action("Make Face", "skew") { engine.makeFaceFromSelection() }
-                action("Weld", "arrow.right.and.line.vertical.and.arrow.left") { engine.weldSelected() }
-                action("Flip", "arrow.triangle.2.circlepath") { engine.flipSelectedEdges() }
-                action("Subdivide", "square.grid.2x2") { engine.subdivideSelection() }
-            }
-
-            sectionTitle("Shape")
-            LazyVGrid(columns: grid, spacing: 6) {
-                action("Relax", "wind") { engine.relaxSelection() }
-                action("Reverse", "arrow.left.arrow.right") { engine.reverseNormals() }
-                action("Fix Normals", "arrow.up.to.line") { engine.recalculateNormals() }
-                action("Frame", "viewfinder") {
+            .labelsHidden()
+        }
+        Section("Select") {
+            actions([
+                Action(title: "All", symbol: "checkmark.square") { engine.selectAll() },
+                Action(title: "None", symbol: "square") { engine.clearSelection() },
+                Action(title: "Loop", symbol: "circle.dashed") { engine.selectEdgeLoop() },
+                Action(title: "Ring", symbol: "circle.grid.cross") { engine.selectEdgeRing() },
+                Action(title: "Connected", symbol: "point.3.connected.trianglepath.dotted") { engine.selectConnected() },
+                Action(title: "Boundary", symbol: "square.dashed") { engine.selectBoundary() },
+            ])
+        }
+        Section("Change Topology") {
+            actions([
+                Action(title: "Delete", symbol: "trash") { engine.deleteSelection() },
+                Action(title: "Dissolve", symbol: "drop") { engine.dissolveSelection() },
+                Action(title: "Split", symbol: "scissors") { engine.splitSelectedEdges() },
+                Action(title: "Connect", symbol: "point.topleft.down.to.point.bottomright.curvepath") { engine.connectSelectedVertices() },
+                Action(title: "Extrude", symbol: "arrow.up.square") { engine.extrudeSelectedEdges() },
+                Action(title: "Fill", symbol: "square.fill") { engine.fillHoles() },
+                Action(title: "Make Face", symbol: "skew") { engine.makeFaceFromSelection() },
+                Action(title: "Weld", symbol: "arrow.right.and.line.vertical.and.arrow.left") { engine.weldSelected() },
+                Action(title: "Flip", symbol: "arrow.triangle.2.circlepath") { engine.flipSelectedEdges() },
+                Action(title: "Subdivide", symbol: "square.grid.2x2") { engine.subdivideSelection() },
+            ])
+        }
+        Section("Shape") {
+            actions([
+                Action(title: "Relax", symbol: "wind") { engine.relaxSelection() },
+                Action(title: "Reverse", symbol: "arrow.left.arrow.right") { engine.reverseNormals() },
+                Action(title: "Fix Normals", symbol: "arrow.up.to.line") { engine.recalculateNormals() },
+                Action(title: "Frame", symbol: "viewfinder") {
                     engine.frameSelection()
                     model.cameraDidChange()
-                }
-            }
+                },
+            ])
             ValueSlider(
                 title: "Extrude distance",
                 value: Binding(get: { engine.tools.extrudeDistance }, set: { model.engine.tools.extrudeDistance = $0; model.settingChanged() }),
@@ -286,10 +280,6 @@ private struct SelectionControls: View {
                 format: lengthText
             )
         }
-    }
-
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text).font(.caption.weight(.semibold)).foregroundStyle(Theme.quiet).padding(.top, 2)
     }
 }
 
@@ -324,8 +314,8 @@ struct SymmetryPopover: View {
                 format: lengthText
             )
             HStack {
-                Button("Merge Centerline") { model.engine.mergeCenterline() }.buttonStyle(PillButtonStyle())
-                Button("Apply") { model.engine.applySymmetry() }.buttonStyle(PillButtonStyle()).help("Mirror the kept side into plain geometry")
+                Button("Merge Centerline") { model.engine.mergeCenterline() }.pillButton()
+                Button("Apply") { model.engine.applySymmetry() }.pillButton().help("Mirror the kept side into plain geometry")
             }
             Text("Apply replaces one side with a mirror of the other, then welds the center. It can be undone.")
                 .font(.caption).foregroundStyle(Theme.quiet)
@@ -361,8 +351,8 @@ struct DisplayPopover: View {
                 }
                 .pickerStyle(.segmented)
                 HStack {
-                    Button("Frame Model") { model.engine.frameAll(); model.cameraDidChange() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Frame Model")
-                    Button("Frame Selection") { model.engine.frameSelection(); model.cameraDidChange() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Frame Selection")
+                    Button("Frame Model") { model.engine.frameAll(); model.cameraDidChange() }.pillButton().accessibilityIdentifier("Frame Model")
+                    Button("Frame Selection") { model.engine.frameSelection(); model.cameraDidChange() }.pillButton().accessibilityIdentifier("Frame Selection")
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 6) {
                     ForEach(ViewPreset.allCases, id: \.self) { preset in
@@ -371,7 +361,7 @@ struct DisplayPopover: View {
                             model.engine.cameraChanged()
                             model.cameraDidChange()
                         }
-                        .buttonStyle(PillButtonStyle())
+                        .pillButton()
                     }
                 }
                 Divider()
@@ -385,7 +375,7 @@ struct DisplayPopover: View {
                 ValueSlider(title: "Light height", value: viewport(\.lightElevation), range: -0.5...1.4)
                 ValueSlider(
                     title: "Background",
-                    value: Binding(get: { model.state.viewport.backgroundLevel ?? 0.93 }, set: { model.engine.viewport.backgroundLevel = $0; model.settingChanged() }),
+                    value: Binding(get: { model.state.viewport.backgroundLevel ?? 0.95 }, set: { model.engine.viewport.backgroundLevel = $0; model.settingChanged() }),
                     range: 0.05...1
                 )
                 Divider()
@@ -401,7 +391,7 @@ struct DisplayPopover: View {
                         Text(note).font(.caption).foregroundStyle(Theme.quiet).accessibilityIdentifier("subdivision-note")
                     }
                 }
-                Button("Subdivide Real Geometry") { model.engine.applySubdivision() }.buttonStyle(PillButtonStyle())
+                Button("Subdivide Real Geometry") { model.engine.applySubdivision() }.pillButton()
                 Text("The preview never changes the mesh. This button does, and can be undone.")
                     .font(.caption).foregroundStyle(Theme.quiet)
             }
@@ -479,7 +469,7 @@ struct ExportPopover: View {
             .accessibilityIdentifier("Export Format")
             Text(format == .obj ? "Keeps quads as quads. Loose edges are written too. This is the best choice for Blender." : "Faces are triangulated, as glTF requires. Loose edges aren't included.")
                 .font(.footnote).foregroundStyle(Theme.quiet)
-            Toggle("Include source as a separate object", isOn: $includesSource).font(.footnote).accessibilityIdentifier("Include Source")
+            Toggle("Include source as a separate object", isOn: $includesSource).accessibilityIdentifier("Include Source")
             Text("\(stats.vertices) vertices, \(stats.faces) faces").font(.footnote).foregroundStyle(Theme.quiet)
             Button("Export…") {
                 var options = ExportOptions()
@@ -487,7 +477,7 @@ struct ExportPopover: View {
                 model.export(format: format, options: options, name: name.isEmpty ? model.engine.name : name)
                 isPresented = false
             }
-            .buttonStyle(PillButtonStyle(prominent: true))
+            .pillButton(prominent: true)
             .disabled(stats.faces == 0 && stats.edges == 0 && !includesSource)
             .accessibilityIdentifier("Export Confirm")
         }

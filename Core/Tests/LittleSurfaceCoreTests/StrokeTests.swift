@@ -76,23 +76,96 @@ final class StrokeTests: XCTestCase {
         XCTAssertLessThan(try wobble(1), try wobble(0) * 0.5)
     }
 
-    func testClosureIsOfferedNotForced() throws {
+    func testNearEndsCloseTheLoop() throws {
         let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
         Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 100))
-        let pending = try XCTUnwrap(engine.pendingStroke, "a nearly closed stroke asks rather than deciding")
-        XCTAssertTrue(pending.canClose)
-        XCTAssertEqual(engine.mesh.edgeCount, 0)
-        engine.commitPendingStroke(close: true)
+        XCTAssertNil(engine.pendingStroke, "a loop needs no question")
+        XCTAssertNotNil(engine.reopenablePlans)
         XCTAssertEqual(engine.mesh.vertexCount, engine.mesh.edgeCount, "a closed polyline has as many edges as vertices")
         for v in engine.mesh.aliveVertices { XCTAssertEqual(engine.mesh.edgesOf(v).count, 2) }
         assertValid(engine.mesh)
     }
 
-    func testChoosingNotToCloseStaysOpen() throws {
+    func testAClosedLoopCanBeKeptOpenInOneStep() throws {
         let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
         Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 100))
+        engine.keepLoopOpen()
+        XCTAssertNil(engine.reopenablePlans)
+        XCTAssertEqual(engine.mesh.edgeCount, engine.mesh.vertexCount - 1)
+        assertValid(engine.mesh)
+        engine.undo()
+        XCTAssertEqual(engine.mesh.edgeCount, 0, "keeping it open replaces the loop rather than adding a step")
+    }
+
+    func testTheNextStrokeEndsTheChanceToKeepALoopOpen() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 100))
+        Fixtures.draw(engine, from: Vec2(350, 300), to: Vec2(650, 300))
+        XCTAssertNil(engine.reopenablePlans)
+    }
+
+    func testWithAutoCloseOffTheStrokeAsks() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.closesLoopsAutomatically = false
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 100))
+        let pending = try XCTUnwrap(engine.pendingStroke)
+        XCTAssertTrue(pending.canClose)
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
         engine.commitPendingStroke(close: false)
         XCTAssertEqual(engine.mesh.edgeCount, engine.mesh.vertexCount - 1)
+    }
+
+    func testAStrokeThatRunsPastItsStartLosesTheOvershoot() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.tools.stroke.smoothing = 0
+        let spiral = (0...60).map { i -> Vec2 in
+            let a = Float.pi * 2.35 * Float(i) / 60
+            let r = 100 + Float(i) * 0.12
+            return Vec2(500 + cos(a) * r, 500 + sin(a) * r)
+        }
+        Fixtures.drawPath(engine, spiral)
+        XCTAssertEqual(engine.mesh.edgeCount, engine.mesh.vertexCount, "one clean loop")
+        for v in engine.mesh.aliveVertices { XCTAssertEqual(engine.mesh.edgesOf(v).count, 2, "no tail left over") }
+        assertValid(engine.mesh)
+    }
+
+    func testAWideClosingGapGetsEvenVertices() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.tools.stroke.smoothing = 0
+        let arc = (0...60).map { i -> Vec2 in
+            let a = Float.pi * 1.9 * Float(i) / 60
+            return Vec2(500 + cos(a) * 110, 500 + sin(a) * 110)
+        }
+        Fixtures.drawPath(engine, arc)
+        XCTAssertEqual(engine.mesh.edgeCount, engine.mesh.vertexCount)
+        let lengths = engine.mesh.aliveEdges.map { simd_length(engine.mesh.position(engine.mesh.ends($0).0) - engine.mesh.position(engine.mesh.ends($0).1)) }
+        XCTAssertLessThan(lengths.max()!, engine.tools.stroke.edgeLength * 2, "the closing span isn't one long edge")
+    }
+
+    func testDrawnNearlyClosedStripBecomesARing() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.quadStrip)
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 120))
+        let pending = try XCTUnwrap(engine.pendingStrip)
+        XCTAssertTrue(pending.path.isClosed)
+        XCTAssertNotNil(pending.openPath)
+        engine.commitPendingStrip()
+        XCTAssertGreaterThan(engine.mesh.faceCount, 4)
+        XCTAssertEqual(engine.mesh.vertexCount - engine.mesh.edgeCount + engine.mesh.faceCount, 0, "a ring has an Euler characteristic of zero")
+        assertValid(engine.mesh)
+    }
+
+    func testARingStripCanBeKeptOpen() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.quadStrip)
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 120))
+        engine.keepStripOpen()
+        let pending = try XCTUnwrap(engine.pendingStrip)
+        XCTAssertFalse(pending.path.isClosed)
+        XCTAssertNil(pending.openPath)
+        engine.commitPendingStrip()
+        XCTAssertEqual(engine.mesh.vertexCount - engine.mesh.edgeCount + engine.mesh.faceCount, 1, "an open strip is a disc")
+        assertValid(engine.mesh)
     }
 
     func testOpenStrokeCommitsRealEdges() throws {

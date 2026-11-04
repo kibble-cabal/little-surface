@@ -51,6 +51,14 @@ public struct PendingStrip {
     public var clippedAtCenterline: Bool
     public var plan: TopologyPlan?
     public var error: String?
+    /// The stroke as drawn, when its ends were near enough to make this a ring.
+    public var openPath: ProcessedPath? = nil
+}
+
+/// Quads that would fill between the line just drawn and the one beside it, on offer until the next stroke.
+public struct FillSuggestion {
+    public var chains: [BoundaryChain]
+    public var preview: PatchPlan
 }
 
 public enum FaceCorner: Equatable {
@@ -106,6 +114,13 @@ public final class RetopoEngine {
 
     public private(set) var pendingStroke: PendingStroke?
     public private(set) var pendingStrip: PendingStrip?
+    /// Set when a stroke just closed by itself: the same stroke left open, in case it shouldn't have.
+    public private(set) var reopenablePlans: [StrokePlan]?
+    public private(set) var fillSuggestion: FillSuggestion?
+    /// Strokes whose ends land near each other become loops, or rings for Quad Strip.
+    public var closesLoopsAutomatically = true
+    /// A line drawn next to another offers to fill the space between them with quads.
+    public var suggestsFills = true
     public private(set) var patchChains: [BoundaryChain] = []
     public private(set) var patchPreview: PatchPlan?
     public private(set) var patchError: String?
@@ -326,6 +341,14 @@ public final class RetopoEngine {
     private func settlePending() {
         if pendingStroke != nil { commitPendingStroke(close: false) }
         if pendingStrip != nil { commitPendingStrip() }
+        clearOffers()
+    }
+
+    private func clearOffers() {
+        guard reopenablePlans != nil || fillSuggestion != nil else { return }
+        reopenablePlans = nil
+        fillSuggestion = nil
+        rebuildOverlay()
     }
 
     public func setSelectionMode(_ mode: SelectionMode) {
@@ -397,6 +420,8 @@ public final class RetopoEngine {
 
     private func didEdit() {
         editGeneration &+= 1
+        reopenablePlans = nil
+        fillSuggestion = nil
         refreshPatchChains()
         issueHighlight = nil
         rebuildOverlay()
@@ -432,6 +457,8 @@ public final class RetopoEngine {
     private func cancelTransientState() {
         pendingStroke = nil
         pendingStrip = nil
+        reopenablePlans = nil
+        fillSuggestion = nil
         faceCorners = []
         gesture = .idle
         inkPath = []
@@ -646,7 +673,7 @@ public final class RetopoEngine {
                 return
             }
             if paths[0].canClose {
-                let closed = StrokeProcessor.closed(paths[0], spacing: settings.edgeLength)
+                let closed = StrokeProcessor.closed(paths[0], spacing: settings.edgeLength, projector: projector)
                 let plan = StrokePlanner.plan(path: prepared(closed), mesh: mesh, options: options)
                 apply(plans: [plan], label: "Draw loop", event: .loopClosed)
                 return
@@ -656,15 +683,28 @@ public final class RetopoEngine {
         }
 
         if activeTool == .quadPatch {
+            // A drawn shape is a loop to fill, even if the ends didn't quite meet.
+            if paths.count == 1, paths[0].canClose {
+                let closed = closedPlan(paths[0], options: options)
+                if !closed.plan.isEmpty { plans = [closed] }
+            }
             let result = apply(plans: plans, label: "Draw chain", event: .strokeCommitted)
-            if let result, let first = result.edges.first, let chain = ChainFinder.chain(through: first, in: mesh) {
+            if let result, let chain = drawnChain(result) {
                 addPatchChain(chain)
             }
             return
         }
 
         if paths.count == 1 && paths[0].canClose {
-            pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: true, closedPlan: closedPlan(paths[0], options: options), note: nil)
+            let closed = closedPlan(paths[0], options: options)
+            guard closesLoopsAutomatically, !closed.plan.isEmpty else {
+                pendingStroke = PendingStroke(paths: paths, plans: plans, canClose: true, closedPlan: closed, note: nil)
+                return
+            }
+            if apply(plans: [closed], label: "Draw loop", event: .loopClosed) != nil {
+                reopenablePlans = plans
+                rebuildOverlay()
+            }
             return
         }
         let overFaces = plans.contains(where: \.droppedOverFaces)
@@ -678,11 +718,59 @@ public final class RetopoEngine {
             return
         }
         plans.removeAll { $0.plan.isEmpty }
-        apply(plans: plans, label: "Draw edges", event: .strokeCommitted)
+        offerFill(after: apply(plans: plans, label: "Draw edges", event: .strokeCommitted))
     }
 
     private func closedPlan(_ path: ProcessedPath, options: StrokePlanOptions) -> StrokePlan {
-        StrokePlanner.plan(path: prepared(StrokeProcessor.closed(path, spacing: tools.stroke.edgeLength)), mesh: mesh, options: options)
+        StrokePlanner.plan(path: prepared(StrokeProcessor.closed(path, spacing: tools.stroke.edgeLength, projector: projector)), mesh: mesh, options: options)
+    }
+
+    /// The whole of what a stroke just drew, as one chain when it can be, even where it crossed other
+    /// lines. Otherwise the free run through its first edge.
+    private func drawnChain(_ result: PlanResult) -> BoundaryChain? {
+        if let chain = ChainFinder.chain(from: Set(result.edges), in: mesh), chain.edges.allSatisfy({ mesh.faceCountOf(edge: $0) < 2 }) {
+            return chain
+        }
+        return result.edges.first.flatMap { ChainFinder.chain(through: $0, in: mesh) }
+    }
+
+    /// Undoes the loop a stroke closed into, and adds that stroke as it was drawn.
+    public func keepLoopOpen() {
+        guard let plans = reopenablePlans else { return }
+        undo()
+        clearMessage()
+        apply(plans: plans, label: "Draw edges", event: .strokeCommitted)
+    }
+
+    private func offerFill(after result: PlanResult?) {
+        guard suggestsFills, let result, let chain = drawnChain(result), !chain.isClosed,
+              let other = NeighborChains.neighbor(of: chain, in: mesh, projector: projector, mirror: symmetry.activePlane),
+              let preview = try? QuadPatchBuilder.plan(chains: [other, chain], parameters: tools.patch, mesh: mesh, projector: projector)
+        else { return }
+        fillSuggestion = FillSuggestion(chains: [other, chain], preview: preview)
+        rebuildOverlay()
+    }
+
+    public func commitFillSuggestion() {
+        guard let suggestion = fillSuggestion else { return }
+        fillSuggestion = nil
+        let plan = suggestion.preview.plan
+        let ok = perform("Quad patch") { mesh, selection in
+            _ = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
+            selection.clear()
+        }
+        if ok {
+            if !plan.notes.isEmpty { say(plan.notes.joined(separator: " ")) }
+            onEvent?(.facesGenerated)
+        }
+        rebuildOverlay()
+        notify()
+    }
+
+    public func dismissFillSuggestion() {
+        fillSuggestion = nil
+        rebuildOverlay()
+        notify()
     }
 
     private func strokeOptions(scale: Float) -> StrokePlanOptions {
@@ -762,17 +850,29 @@ public final class RetopoEngine {
 
     // MARK: Quad strip
 
-    private func startStrip(path: ProcessedPath, broken: Bool) {
+    private func startStrip(path: ProcessedPath, broken: Bool, closes: Bool = true) {
         var working = path
+        var openPath: ProcessedPath?
+        if closes, closesLoopsAutomatically, !broken, path.canClose {
+            working = StrokeProcessor.closed(path, spacing: tools.stroke.edgeLength, projector: projector)
+            openPath = path
+        }
         var clipped = false
         if let plane = symmetry.activePlane {
-            let clippedPath = clipToStartSide(path, plane: plane)
-            clipped = clippedPath.points.count != path.points.count
+            let clippedPath = clipToStartSide(working, plane: plane)
+            clipped = clippedPath.points.count != working.points.count
             working = clippedPath
+            if clipped { openPath = nil }
         }
-        pendingStrip = PendingStrip(path: working, clippedAtCenterline: clipped)
+        pendingStrip = PendingStrip(path: working, clippedAtCenterline: clipped, openPath: openPath)
         rebuildStripPlan()
         if broken { say("The stroke crossed a gap in the surface, so this uses its longest part.", kind: .warning) }
+    }
+
+    /// Turns a strip that closed into a ring back into the stroke as drawn.
+    public func keepStripOpen() {
+        guard let open = pendingStrip?.openPath else { return }
+        startStrip(path: open, broken: false, closes: false)
     }
 
     /// Keeps the part of a path before it first crosses the plane, ending exactly on the plane.
@@ -897,6 +997,7 @@ public final class RetopoEngine {
         patchPreview = nil
         patchError = nil
         rebuildOverlay()
+        notify()
     }
 
     public func updatePatchPreview() {
@@ -1870,7 +1971,8 @@ public final class RetopoEngine {
         }
         if let plan = pendingStrip?.plan { addPlan(plan) }
         if let preview = patchPreview { addPlan(preview.plan) }
-        for chain in patchChains {
+        if let suggestion = fillSuggestion { addPlan(suggestion.preview.plan) }
+        for chain in patchChains + (fillSuggestion?.chains ?? []) {
             var lines: [Vec3] = []
             for e in chain.edges where mesh.isEdgeAlive(e) {
                 let (a, b) = mesh.ends(e)

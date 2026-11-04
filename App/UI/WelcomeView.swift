@@ -14,30 +14,33 @@ struct WelcomeView: View {
     private let columns = [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 18)]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            if library.items.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                        ForEach(library.items) { item in
-                            ProjectCard(item: item, stamp: library.thumbnailStamp) {
-                                app.open(item.url)
-                            } onDuplicate: {
-                                library.duplicate(item)
-                            } onDelete: {
-                                pendingDelete = item
+        NavigationStack {
+            Group {
+                if library.items.isEmpty {
+                    emptyState
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                            ForEach(library.items) { item in
+                                ProjectCard(item: item, stamp: library.thumbnailStamp) {
+                                    app.open(item.url)
+                                } onDuplicate: {
+                                    library.duplicate(item)
+                                } onDelete: {
+                                    pendingDelete = item
+                                }
                             }
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
                     }
-                    .padding(.horizontal, 36)
-                    .padding(.vertical, 12)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.page.ignoresSafeArea())
+            .navigationTitle("Little Surface")
+            .toolbar { toolbarButtons }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.page.ignoresSafeArea())
         .onAppear { library.refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { library.refresh() }
@@ -74,38 +77,35 @@ struct WelcomeView: View {
         picksFile = true
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Little Surface").font(.system(size: 30, weight: .semibold, design: .default)).lineLimit(1).fixedSize()
-                Text("Retopology for iPad").font(.subheadline).foregroundStyle(Theme.quiet).lineLimit(1).fixedSize()
-            }
-            Spacer()
+    @ToolbarContentBuilder
+    private var toolbarButtons: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
             Button { app.newProject() } label: { Label("New", systemImage: "plus") }
-                .buttonStyle(PillButtonStyle()).accessibilityIdentifier("New Project")
-            Button { pick(.model) } label: { Label("Import Model", systemImage: "square.and.arrow.down") }
-                .buttonStyle(PillButtonStyle(prominent: true)).accessibilityIdentifier("Import Model")
+                .accessibilityIdentifier("New Project")
             Button { app.newProject(name: "Example", start: .example) } label: { Label("Example", systemImage: "cube") }
-                .buttonStyle(PillButtonStyle()).accessibilityIdentifier("Open Example")
+                .accessibilityIdentifier("Open Example")
             Button { pick(.project) } label: { Label("Open", systemImage: "folder") }
-                .buttonStyle(PillButtonStyle()).accessibilityIdentifier("Open Project")
-            IconButton(symbol: "gearshape", label: "Settings") { showsSettings = true }
+                .accessibilityIdentifier("Open Project")
+            Button { showsSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                .accessibilityIdentifier("Settings")
         }
-        .padding(.horizontal, 36)
-        .padding(.top, 28)
-        .padding(.bottom, 16)
+        ToolbarItem(placement: .topBarTrailing) {
+            let button = Button { pick(.model) } label: { Label("Import Model", systemImage: "square.and.arrow.down") }
+                .accessibilityIdentifier("Import Model")
+            if #available(iOS 26, *) {
+                button.buttonStyle(.glassProminent)
+            } else {
+                button.buttonStyle(.borderedProminent)
+            }
+        }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Image(systemName: "square.grid.3x3").font(.system(size: 34, weight: .light)).foregroundStyle(Theme.quiet)
-            Text("No projects yet").font(.title3)
+        ContentUnavailableView {
+            Label("No Projects Yet", systemImage: "square.grid.3x3")
+        } description: {
             Text("Import an OBJ or GLB model to start drawing topology on it, or try the example.")
-                .multilineTextAlignment(.center).foregroundStyle(Theme.quiet).frame(maxWidth: 380)
-            Spacer()
         }
-        .frame(maxWidth: .infinity)
     }
 }
 
@@ -134,15 +134,15 @@ private struct ProjectCard: View {
                     if let image = ProjectLibrary.shared.thumbnail(for: item.url) {
                         Image(uiImage: image).resizable().aspectRatio(contentMode: .fill)
                     } else {
-                        Rectangle().fill(Color.primary.opacity(0.05))
+                        Rectangle().fill(Color(uiColor: .tertiarySystemGroupedBackground))
                             .overlay(Image(systemName: "cube.transparent").font(.title).foregroundStyle(Theme.quiet))
                     }
                 }
                 .frame(height: 150)
                 .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(item.name).font(.callout.weight(.medium)).lineLimit(1)
+                    Text(item.name).font(.headline).lineLimit(1)
                     HStack(spacing: 4) {
                         if item.isExternal { Image(systemName: "icloud").font(.caption2) }
                         Text(item.modified, format: .relative(presentation: .named)).font(.caption)
@@ -153,9 +153,9 @@ private struct ProjectCard: View {
             }
             .padding(8)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.corner, style: .continuous))
-            .shadow(color: .black.opacity(0.05), radius: 8, y: 2)
         }
         .buttonStyle(.plain)
+        .hoverEffect()
         .accessibilityLabel("Open \(item.name)")
         .accessibilityIdentifier("project-\(item.name)")
         .contextMenu {
@@ -187,6 +187,14 @@ struct SettingsView: View {
                     Text("Gestures")
                 } footer: {
                     Text("Apple Pencil always uses the active tool. Two fingers always pan and pinch. Pencil double-tap needs a second-generation Apple Pencil or newer. With no Pencil, set One finger to Draw.")
+                }
+                Section {
+                    Toggle("Close loops when the ends meet", isOn: $settings.closesLoopsAutomatically)
+                    Toggle("Offer to fill between lines", isOn: $settings.suggestsFills)
+                } header: {
+                    Text("Drawing")
+                } footer: {
+                    Text("A stroke whose ends land near each other becomes a loop, or a ring with Quad Strip, and Keep Open undoes that in one tap. A line drawn beside another offers to fill the space between them with quads.")
                 }
                 Section("Interface") {
                     Picker("Appearance", selection: $settings.appearance) {

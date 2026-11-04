@@ -58,6 +58,14 @@ final class WorkflowUITests: XCTestCase {
         settle()
     }
 
+    private func scrollIntoView(_ element: XCUIElement) {
+        let scroller = app.scrollViews.containing(.switch, identifier: element.identifier).firstMatch
+        for _ in 0..<4 where !element.isHittable {
+            scroller.swipeUp()
+            settle()
+        }
+    }
+
     private func flip(_ toggle: XCUIElement) {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         settle()
@@ -166,14 +174,14 @@ final class WorkflowUITests: XCTestCase {
         button("Display").tap()
         let subdivision = app.switches["Subdivision Preview"]
         XCTAssertTrue(subdivision.waitForExistence(timeout: 5))
-        if !subdivision.isHittable { button("Frame Selection").swipeUp() }
+        scrollIntoView(subdivision)
         flip(subdivision)
         XCTAssertTrue(app.staticTexts["subdivision-note"].waitForExistence(timeout: 10))
         dismissPopover()
         XCTAssertEqual(stats.faces, mirrored.faces)
         shot("subdivision")
         button("Display").tap()
-        if !subdivision.isHittable { button("Frame Selection").swipeUp() }
+        scrollIntoView(subdivision)
         flip(subdivision)
         dismissPopover()
 
@@ -250,6 +258,47 @@ final class WorkflowUITests: XCTestCase {
         tap(410, 480)
         XCTAssertFalse(button("Create Patch").isEnabled, "one line isn't enough to patch")
         XCTAssertEqual(stats.edges, before.edges)
+    }
+
+    func testClearDismissesPickedLines() throws {
+        button("Open Example").tap()
+        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
+        button("tool-quadPatch").tap()
+        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
+        XCTAssertFalse(button("Create Patch").isEnabled, "one line can't be patched yet")
+        XCTAssertTrue(app.staticTexts["decision-note"].label.contains("second line"), "and the note says what's missing")
+        shot("one line picked")
+        button("Clear Patch").tap()
+        settle()
+        XCTAssertFalse(app.buttons["Clear Patch"].exists, "Clear visibly clears")
+        XCTAssertFalse(app.buttons["Create Patch"].exists)
+    }
+
+    func testSideBySideLinesOfferToFill() throws {
+        button("Open Example").tap()
+        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
+        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
+        XCTAssertFalse(app.buttons["Fill with Quads"].exists, "one line has nothing to fill to")
+        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
+        let lines = stats
+        XCTAssertEqual(lines.faces, 0)
+        shot("fill offer")
+
+        // Declining leaves the lines alone.
+        button("Not Now").tap()
+        settle()
+        XCTAssertFalse(app.buttons["Fill with Quads"].exists)
+        XCTAssertEqual(stats.faces, 0)
+
+        // Drawing a third line beside them offers again, and accepting makes real quads.
+        draw(CGPoint(x: 320, y: 690), CGPoint(x: 500, y: 690))
+        let beforeFill = stats
+        button("Fill with Quads").tap()
+        settle()
+        XCTAssertGreaterThan(stats.faces, 10)
+        XCTAssertEqual(stats.faces, stats.quads, "the fill is all quads")
+        shot("filled")
+        assertUndoRestores(beforeFill)
     }
 
     /// Opens the example, draws two lines and makes a patch, which the other tests then work on.
@@ -356,7 +405,7 @@ final class WorkflowUITests: XCTestCase {
         settle()
     }
 
-    func testStripBrushesAndFingerUndo() throws {
+    func testStripAndBrushes() throws {
         let start = openPatchedExample()
 
         // A strip from one stroke, previewed before it's real.
@@ -370,8 +419,9 @@ final class WorkflowUITests: XCTestCase {
         let stripped = stats
         shot("strip")
 
-        // Two fingers tapping undoes the strip in one step.
-        app.otherElements["viewport"].twoFingerTap()
+        // Undo takes the strip back in one step. The two-finger tap has to be checked by hand: under
+        // a NavigationStack, XCTest aims a viewport's twoFingerTap at the toolbar and refuses the window.
+        button("Undo").tap()
         settle()
         XCTAssertEqual(stats.faces, start.faces)
         button("Redo").tap()

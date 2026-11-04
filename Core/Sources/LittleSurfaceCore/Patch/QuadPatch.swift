@@ -276,16 +276,28 @@ public enum QuadPatchBuilder {
             turn[i] = acos(simd_clamp(simd_dot(a, b), -1, 1))
         }
 
-        // Corners at i, i+u, i+half, i+half+u, for sides of u, v, u, v.
+        // Corners at i, i+u, i+half, i+half+u, for sides of u, v, u, v. Real corners win. A smooth
+        // shape has none, and hand wobble mustn't pick them, so there the corners that take in the
+        // most of the shape, nearest to square-cornered, give the straightest rows.
+        func cornerStrength(_ i: Int) -> Float { max(0, turn[i % total] - 0.5) }
+        var perimeter: Float = 0
+        for i in 0..<total { perimeter += simd_length(positions[(i + 1) % total] - positions[i]) }
+        let fullArea = max(perimeter * perimeter / 16, 1e-12)
         let half = total / 2
         var bestScore = -Float.infinity
         var bestStart = 0, bestU = 1
         for start in 0..<half {
             for u in 1..<max(half, 2) {
-                let v = half - u
-                // Prefer near-square sides as a tie-break for smooth loops with no real corners.
-                let balance = 1 - abs(Float(u) - Float(v)) / Float(half)
-                let score = turn[start] + turn[(start + u) % total] + turn[(start + half) % total] + turn[(start + half + u) % total] + balance * 0.35
+                let corners = [start, start + u, start + half, start + half + u]
+                let p = corners.map { positions[$0 % total] }
+                let area = simd_length(simd_cross(p[2] - p[0], p[3] - p[1])) * 0.5 / fullArea
+                var square: Float = 0
+                for k in 0..<4 {
+                    let toNext = GeometryMath.safeNormalize(p[(k + 1) % 4] - p[k])
+                    let toPrevious = GeometryMath.safeNormalize(p[(k + 3) % 4] - p[k])
+                    square += 1 - abs(simd_dot(toNext, toPrevious))
+                }
+                let score = corners.reduce(Float(0)) { $0 + cornerStrength($1) } * 1.5 + area + square * 0.125
                 if score > bestScore {
                     bestScore = score
                     bestStart = start

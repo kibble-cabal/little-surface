@@ -58,16 +58,24 @@ final class AppSettings {
     var showsStatusBar: Bool {
         didSet { defaults.set(showsStatusBar, forKey: "showsStatusBar") }
     }
+    var closesLoopsAutomatically: Bool {
+        didSet { defaults.set(closesLoopsAutomatically, forKey: "closesLoopsAutomatically") }
+    }
+    var suggestsFills: Bool {
+        didSet { defaults.set(suggestsFills, forKey: "suggestsFills") }
+    }
     var hasSeenTutorial: Bool {
         didSet { defaults.set(hasSeenTutorial, forKey: "hasSeenTutorial") }
     }
 
     private init() {
-        defaults.register(defaults: ["twoFingerTapUndoes": true, "orbitInertia": true, "showsStatusBar": true])
+        defaults.register(defaults: ["twoFingerTapUndoes": true, "orbitInertia": true, "showsStatusBar": true, "closesLoopsAutomatically": true, "suggestsFills": true])
         oneFingerAction = OneFingerAction(rawValue: defaults.string(forKey: "oneFingerAction") ?? "") ?? .orbit
         twoFingerTapUndoes = defaults.bool(forKey: "twoFingerTapUndoes")
         pencilDoubleTap = PencilDoubleTapAction(rawValue: defaults.string(forKey: "pencilDoubleTap") ?? "") ?? .eraser
         orbitInertia = defaults.bool(forKey: "orbitInertia")
+        closesLoopsAutomatically = defaults.bool(forKey: "closesLoopsAutomatically")
+        suggestsFills = defaults.bool(forKey: "suggestsFills")
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .light
         showsStatusBar = defaults.bool(forKey: "showsStatusBar")
         hasSeenTutorial = defaults.bool(forKey: "hasSeenTutorial")

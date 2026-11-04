@@ -11,6 +11,7 @@ struct LittleSurfaceApp: App {
         WindowGroup {
             RootView()
                 .environment(app)
+                .tint(Color.accentColor)
                 .preferredColorScheme(settings.appearance == .system ? nil : (settings.appearance == .dark ? .dark : .light))
                 .onOpenURL { app.open(externalURL: $0) }
         }

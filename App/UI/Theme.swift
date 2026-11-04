@@ -1,34 +1,44 @@
 import SwiftUI
 
 enum Theme {
-    static let corner: CGFloat = 14
+    static let corner: CGFloat = 18
     static let touchTarget: CGFloat = 44
 
-    static let page = Color(light: UIColor(red: 0.965, green: 0.955, blue: 0.935, alpha: 1), dark: UIColor(red: 0.11, green: 0.11, blue: 0.115, alpha: 1))
-    static let card = Color(light: UIColor(red: 0.995, green: 0.99, blue: 0.98, alpha: 1), dark: UIColor(red: 0.17, green: 0.17, blue: 0.175, alpha: 1))
+    static let page = Color(uiColor: .systemGroupedBackground)
+    static let card = Color(uiColor: .secondarySystemGroupedBackground)
     // Solid rather than `.secondary`, whose vibrancy vanishes on a material inside a scroll view.
     static let quiet = Color(uiColor: .secondaryLabel)
+    /// Matches how the viewport draws selected elements.
+    static let selection = Color(uiColor: .systemBlue)
 }
 
-extension Color {
-    init(light: UIColor, dark: UIColor) {
-        self.init(UIColor { $0.userInterfaceStyle == .dark ? dark : light })
-    }
-}
-
-/// The soft translucent surface all floating controls sit on.
+/// The surface floating controls sit on: the system's glass where there is one.
 struct PanelBackground: ViewModifier {
     var corner: CGFloat = Theme.corner
     func body(content: Content) -> some View {
-        content
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .shadow(color: .black.opacity(0.07), radius: 10, y: 3)
+        if #available(iOS 26, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+        } else {
+            content
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        }
     }
 }
 
 extension View {
     func panel(corner: CGFloat = Theme.corner) -> some View {
         modifier(PanelBackground(corner: corner))
+    }
+
+    /// A system button in a capsule. Disabled buttons dim on their own.
+    @ViewBuilder
+    func pillButton(prominent: Bool = false) -> some View {
+        if prominent {
+            buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+        } else {
+            buttonStyle(.bordered).buttonBorderShape(.capsule)
+        }
     }
 }
 
@@ -46,10 +56,10 @@ struct IconButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .regular))
                 .frame(width: Theme.touchTarget, height: Theme.touchTarget)
-                .foregroundStyle(isActive ? Color.white : (isEnabled ? Color.primary : Color.secondary.opacity(0.5)))
+                .foregroundStyle(isActive ? Color.white : (isEnabled ? Color.primary : Color(uiColor: .tertiaryLabel)))
                 .background {
                     if isActive {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.accentColor)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.accentColor)
                     }
                 }
                 .contentShape(Rectangle())
@@ -60,24 +70,6 @@ struct IconButton: View {
         .accessibilityLabel(label)
         .accessibilityIdentifier(identifier ?? label)
         .accessibilityAddTraits(isActive ? .isSelected : [])
-    }
-}
-
-struct PillButtonStyle: ButtonStyle {
-    var prominent = false
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout.weight(.medium))
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 14)
-            .frame(minHeight: 38)
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .background(
-                prominent ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.primary.opacity(0.07)),
-                in: Capsule()
-            )
-            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
 
@@ -92,9 +84,9 @@ struct ValueSlider: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(title).font(.footnote)
+                Text(title)
                 Spacer()
-                Text(format(value)).font(.footnote.monospacedDigit()).foregroundStyle(Theme.quiet)
+                Text(format(value)).monospacedDigit().foregroundStyle(Theme.quiet)
             }
             Slider(value: $value, in: range) { editing in
                 if !editing { onEditingEnded?() }
@@ -114,9 +106,9 @@ struct IntStepper: View {
     var body: some View {
         Stepper(value: $value, in: range) {
             HStack {
-                Text(title).font(.footnote)
+                Text(title)
                 Spacer()
-                Text(value == 0 ? (zeroLabel ?? "0") : "\(value)").font(.footnote.monospacedDigit()).foregroundStyle(Theme.quiet)
+                Text(value == 0 ? (zeroLabel ?? "0") : "\(value)").monospacedDigit().foregroundStyle(Theme.quiet)
             }
         }
         .accessibilityLabel(title)

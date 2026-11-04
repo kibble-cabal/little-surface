@@ -24,53 +24,67 @@ struct EditorView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
     @State private var settings = AppSettings.shared
-    @State private var panelCollapsed = false
+    @State private var showsInspector = false
     @State private var importsModel = false
     @State private var sizedPanel = false
 
-    var body: some View {
-        ZStack {
-            if model.renderer != nil {
-                ViewportRepresentable(model: model).ignoresSafeArea()
-            } else {
-                Text("This device can't run the viewport because Metal isn't available.")
-            }
+    private func applyDrawingSettings() {
+        model.engine.closesLoopsAutomatically = settings.closesLoopsAutomatically
+        model.engine.suggestsFills = settings.suggestsFills
+    }
 
-            VStack(spacing: 8) {
-                TopBar(model: model, importsModel: $importsModel)
-                HStack(alignment: .top, spacing: 8) {
-                    ToolBar(model: model)
-                    Spacer(minLength: 0)
-                    VStack(alignment: .trailing, spacing: 8) {
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                if model.renderer != nil {
+                    ViewportRepresentable(model: model).ignoresSafeArea()
+                } else {
+                    Text("This device can't run the viewport because Metal isn't available.")
+                }
+
+                VStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        ToolBar(model: model)
+                        Spacer(minLength: 0)
                         OrientationGizmo(model: model)
-                        ContextPanel(model: model, collapsed: $panelCollapsed)
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    VStack(spacing: 8) {
+                        MessageToast(model: model)
+                        DecisionChips(model: model)
+                        if let step = model.tutorialStep { TutorialCard(model: model, step: step) }
                     }
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
-                VStack(spacing: 8) {
-                    MessageToast(model: model)
-                    DecisionChips(model: model)
-                    if let step = model.tutorialStep { TutorialCard(model: model, step: step) }
-                    if settings.showsStatusBar { StatusBar(model: model) }
+                .padding(10)
+
+                if model.state.sources.isEmpty, model.busy == nil {
+                    EmptyViewportPrompt(model: model, importsModel: $importsModel)
+                }
+                if let busy = model.busy {
+                    BusyBanner(task: busy) { model.cancelBusyTask() }
                 }
             }
-            .padding(10)
-
-            if model.state.sources.isEmpty, model.busy == nil {
-                EmptyViewportPrompt(model: model, importsModel: $importsModel)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if settings.showsStatusBar { StatusBar(model: model) }
             }
-            if let busy = model.busy {
-                BusyBanner(task: busy) { model.cancelBusyTask() }
+            .toolbar { EditorToolbar(model: model, importsModel: $importsModel, showsInspector: $showsInspector) }
+            .navigationBarTitleDisplayMode(.inline)
+            .inspector(isPresented: $showsInspector) {
+                ContextPanel(model: model)
+                    .inspectorColumnWidth(min: 280, ideal: 310, max: 380)
             }
         }
         .background(Theme.page)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
-            // Portrait is narrow enough that the panel starts out of the way.
+            // Portrait is narrow enough that the inspector starts out of the way.
             if !sizedPanel {
                 sizedPanel = true
-                panelCollapsed = width < 1000
+                showsInspector = width >= 1000
             }
         }
+        .onAppear(perform: applyDrawingSettings)
+        .onChange(of: settings.closesLoopsAutomatically) { applyDrawingSettings() }
+        .onChange(of: settings.suggestsFills) { applyDrawingSettings() }
         .fileImporter(isPresented: $importsModel, allowedContentTypes: [.objModel, .glbModel, .gltfModel, .data]) { result in
             switch result {
             case .success(let url): model.importModel(from: url)
@@ -97,18 +111,14 @@ private struct EmptyViewportPrompt: View {
     @Binding var importsModel: Bool
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "cube.transparent").font(.system(size: 32, weight: .light)).foregroundStyle(Theme.quiet)
-            Text("Nothing to draw on yet").font(.headline)
+        ContentUnavailableView {
+            Label("Nothing to Draw On Yet", systemImage: "cube.transparent")
+        } description: {
             Text("Import a model. It stays separate from the topology you draw on it.")
-                .font(.subheadline).foregroundStyle(Theme.quiet).multilineTextAlignment(.center).frame(maxWidth: 320)
-            HStack {
-                Button("Import Model") { importsModel = true }.buttonStyle(PillButtonStyle(prominent: true)).accessibilityIdentifier("Empty Import")
-                Button("Use the Example") { model.importExample() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Use Example")
-            }
+        } actions: {
+            Button("Import Model") { importsModel = true }.pillButton(prominent: true).accessibilityIdentifier("Empty Import")
+            Button("Use the Example") { model.importExample() }.pillButton().accessibilityIdentifier("Use Example")
         }
-        .padding(24)
-        .panel()
     }
 }
 
@@ -121,7 +131,7 @@ private struct BusyBanner: View {
             ProgressView()
             Text(task.title).font(.callout)
             if task.cancellable {
-                Button("Cancel", action: onCancel).buttonStyle(PillButtonStyle())
+                Button("Cancel", action: onCancel).pillButton()
             }
         }
         .padding(.horizontal, 16)
@@ -131,11 +141,12 @@ private struct BusyBanner: View {
     }
 }
 
-// MARK: Top bar
+// MARK: Navigation bar
 
-private struct TopBar: View {
+private struct EditorToolbar: ToolbarContent {
     let model: EditorModel
     @Binding var importsModel: Bool
+    @Binding var showsInspector: Bool
     @Environment(AppModel.self) private var app
     @State private var renames = false
     @State private var draftName = ""
@@ -143,61 +154,71 @@ private struct TopBar: View {
     @State private var showsExport = false
     @State private var showsObjects = false
 
-    var body: some View {
-        let engine = model.state
-        HStack(spacing: 2) {
-            IconButton(symbol: "chevron.left", label: "Projects", identifier: "Projects") {
-                app.closeEditor()
-            }
-            Button {
-                draftName = engine.name
-                renames = true
-            } label: {
-                HStack(spacing: 6) {
-                    Text(engine.name).font(.callout.weight(.medium)).lineLimit(1)
-                    SaveIndicator(state: model.saveState)
-                }
-                .frame(minHeight: Theme.touchTarget)
-                .padding(.horizontal, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Project name, \(engine.name)")
-            .accessibilityHint("Rename")
-            .accessibilityIdentifier("Project Name")
-            .popover(isPresented: $renames) {
-                TextField("Project name", text: $draftName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
-                    .padding()
-                    .onSubmit {
-                        let name = draftName.trimmingCharacters(in: .whitespaces)
-                        if !name.isEmpty {
-                            model.engine.name = name
-                            ProjectLibrary.shared.rename(model.document, to: name)
-                            model.settingChanged()
-                        }
-                        renames = false
-                    }
-            }
-            Spacer(minLength: 8)
-            IconButton(symbol: "square.and.arrow.down", label: "Import", identifier: "Import") { importsModel = true }
-            IconButton(symbol: "square.stack.3d.up", label: "Objects", identifier: "Objects") { showsObjects = true }
-                .popover(isPresented: $showsObjects) { ObjectsPopover(model: model) }
-            IconButton(symbol: "internaldrive", label: "Save", identifier: "Save") { model.save() }
-            IconButton(symbol: "square.and.arrow.up", label: "Export", identifier: "Export") { showsExport = true }
-                .popover(isPresented: $showsExport) { ExportPopover(model: model, isPresented: $showsExport) }
-            Divider().frame(height: 22).padding(.horizontal, 4)
-            IconButton(symbol: "arrow.uturn.backward", label: "Undo", isEnabled: engine.canUndo, identifier: "Undo") { model.undo() }
-            IconButton(symbol: "arrow.uturn.forward", label: "Redo", isEnabled: engine.canRedo, identifier: "Redo") { model.redo() }
-            Divider().frame(height: 22).padding(.horizontal, 4)
-            IconButton(symbol: "eye", label: "Display", identifier: "Display") { showsDisplay = true }
-                .popover(isPresented: $showsDisplay) { DisplayPopover(model: model) }
-            IconButton(symbol: "checkmark.seal", label: "Check Mesh", identifier: "Check Mesh") { model.showsValidation = true }
-            IconButton(symbol: "gearshape", label: "Settings", identifier: "Settings") { model.showsSettings = true }
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button { app.closeEditor() } label: { Label("Projects", systemImage: "chevron.backward") }
+                .accessibilityIdentifier("Projects")
         }
-        .padding(.horizontal, 4)
-        .panel()
+        ToolbarItem(placement: .topBarLeading) { projectName }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button { importsModel = true } label: { Label("Import", systemImage: "square.and.arrow.down") }
+                .accessibilityIdentifier("Import")
+            Button { showsObjects = true } label: { Label("Objects", systemImage: "square.stack.3d.up") }
+                .accessibilityIdentifier("Objects")
+                .popover(isPresented: $showsObjects) { ObjectsPopover(model: model) }
+            Button { model.save() } label: { Label("Save", systemImage: "internaldrive") }
+                .accessibilityIdentifier("Save")
+            Button { showsExport = true } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                .accessibilityIdentifier("Export")
+                .popover(isPresented: $showsExport) { ExportPopover(model: model, isPresented: $showsExport) }
+            Button { model.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                .disabled(!model.state.canUndo)
+                .accessibilityIdentifier("Undo")
+            Button { model.redo() } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
+                .disabled(!model.state.canRedo)
+                .accessibilityIdentifier("Redo")
+            Button { showsDisplay = true } label: { Label("Display", systemImage: "eye") }
+                .accessibilityIdentifier("Display")
+                .popover(isPresented: $showsDisplay) { DisplayPopover(model: model) }
+            Button { model.showsValidation = true } label: { Label("Check Mesh", systemImage: "checkmark.seal") }
+                .accessibilityIdentifier("Check Mesh")
+            Button { model.showsSettings = true } label: { Label("Settings", systemImage: "gearshape") }
+                .accessibilityIdentifier("Settings")
+            Button { showsInspector.toggle() } label: { Label(showsInspector ? "Hide Options" : "Show Options", systemImage: "sidebar.trailing") }
+                .accessibilityIdentifier("Toggle Options")
+        }
+    }
+
+    private var projectName: some View {
+        let name = model.state.name
+        return Button {
+            draftName = name
+            renames = true
+        } label: {
+            HStack(spacing: 6) {
+                Text(name).font(.headline).lineLimit(1)
+                SaveIndicator(state: model.saveState)
+            }
+        }
+        .tint(.primary)
+        .accessibilityLabel("Project name, \(name)")
+        .accessibilityHint("Rename")
+        .accessibilityIdentifier("Project Name")
+        .popover(isPresented: $renames) {
+            TextField("Project name", text: $draftName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 260)
+                .padding()
+                .onSubmit {
+                    let name = draftName.trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty {
+                        model.engine.name = name
+                        ProjectLibrary.shared.rename(model.document, to: name)
+                        model.settingChanged()
+                    }
+                    renames = false
+                }
+        }
     }
 }
 
@@ -370,15 +391,19 @@ private struct StatusBar: View {
             Text(engine.activeTool.hint).lineLimit(1).foregroundStyle(Theme.quiet)
             Spacer(minLength: 8)
             if !engine.selection.isEmpty {
-                Text(selectionText(engine.selection)).foregroundStyle(Color.accentColor)
+                Text(selectionText(engine.selection)).foregroundStyle(Theme.selection)
+                    .lineLimit(1).fixedSize()
                     .accessibilityIdentifier("selection-status")
             }
-            Text(statsText(stats)).monospacedDigit().accessibilityIdentifier("mesh-stats")
+            // The hint gives way first: the counts are what people glance at.
+            Text(statsText(stats)).monospacedDigit().lineLimit(1).fixedSize().accessibilityIdentifier("mesh-stats")
         }
         .font(.caption)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .frame(minHeight: 30)
-        .panel(corner: 10)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     private func selectionText(_ s: Selection) -> String {
@@ -410,7 +435,7 @@ private struct MessageToast: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
                 .frame(maxWidth: 560)
-                .panel(corner: 12)
+                .panel(corner: 16)
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("message")
@@ -434,7 +459,7 @@ private struct MessageToast: View {
         switch kind {
         case .info: return .secondary
         case .success: return .green
-        case .warning: return .orange
+        case .warning: return .yellow
         case .error: return .red
         }
     }
@@ -450,30 +475,42 @@ private struct DecisionChips: View {
             chipRow(note: pending.note ?? (pending.canClose ? "The ends are close together." : nil)) {
                 if pending.canClose, pending.closedPlan != nil {
                     Button("Close Loop") { engine.commitPendingStroke(close: true) }
-                        .buttonStyle(PillButtonStyle(prominent: true)).accessibilityIdentifier("Close Loop")
+                        .pillButton(prominent: true).accessibilityIdentifier("Close Loop")
                 }
                 Button(pending.canClose ? "Keep Open" : "Add Edges") { engine.commitPendingStroke(close: false) }
-                    .buttonStyle(PillButtonStyle(prominent: !pending.canClose)).accessibilityIdentifier("Commit Stroke")
-                Button("Cancel") { engine.cancelPending() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Cancel Stroke")
+                    .pillButton(prominent: !pending.canClose).accessibilityIdentifier("Commit Stroke")
+                Button("Cancel") { engine.cancelPending() }.pillButton().accessibilityIdentifier("Cancel Stroke")
             }
         } else if let strip = engine.pendingStrip {
-            chipRow(note: strip.error ?? (strip.clippedAtCenterline ? "Stopped at the mirror plane." : nil)) {
+            chipRow(note: strip.error ?? (strip.clippedAtCenterline ? "Stopped at the mirror plane." : (strip.openPath != nil ? "The ends meet, so this makes a ring." : nil))) {
                 Button("Create Strip") { engine.commitPendingStrip() }
-                    .buttonStyle(PillButtonStyle(prominent: true)).disabled(strip.plan == nil).accessibilityIdentifier("Create Strip")
-                Button("Cancel") { engine.cancelPending() }.buttonStyle(PillButtonStyle())
+                    .pillButton(prominent: true).disabled(strip.plan == nil).accessibilityIdentifier("Create Strip")
+                if strip.openPath != nil {
+                    Button("Keep Open") { engine.keepStripOpen() }.pillButton().accessibilityIdentifier("Keep Strip Open")
+                }
+                Button("Cancel") { engine.cancelPending() }.pillButton()
             }
         } else if engine.activeTool == .quadPatch, !engine.patchChains.isEmpty {
             chipRow(note: engine.patchError ?? patchNote(engine)) {
                 Button("Create Patch") { engine.commitPatch() }
-                    .buttonStyle(PillButtonStyle(prominent: true)).disabled(engine.patchPreview == nil).accessibilityIdentifier("Create Patch")
-                Button("Clear") { engine.clearPatchPicks() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Clear Patch")
+                    .pillButton(prominent: true).disabled(engine.patchPreview == nil).accessibilityIdentifier("Create Patch")
+                Button("Clear") { engine.clearPatchPicks() }.pillButton().accessibilityIdentifier("Clear Patch")
+            }
+        } else if engine.reopenablePlans != nil {
+            chipRow(note: "Closed into a loop.") {
+                Button("Keep Open") { engine.keepLoopOpen() }.pillButton().accessibilityIdentifier("Keep Open")
+            }
+        } else if let suggestion = engine.fillSuggestion {
+            chipRow(note: "\(suggestion.preview.columns) × \(suggestion.preview.rows) quads would fill between these lines.") {
+                Button("Fill with Quads") { engine.commitFillSuggestion() }.pillButton(prominent: true).accessibilityIdentifier("Fill with Quads")
+                Button("Not Now") { engine.dismissFillSuggestion() }.pillButton().accessibilityIdentifier("Not Now")
             }
         } else if engine.activeTool == .face, !engine.faceCorners.isEmpty {
             chipRow(note: "\(engine.faceCorners.count) corner\(engine.faceCorners.count == 1 ? "" : "s"). Tap more, or finish.") {
                 Button("Create Face") { engine.commitFaceBuilder() }
-                    .buttonStyle(PillButtonStyle(prominent: true)).disabled(engine.faceCorners.count < 3).accessibilityIdentifier("Create Face")
-                Button("Undo Corner") { engine.undoFaceCorner() }.buttonStyle(PillButtonStyle())
-                Button("Cancel") { engine.cancelFaceBuilder() }.buttonStyle(PillButtonStyle())
+                    .pillButton(prominent: true).disabled(engine.faceCorners.count < 3).accessibilityIdentifier("Create Face")
+                Button("Undo Corner") { engine.undoFaceCorner() }.pillButton()
+                Button("Cancel") { engine.cancelFaceBuilder() }.pillButton()
             }
         }
     }
@@ -484,20 +521,20 @@ private struct DecisionChips: View {
             if p.boundarySplits > 0 { text += ", splitting \(p.boundarySplits) boundary edge\(p.boundarySplits == 1 ? "" : "s")" }
             return text + "."
         }
-        return "\(engine.patchChains.count) line picked. Pick another."
+        return "One line picked. Draw or tap a second line, or draw a closed shape."
     }
 
     @ViewBuilder
     private func chipRow<Buttons: View>(note: String?, @ViewBuilder buttons: () -> Buttons) -> some View {
         HStack(spacing: 8) {
             if let note {
-                Text(note).font(.footnote).foregroundStyle(Theme.quiet).padding(.leading, 6).frame(maxWidth: 420, alignment: .leading)
+                Text(note).font(.subheadline).foregroundStyle(Theme.quiet).padding(.leading, 8).frame(maxWidth: 420, alignment: .leading)
                     .accessibilityIdentifier("decision-note")
             }
             buttons()
         }
-        .padding(7)
-        .panel(corner: 26)
+        .padding(8)
+        .panel(corner: 28)
     }
 }
 
@@ -512,11 +549,11 @@ private struct TutorialCard: View {
                 Text(step.detail).font(.footnote).foregroundStyle(Theme.quiet)
             }
             Spacer(minLength: 4)
-            Button("Skip") { model.endTutorial() }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Skip Tutorial")
+            Button("Skip") { model.endTutorial() }.pillButton().accessibilityIdentifier("Skip Tutorial")
             if step.next != nil {
-                Button("Next") { model.tutorialStep = step.next }.buttonStyle(PillButtonStyle()).accessibilityIdentifier("Next Tutorial")
+                Button("Next") { model.tutorialStep = step.next }.pillButton().accessibilityIdentifier("Next Tutorial")
             } else {
-                Button("Done") { model.endTutorial() }.buttonStyle(PillButtonStyle(prominent: true))
+                Button("Done") { model.endTutorial() }.pillButton(prominent: true)
             }
         }
         .padding(12)

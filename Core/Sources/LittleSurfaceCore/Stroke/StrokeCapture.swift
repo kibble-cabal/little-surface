@@ -135,7 +135,7 @@ public struct StrokeSettings: Equatable, Codable {
     public var smoothing: Float = 0.4
     /// How close to existing topology endpoints snap, in screen points.
     public var snapRadiusPoints: Float = 22
-    /// How close stroke ends must be to offer closing the loop, in screen points.
+    /// How close stroke ends must be to close the loop, in screen points. Long strokes get more leeway.
     public var closeRadiusPoints: Float = 44
 
     public init() {}
@@ -147,14 +147,18 @@ public struct ProcessedPath: Equatable {
     public var length: Float
     /// World distance between the two ends.
     public var endGap: Float
-    /// The ends are close enough to offer closing. Nothing closes without being asked to.
+    /// The ends come close enough for this to read as a loop.
     public var canClose: Bool
     public var isClosed: Bool = false
+    /// Where a loop closes: the pair of points, near the two ends, that come closest. A stroke that
+    /// runs past its own start loses the overshoot.
+    public var closeFrom: Int = 0
+    public var closeTo: Int? = nil
 }
 
 public enum StrokeProcessor {
     /// Smooths and resamples one run onto the surface.
-    /// `closeRadius` is the world distance within which closing the path is offered.
+    /// `closeRadius` is the world distance within which the path reads as a loop.
     public static func process(run: [StrokePoint], settings: StrokeSettings, projector: SurfaceProjector, closeRadius: Float) -> ProcessedPath? {
         guard run.count >= 2 else { return nil }
         let spacing = max(settings.edgeLength, 1e-5)
@@ -185,18 +189,58 @@ public enum StrokeProcessor {
             }
         }
         let gap = simd_length(out[0].position - out[out.count - 1].position)
-        let canClose = out.count >= 4 && gap <= closeRadius && length > gap * 2.5
-        return ProcessedPath(points: out, length: polylineLength(out), endGap: gap, canClose: canClose)
+        let total = polylineLength(out)
+        var closeFrom = 0, closeTo = out.count - 1, closeGap = gap
+        let reach = min(out.count / 4, 60)
+        if reach > 0 {
+            for i in 0..<reach {
+                for j in (out.count - reach)..<out.count where j - i >= 3 {
+                    let d = simd_length(out[i].position - out[j].position)
+                    if d < closeGap {
+                        closeGap = d
+                        closeFrom = i
+                        closeTo = j
+                    }
+                }
+            }
+        }
+        let radius = closeRadius > 0 ? max(closeRadius, min(total * 0.12, closeRadius * 2)) : 0
+        let canClose = out.count >= 4 && closeTo - closeFrom >= 3 && closeGap <= radius && total > closeGap * 2.5
+        return ProcessedPath(points: out, length: total, endGap: gap, canClose: canClose, closeFrom: closeFrom, closeTo: closeTo)
     }
 
-    /// Closes a path: the last point is dropped when it nearly coincides with the first, so the two
-    /// ends don't create a tiny edge.
-    public static func closed(_ path: ProcessedPath, spacing: Float) -> ProcessedPath {
+    /// Closes a path where its ends come nearest. The last point is dropped when it nearly coincides
+    /// with the first, so the two ends don't create a tiny edge, and a wider gap gets vertices of its
+    /// own, so the closing edge doesn't stand out.
+    public static func closed(_ path: ProcessedPath, spacing: Float, projector: SurfaceProjector? = nil) -> ProcessedPath {
         var out = path
         out.isClosed = true
-        if path.endGap < spacing * 0.5 && out.points.count > 3 {
-            out.points.removeLast()
+        var points = Array(path.points[path.closeFrom...(path.closeTo ?? path.points.count - 1)])
+        guard let first = points.first, let last = points.last else { return out }
+        let gap = simd_length(first.position - last.position)
+        if gap < spacing * 0.5 && points.count > 3 {
+            points.removeLast()
+        } else {
+            let extra = Int((gap / max(spacing, 1e-5)).rounded()) - 1
+            if extra > 0 {
+                for k in 1...extra {
+                    var p = last
+                    let t = Float(k) / Float(extra + 1)
+                    p.position = simd_mix(last.position, first.position, Vec3(repeating: t))
+                    p.normal = GeometryMath.safeNormalize(simd_mix(last.normal, first.normal, Vec3(repeating: t)), fallback: last.normal)
+                    if let hit = projector?.closest(to: p.position, normalHint: p.normal, maxDistance: max(gap, spacing * 3)) {
+                        p.position = hit.position
+                        p.normal = hit.normal
+                    }
+                    points.append(p)
+                }
+            }
         }
+        out.points = points
+        out.closeFrom = 0
+        out.closeTo = nil
+        out.length = polylineLength(points) + simd_length(points[points.count - 1].position - points[0].position)
+        out.endGap = 0
         return out
     }
 

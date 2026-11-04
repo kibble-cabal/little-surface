@@ -35,8 +35,8 @@ xcrun simctl launch --terminate-running-process booted com.audreyserene.littlesu
 ## Using it
 
 1. On the welcome screen, tap **Example** for the bundled model, or **Import Model** for your own OBJ, GLB or glTF file.
-2. With **Draw Edges**, draw two lines on the surface.
-3. With **Quad Patch**, tap both lines, check the preview, and tap **Create Patch**.
+2. With **Draw Edges**, draw two lines side by side on the surface, then tap **Fill with Quads** when it's offered. For more control, use **Quad Patch**: draw a closed shape, or tap two lines, check the preview, and tap **Create Patch**.
+3. Draw a stroke whose ends land near each other to make a loop, or a ring with **Quad Strip**. **Keep Open** undoes that in one tap, and Settings can turn it off.
 4. With **Select**, tap or lasso to select, and drag a selected element to move it. The panel on the right holds the topology operations.
 5. Tap **Export** to send an OBJ (quads) or GLB (triangulated) to Blender, with or without the source model.
 
@@ -52,7 +52,7 @@ There are two layers, and the geometry layer knows nothing about UIKit, SwiftUI 
 | --- | --- |
 | `Mesh`, `Topology` | The editable mesh, its connectivity, and the plans that change it |
 | `Spatial`, `Source` | Imported source objects and their BVHs for ray casting and surface projection |
-| `Stroke`, `Patch` | Turning strokes into edges, loops and strips, and bridging chains with quads |
+| `Stroke`, `Patch` | Turning strokes into edges, loops and strips, bridging chains with quads, and spotting side-by-side lines worth filling |
 | `Editing`, `Selection`, `Brush`, `Symmetry` | Mesh operations, picking, brushes and mirroring |
 | `Subdivision`, `Validation` | Catmull-Clark preview and mesh checks |
 | `History` | Undo snapshots with a memory budget |
@@ -66,10 +66,10 @@ Tools describe what they want as a `TopologyPlan`, which a previewer can draw an
 | Folder | What it does |
 | --- | --- |
 | `Input` | `ViewportView` separates Pencil from fingers and handles navigation, palm rejection and hover |
-| `Renderer` | `ViewportRenderer` and the Metal shaders |
+| `Renderer` | `ViewportRenderer` and the Metal shaders. Faces are pulled slightly toward the eye so they sit on the model, and tint it where they still dip under |
 | `Editor` | `EditorModel` connects the engine to SwiftUI and runs imports and previews off the main thread |
 | `Document` | `ProjectDocument` (a `UIDocument`, for autosave and safe writing) and `ProjectLibrary` (recents and thumbnails) |
-| `UI` | SwiftUI views: welcome, editor, tool panels and theme |
+| `UI` | SwiftUI views: welcome, editor, tool panels and theme. System navigation, inspector and forms with an emerald accent, using Liquid Glass on iPadOS 26 and materials on iPadOS 18 |
 
 ## Tests
 
@@ -101,9 +101,9 @@ All of this ran on an M1 Max Mac using an iPad (A16) simulator on iOS 26.3. A fr
 
 | Suite | Result |
 | --- | --- |
-| Core tests (`swift test`, with third-party samples) | 190 passed, 0 failed; the timing test is skipped by default |
+| Core tests (`swift test`, with third-party samples) | 206 run: 205 passed, 0 failed, and the timing test skipped by default |
 | App tests (document save and reopen, damaged file, bundled example, shaders compile) | 5 of 5 passed |
-| UI tests in the running app | 6 of 6 passed |
+| UI tests in the running app | 8 of 8 passed |
 
 The timing test was run separately, with the results under [Large models](#large-models).
 
@@ -134,8 +134,8 @@ These files came from that UI test and were checked by `tools/verify_app_exports
 
 - **Editing:** Subdivide, Relax, Reverse, Fix Normals, Loop, Ring, Connected, Boundary, Extrude, Split, Delete, Fill, Dissolve, and each one's undo. Operations with nothing selected do nothing.
 - **Mesh checks:** the Check Mesh report.
-- **Tools:** Quad Strip with preview; Move, Relax and Erase brushes; lasso selection; a refused patch that explains why and leaves the mesh unchanged; closing a drawn loop through the prompt (Close Loop, Keep Open, Cancel).
-- **Viewing:** Wireframe, X-ray and Solid; hiding the source and the topology; two-finger tap to undo; dark mode in landscape.
+- **Tools:** Quad Strip with preview; Move, Relax and Erase brushes; lasso selection; a one-line patch that explains what's missing and leaves the mesh unchanged; Clear; filling between side-by-side lines (16 × 8 quads). By hand, with touch: an oval drawn with Quad Patch, which made a 9 × 9 grid of 81 quads, and a nearly closed stroke made into a Quad Strip ring.
+- **Viewing:** Wireframe, X-ray and Solid; hiding the source and the topology; dark mode in landscape; by hand, two-finger tap to undo.
 - **Files:** the system file picker; a damaged GLB giving a clear error; a second model added to a project; a project killed as soon as its import was saved reopened with the model; a project killed after editing reopened with its mesh and selection.
 
 ### Large models
@@ -168,6 +168,9 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 - iCloud Drive, and Save to Files from the share sheet. Export was tested up to the share sheet, and the files were read from the app's temporary folder.
 - Nearly all of the testing was in portrait, the simulator's default. Only the dark mode UI test ran in landscape, even though the layout is designed landscape first.
 - Slide, Weld, Connect, Flip, and merging or applying symmetry at the centerline are covered by core tests only, not UI tests.
+- Two-finger undo has no UI test, because XCTest can't aim a two-finger tap at the viewport under a navigation stack. It was checked by hand with simulated touches.
+- Closing a stroke into a loop and the fill offer have only been drawn with touch, so how forgiving they feel with a Pencil is unknown.
+- The app has only run on iPadOS 26.3. The iPadOS 18 fallback for Liquid Glass compiles but has never been run.
 
 **Files**
 
@@ -179,5 +182,8 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 **Behaviour**
 
 - A failed import started from the welcome screen leaves an empty project with that name.
+- A stroke that runs off the model breaks into separate pieces and doesn't close, even if its ends meet.
+- The fill offer only looks at open lines, so a line drawn beside a closed loop or a finished patch's outer edge gets no offer.
+- In portrait, the inspector covers the right of the viewport rather than moving the model aside.
 - The self-intersection check is approximate.
 - The mesh checks report facts and never declare a mesh animation-ready. That judgement stays with you.
