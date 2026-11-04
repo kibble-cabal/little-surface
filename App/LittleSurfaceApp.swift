@@ -110,10 +110,24 @@ final class AppModel {
         }
     }
 
-    func closeEditor(then action: (() -> Void)? = nil) {
+    /// Set when a project wouldn't save as it closed, until the person decides what to do about it.
+    var unsavedClose: UnsavedClose?
+
+    struct UnsavedClose {
+        var reason: String
+        var then: (() -> Void)?
+    }
+
+    func closeEditor(discardingChanges: Bool = false, then action: (() -> Void)? = nil) {
         guard let editor else { return }
-        editor.close { [weak self] in
+        editor.close(discardingChanges: discardingChanges) { [weak self] closed in
             guard let self else { return }
+            guard closed else {
+                var reason = "The project couldn't be saved."
+                if case .failed(let detail) = editor.saveState { reason = detail }
+                self.unsavedClose = UnsavedClose(reason: reason, then: action)
+                return
+            }
             self.editor = nil
             self.scopedURL?.stopAccessingSecurityScopedResource()
             self.scopedURL = nil
@@ -135,6 +149,16 @@ struct RootView: View {
             } else {
                 WelcomeView()
             }
+        }
+        .alert("This project couldn't be saved", isPresented: Binding(get: { app.unsavedClose != nil }, set: { if !$0 { app.unsavedClose = nil } })) {
+            Button("Keep Editing", role: .cancel) {}
+            Button("Close Without Saving", role: .destructive) {
+                let action = app.unsavedClose?.then
+                app.unsavedClose = nil
+                app.closeEditor(discardingChanges: true, then: action)
+            }
+        } message: {
+            Text("\(app.unsavedClose?.reason ?? "") Closing now loses your changes since the last save.")
         }
         .alert("Couldn't do that", isPresented: Binding(get: { app.alert != nil }, set: { if !$0 { app.alert = nil } })) {
             Button("OK", role: .cancel) {}

@@ -195,7 +195,7 @@ public final class RetopoEngine {
         return stats
     }
 
-    public var canUndo: Bool { history.canUndo }
+    public var canUndo: Bool { history.canUndo || pendingStroke != nil || pendingStrip != nil || !faceCorners.isEmpty }
     public var canRedo: Bool { history.canRedo }
     public var hasSurface: Bool { !(projector?.isEmpty ?? true) }
     private var activeProjector: SurfaceProjector? { tools.surfaceSnapping ? projector : nil }
@@ -408,12 +408,21 @@ public final class RetopoEngine {
     }
 
     private func commit(label: String, mesh nextMesh: Mesh, selection nextSelection: Selection) {
-        history.record(before: EditSnapshot(mesh: mesh, selection: selection), label: label)
+        let before = currentSnapshot
         var finalMesh = nextMesh
         if let plane = symmetry.activePlane { repairPairs(&finalMesh, plane: plane) }
         mesh = finalMesh
         selection = nextSelection
         selection.prune(in: mesh)
+        recordEdit(before: before, label: label)
+    }
+
+    private var currentSnapshot: EditSnapshot { EditSnapshot(mesh: mesh, selection: selection) }
+
+    /// Every committed change to the mesh passes through here, whichever tool made it, so undo and
+    /// everything that follows an edit treat them all alike. `before` is the state the edit started from.
+    private func recordEdit(before: EditSnapshot, label: String) {
+        history.record(before: before, label: label)
         didEdit()
     }
 
@@ -433,27 +442,68 @@ public final class RetopoEngine {
     }
 
     public func undo() {
+        // Undo takes back what's still in progress before it touches anything already committed, so a
+        // stray tap never costs an earlier edit as well.
+        if undoUncommittedWork() { return }
         cancelTransientState()
-        guard let snapshot = history.undo(current: EditSnapshot(mesh: mesh, selection: selection)) else { return }
+        guard let snapshot = history.undo(current: currentSnapshot) else { return }
         restore(snapshot)
         say("Undid \(history.redoLabel ?? "edit")")
     }
 
     public func redo() {
+        if isMidGesture { pencilCancelled() }
         cancelTransientState()
-        guard let snapshot = history.redo(current: EditSnapshot(mesh: mesh, selection: selection)) else { return }
+        guard let snapshot = history.redo(current: currentSnapshot) else { return }
         restore(snapshot)
         say("Redid \(history.undoLabel ?? "edit")")
     }
 
+    /// Throws away one piece of unfinished work. Returns false when there was none.
+    private func undoUncommittedWork() -> Bool {
+        if isMidGesture {
+            pencilCancelled()
+            say("Cancelled that stroke")
+            return true
+        }
+        if pendingStroke != nil || pendingStrip != nil {
+            cancelPending()
+            return true
+        }
+        if !faceCorners.isEmpty {
+            undoFaceCorner()
+            return true
+        }
+        return false
+    }
+
+    private var isMidGesture: Bool {
+        switch gesture {
+        case .idle, .tapOnly: return false
+        default: return true
+        }
+    }
+
     private func restore(_ snapshot: EditSnapshot) {
+        install(snapshot)
+        // Symmetry may have been turned on since this state was recorded, and it wouldn't have partners.
+        if let plane = symmetry.activePlane { repairPairs(&mesh, plane: plane) }
+        didEdit()
+    }
+
+    /// Puts a recorded state back without counting it as an edit.
+    private func install(_ snapshot: EditSnapshot) {
         mesh = snapshot.mesh
         // Versions must move forward even when restoring older content, or the renderer keeps stale buffers.
         mesh.positionVersion = max(mesh.positionVersion, snapshotVersionFloor.0) &+ 1
         mesh.topologyVersion = max(mesh.topologyVersion, snapshotVersionFloor.1) &+ 1
         snapshotVersionFloor = (mesh.positionVersion, mesh.topologyVersion)
         selection = snapshot.selection
-        didEdit()
+    }
+
+    /// Gives memory back when the system asks, by forgetting the oldest undo steps first.
+    public func releaseUndoMemory() {
+        history.shrink(toFractionOfBudget: 0.25)
     }
 
     private var snapshotVersionFloor: (UInt64, UInt64) = (0, 0)
@@ -559,14 +609,15 @@ public final class RetopoEngine {
             finishLasso(points, tapPoint: screen)
         case .brush(let before, _, let label):
             brushCursor = nil
-            history.record(before: before, label: label)
-            didEdit()
-            if label == "Move brush" { onEvent?(.vertexMoved) }
+            // A stroke that reached nothing isn't worth an undo step that appears to do nothing.
+            if mesh.positionVersion != before.mesh.positionVersion {
+                recordEdit(before: before, label: label)
+                if label == "Move brush" { onEvent?(.vertexMoved) }
+            }
         case .erase(let before, let changed):
             brushCursor = nil
             if changed {
-                history.record(before: before, label: "Erase")
-                didEdit()
+                recordEdit(before: before, label: "Erase")
             }
         }
         rebuildOverlay()
@@ -576,16 +627,9 @@ public final class RetopoEngine {
     public func pencilCancelled() {
         switch gesture {
         case .brush(let before, _, _), .erase(let before, _):
-            mesh = before.mesh
-            selection = before.selection
-            mesh.positionVersion = max(mesh.positionVersion, snapshotVersionFloor.0) &+ 1
-            mesh.topologyVersion = max(mesh.topologyVersion, snapshotVersionFloor.1) &+ 1
+            install(before)
         case .select(let drag):
-            if drag.moved {
-                var restored = mesh
-                restored.setPositions(drag.basePositions.map { ($0.key, $0.value) })
-                mesh = restored
-            }
+            if drag.moved { install(drag.before) }
         default:
             break
         }
@@ -1367,10 +1411,7 @@ public final class RetopoEngine {
 
     private func finishSelectDrag(_ drag: SelectDrag, at screen: Vec2) {
         if drag.moved {
-            history.record(before: drag.before, label: dragBehavior == .slide ? "Slide" : "Move")
-            editGeneration &+= 1
-            refreshPatchChains()
-            rebuildOverlay()
+            recordEdit(before: drag.before, label: dragBehavior == .slide ? "Slide" : "Move")
             onEvent?(.vertexMoved)
             return
         }

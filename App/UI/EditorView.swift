@@ -101,7 +101,7 @@ struct EditorView: View {
             ShareSheet(url: file.url).ignoresSafeArea()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background || phase == .inactive, model.saveState == .unsaved { model.save() }
+            if phase == .background || phase == .inactive { model.saveForBackground() }
         }
     }
 }

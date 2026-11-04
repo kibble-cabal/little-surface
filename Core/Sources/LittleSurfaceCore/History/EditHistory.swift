@@ -69,10 +69,17 @@ public struct EditHistory {
         redoStack.removeAll()
     }
 
-    private mutating func trim() {
+    /// Forgets the oldest undo steps until what's left fits a fraction of the budget.
+    public mutating func shrink(toFractionOfBudget fraction: Double) {
+        trim(to: Int(Double(byteBudget) * fraction))
+    }
+
+    private mutating func trim() { trim(to: byteBudget) }
+
+    private mutating func trim(to budget: Int) {
         while undoStack.count > maxEntries { undoStack.removeFirst() }
         var used = usedBytes
-        while used > byteBudget && undoStack.count > 1 {
+        while used > budget && undoStack.count > 1 {
             used -= undoStack.removeFirst().uniqueBytes
         }
     }

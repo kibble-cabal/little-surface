@@ -39,6 +39,102 @@ final class DocumentTests: XCTestCase {
         wait(for: [closed], timeout: 10)
     }
 
+    private func openEditor(in folder: URL) throws -> EditorModel {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("Project.littlesurface")
+        let snapshot = ProjectSnapshot(name: "Autosave")
+        let document = ProjectDocument(fileURL: url)
+        document.snapshotProvider = { snapshot }
+        let created = expectation(description: "created")
+        document.save(to: url, for: .forCreating) { ok in
+            XCTAssertTrue(ok)
+            created.fulfill()
+        }
+        wait(for: [created], timeout: 10)
+        return EditorModel(document: document, snapshot: snapshot)
+    }
+
+    private func waitForSaveState(_ model: EditorModel, _ matches: @escaping (EditorModel.SaveState) -> Bool, timeout: TimeInterval) {
+        let reached = expectation(description: "save state")
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            if matches(model.saveState) {
+                timer.invalidate()
+                reached.fulfill()
+            }
+        }
+        wait(for: [reached], timeout: timeout)
+        timer.invalidate()
+    }
+
+    func testAnEditReachesTheFileWithinSeconds() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = try openEditor(in: folder)
+        model.engine.perform("Add") { mesh, _ in _ = mesh.addVertex(.zero) }
+        XCTAssertEqual(model.saveState, .unsaved)
+        waitForSaveState(model, { $0 == .saved }, timeout: 8)
+        let onDisk = try ProjectCodec.decode(Data(contentsOf: model.document.fileURL))
+        XCTAssertEqual(onDisk.mesh.vertexCount, 1, "nothing but the autosave wrote this")
+        let closed = expectation(description: "closed")
+        model.close { ok in
+            XCTAssertTrue(ok)
+            closed.fulfill()
+        }
+        wait(for: [closed], timeout: 10)
+    }
+
+    func testAnEditMadeDuringASaveIsNotCountedAsSaved() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let model = try openEditor(in: folder)
+        let first = expectation(description: "first save")
+        model.engine.perform("Add") { mesh, _ in _ = mesh.addVertex(.zero) }
+        model.save { _ in first.fulfill() }
+        // Made after that save took its copy.
+        model.engine.perform("Add") { mesh, _ in _ = mesh.addVertex(Vec3(1, 0, 0)) }
+        wait(for: [first], timeout: 10)
+        XCTAssertNotEqual(model.saveState, .saved)
+        waitForSaveState(model, { $0 == .saved }, timeout: 8)
+        let onDisk = try ProjectCodec.decode(Data(contentsOf: model.document.fileURL))
+        XCTAssertEqual(onDisk.mesh.vertexCount, 2)
+    }
+
+    func testAFailedSaveIsReportedKeepsTheProjectOpenAndRecovers() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let manager = FileManager.default
+        defer {
+            try? manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            try? manager.removeItem(at: folder)
+        }
+        let model = try openEditor(in: folder)
+        let url = model.document.fileURL
+        let lastGood = try Data(contentsOf: url)
+        // Nothing can be written here now, the way a full or revoked location behaves.
+        try manager.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
+        try manager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+
+        model.engine.perform("Add") { mesh, _ in _ = mesh.addVertex(.zero) }
+        let refused = expectation(description: "close refused")
+        model.close { ok in
+            XCTAssertFalse(ok, "closing must not pretend this was saved")
+            refused.fulfill()
+        }
+        wait(for: [refused], timeout: 10)
+        guard case .failed = model.saveState else { return XCTFail("expected a failed state, got \(model.saveState)") }
+        XCTAssertEqual(try Data(contentsOf: url), lastGood, "the last good copy is untouched")
+        XCTAssertEqual(model.engine.mesh.vertexCount, 1, "the work is still in memory")
+
+        try manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        let retried = expectation(description: "saved")
+        model.save { ok in
+            XCTAssertTrue(ok)
+            retried.fulfill()
+        }
+        wait(for: [retried], timeout: 10)
+        XCTAssertEqual(try ProjectCodec.decode(Data(contentsOf: url)).mesh.vertexCount, 1)
+    }
+
     func testDamagedFileFailsToOpen() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).littlesurface")
         try Data("not a project".utf8).write(to: url)

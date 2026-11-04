@@ -29,6 +29,11 @@ final class EditorModel {
     var isValidating = false
     var subdivisionNote: String?
     var saveState = SaveState.saved
+    @ObservationIgnored private var changeCount: UInt64 = 0
+    @ObservationIgnored private var autosaveTimer: Timer?
+    @ObservationIgnored private var isWriting = false
+    @ObservationIgnored private var pendingSaves: [((Bool) -> Void)?] = []
+    @ObservationIgnored private var memoryObserver: NSObjectProtocol?
     var showsValidation = false
     var showsSettings = false
     var tutorialStep: TutorialStep?
@@ -68,6 +73,9 @@ final class EditorModel {
         engine.onEvent = { [weak self] event in self?.handle(event) }
         rebuildSurface(for: snapshot.sources)
         refreshSubdivisionPreview()
+        memoryObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.engine.releaseUndoMemory()
+        }
     }
 
     func attach(viewport: ViewportView) {
@@ -120,15 +128,13 @@ final class EditorModel {
 
     private func documentChanged() {
         report = nil
-        saveState = .unsaved
-        document.updateChangeCount(.done)
+        markUnsaved()
         if gestureDepth == 0 { refreshSubdivisionPreview() }
     }
 
     /// For settings that the engine lets panels set directly.
     func settingChanged() {
-        document.updateChangeCount(.done)
-        saveState = .unsaved
+        markUnsaved()
         viewport?.setNeedsDisplay()
         scheduleUpdate()
     }
@@ -299,33 +305,117 @@ final class EditorModel {
 
     // MARK: Saving
 
-    func save(completion: ((Bool) -> Void)? = nil) {
+    /// Seconds without a change before saving, and before trying again after a failure.
+    private static let autosaveDelay: TimeInterval = 2
+    private static let retryDelay: TimeInterval = 15
+
+    private func markUnsaved() {
+        changeCount &+= 1
+        saveState = .unsaved
+        document.updateChangeCount(.done)
+        scheduleAutosave(after: Self.autosaveDelay)
+    }
+
+    private func scheduleAutosave(after delay: TimeInterval) {
+        autosaveTimer?.invalidate()
+        autosaveTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.autosave()
+        }
+    }
+
+    private func autosave() {
+        // Writing can wait for a stroke to finish. Copying the state for it would be felt mid-stroke.
+        if gestureDepth > 0 {
+            scheduleAutosave(after: Self.autosaveDelay)
+            return
+        }
+        save(storesThumbnail: false)
+    }
+
+    /// Saves what's there now. A save already running is left to finish, then followed by this one, so
+    /// the last save always holds the latest state. Reports whether the file on disk is up to date.
+    func save(storesThumbnail: Bool = true, completion: ((Bool) -> Void)? = nil) {
         guard document.documentState.contains(.closed) == false else {
             completion?(false)
             return
         }
+        autosaveTimer?.invalidate()
+        if isWriting {
+            pendingSaves.append(completion)
+            return
+        }
+        isWriting = true
         saveState = .saving
+        let countAtStart = changeCount
         document.updateChangeCount(.done)
         document.save(to: document.fileURL, for: .forOverwriting) { [weak self] ok in
             guard let self else { return }
+            self.isWriting = false
             if ok {
-                self.saveState = .saved
-                self.storeThumbnail()
+                // Anything changed while the save ran isn't in the file yet.
+                let isCurrent = self.changeCount == countAtStart
+                self.saveState = isCurrent ? .saved : .unsaved
+                if storesThumbnail { self.storeThumbnail() }
+                if !isCurrent { self.scheduleAutosave(after: Self.autosaveDelay) }
             } else {
-                self.saveState = .failed(self.document.lastSaveError?.localizedDescription ?? "The project couldn't be saved.")
-                self.engine.say("Couldn't save. \(self.document.lastSaveError?.localizedDescription ?? "")", kind: .error)
+                let reason = self.document.lastSaveError?.localizedDescription ?? "The project couldn't be saved."
+                // One message per run of failures, while it keeps trying in the background.
+                if case .failed = self.saveState {} else { self.engine.say("Couldn't save. \(reason)", kind: .error) }
+                self.saveState = .failed(reason)
+                self.scheduleAutosave(after: Self.retryDelay)
             }
-            completion?(ok)
+            let waiting = self.pendingSaves
+            self.pendingSaves = []
+            if waiting.isEmpty {
+                completion?(ok && self.saveState == .saved)
+            } else {
+                completion?(ok && self.saveState == .saved)
+                self.save(storesThumbnail: storesThumbnail) { latest in waiting.forEach { $0?(latest) } }
+            }
         }
     }
 
-    func close(completion: @escaping () -> Void) {
+    /// Saves as the app leaves the screen, asking for enough time to finish the write.
+    func saveForBackground() {
+        guard saveState != .saved || isWriting else { return }
+        let application = UIApplication.shared
+        var task = UIBackgroundTaskIdentifier.invalid
+        task = application.beginBackgroundTask(withName: "Save project") {
+            application.endBackgroundTask(task)
+            task = .invalid
+        }
+        save(storesThumbnail: false) { _ in
+            guard task != .invalid else { return }
+            application.endBackgroundTask(task)
+            task = .invalid
+        }
+    }
+
+    /// Saves, then closes only if that worked. On failure the project stays open, so nothing is lost
+    /// without the person saying so.
+    func close(discardingChanges: Bool = false, completion: @escaping (Bool) -> Void) {
+        guard !discardingChanges else {
+            finishClosing { completion(true) }
+            return
+        }
+        storeThumbnail()
+        save(storesThumbnail: false) { [weak self] ok in
+            guard let self else { return }
+            guard ok else {
+                completion(false)
+                return
+            }
+            self.finishClosing { completion(true) }
+        }
+    }
+
+    private func finishClosing(_ completion: @escaping () -> Void) {
         importTask?.cancel()
         surfaceTask?.cancel()
         subdivisionTask?.cancel()
         validationTask?.cancel()
-        storeThumbnail()
-        document.updateChangeCount(.done)
+        autosaveTimer?.invalidate()
+        if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
         document.close { [weak self] _ in
             self?.document.snapshotProvider = nil
             completion()

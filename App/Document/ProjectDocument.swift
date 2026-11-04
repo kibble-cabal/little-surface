@@ -31,6 +31,9 @@ final class ProjectDocument: UIDocument {
             throw ProjectFileError.damaged("Unexpected contents while saving.")
         }
         let data = try ProjectCodec.encode(box.snapshot)
+        // The bytes must read back before they replace the last good copy. A failure here leaves that
+        // copy untouched and shows up as a failed save.
+        _ = try ProjectCodec.decode(data)
         try data.write(to: url, options: .atomic)
     }
 
