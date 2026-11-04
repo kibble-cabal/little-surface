@@ -162,4 +162,101 @@ final class PencilTests: XCTestCase {
         engine.deletePick()
         XCTAssertEqual(engine.mesh.edgeCount, 0)
     }
+
+    // MARK: Fills
+
+    func testTwoLinesPencilInQuadsThatFirmUpOnMovingOn() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        XCTAssertTrue(engine.pencilledFills.isEmpty)
+        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
+        XCTAssertEqual(engine.pencilledFills.count, 1, "appeared with no button")
+        XCTAssertEqual(engine.mesh.faceCount, 0, "still pencilled")
+        XCTAssertFalse(engine.overlay.previewTriangles.isEmpty, "and showing")
+
+        Fixtures.draw(engine, from: Vec2(420, 620), to: Vec2(580, 620))
+        XCTAssertGreaterThan(engine.mesh.faceCount, 0, "moving on firmed it up")
+        XCTAssertTrue(engine.mesh.aliveFaces.allSatisfy { engine.mesh.loop($0).count == 4 })
+    }
+
+    func testUndoTakesThePencilledQuadsAndLeavesTheLine() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
+        let edges = engine.mesh.edgeCount
+        engine.undo()
+        XCTAssertTrue(engine.pencilledFills.isEmpty)
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+        engine.undo()
+        XCTAssertLessThan(engine.mesh.edgeCount, edges)
+    }
+
+    func testBesideALineAStrokeTakesItsCount() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        let first = engine.mesh.edgeCount
+        Fixtures.draw(engine, from: Vec2(410, 460), to: Vec2(600, 460))
+        XCTAssertEqual(engine.mesh.edgeCount, first * 2, "both lines have the same count")
+    }
+
+    func testDrawingThroughABandMakesABandOnEachSide() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(400, 340), to: Vec2(600, 340))
+        Fixtures.draw(engine, from: Vec2(400, 460), to: Vec2(600, 460))
+        XCTAssertEqual(engine.pencilledFills.count, 1)
+        XCTAssertEqual(engine.mesh.faceCount, 0)
+        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(600, 400))
+        XCTAssertEqual(engine.pencilledFills.count, 2, "reflowed")
+        XCTAssertEqual(engine.mesh.faceCount, 0, "and it's all still pencilled")
+        engine.firmUpFills()
+        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
+        XCTAssertTrue(engine.mesh.aliveFaces.allSatisfy { engine.mesh.loop($0).count == 4 })
+    }
+
+    func testALoopFillsAndALoopInsideItBecomesARing() {
+        let engine = pencil()
+        drawLoop(engine, center: Vec2(500, 400), radius: 120)
+        XCTAssertEqual(engine.pencilledFills.count, 1, "the enclosed area fills in")
+        XCTAssertEqual(engine.pencilledFills[0].chains.count, 1)
+
+        drawLoop(engine, center: Vec2(500, 400), radius: 60)
+        XCTAssertEqual(engine.pencilledFills.count, 1)
+        XCTAssertEqual(engine.pencilledFills[0].preview.kind, .ring)
+        XCTAssertEqual(engine.mesh.faceCount, 0, "the first fill never firmed up")
+    }
+
+    func testALoopAroundAPencilledLoopMakesARingInstead() {
+        let engine = pencil()
+        drawLoop(engine, center: Vec2(500, 400), radius: 60)
+        drawLoop(engine, center: Vec2(500, 400), radius: 120)
+        XCTAssertEqual(engine.pencilledFills.count, 1)
+        XCTAssertEqual(engine.pencilledFills[0].preview.kind, .ring)
+        XCTAssertEqual(engine.mesh.faceCount, 0)
+    }
+
+    func testFourLinesFenceInAnAreaEvenWithoutCorners() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(400, 320), to: Vec2(600, 320))
+        Fixtures.draw(engine, from: Vec2(400, 480), to: Vec2(600, 480))
+        engine.undo()
+        XCTAssertTrue(engine.pencilledFills.isEmpty)
+        Fixtures.draw(engine, from: Vec2(440, 300), to: Vec2(440, 500))
+        Fixtures.draw(engine, from: Vec2(560, 300), to: Vec2(560, 500))
+        XCTAssertFalse(engine.pencilledFills.isEmpty, "the middle is fenced in")
+        engine.firmUpFills()
+        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
+    }
+
+    func testALoopAroundTheWholeModelEnclosesNothing() {
+        let sphere = Fixtures.sphere()
+        var mesh = Mesh()
+        let count = 24
+        let vertices = (0..<count).map { i -> VertexID in
+            let a = Float(i) / Float(count) * 2 * .pi
+            return mesh.addVertex(Vec3(cos(a), 0, sin(a)))
+        }
+        var edges: [EdgeID] = []
+        for i in 0..<count { edges.append(try! mesh.ensureEdge(vertices[i], vertices[(i + 1) % count])) }
+        XCTAssertTrue(EnclosedRegions.regions(bordering: edges, in: mesh, projector: Fixtures.projector(sphere)).isEmpty)
+    }
 }
