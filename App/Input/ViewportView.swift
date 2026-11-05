@@ -111,6 +111,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 lastPencilTime = now
                 canvasFeedback.prepare()
                 model?.gestureBegan()
+                engine?.steadiness = settings.steadiness
                 engine?.pencilBegan(at: point(touch), pressure: pressure(touch))
                 scheduleHold()
             default:
@@ -138,6 +139,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 fingerStroke = navTouches[0]
                 fingerStrokeStart = now
                 model?.gestureBegan()
+                engine?.steadiness = settings.steadiness
                 engine?.pencilBegan(at: point(navTouches[0]), pressure: 1)
                 scheduleHold()
             }

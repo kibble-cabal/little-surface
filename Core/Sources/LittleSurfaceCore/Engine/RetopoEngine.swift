@@ -841,6 +841,9 @@ public final class RetopoEngine {
     // MARK: Pencil input
 
     public var minimumStrokeLength: Float { 8 }
+    /// How much a pencil line is steadied as it's drawn, from 0 to 1.
+    public var steadiness: Float = 0.4
+    private var stabilizer: StrokeStabilizer?
     private var strokeSide: Float = 0
     private var strokeReachedMiddle = false
 
@@ -856,6 +859,7 @@ public final class RetopoEngine {
             capture.add(screen: screen, pressure: pressure)
             gesture = .stroke(capture)
             inkPath = [screen]
+            stabilizer = StrokeStabilizer(start: screen, strength: steadiness)
             strokeSide = 0
             strokeReachedMiddle = false
             noteSide(of: capture)
@@ -915,11 +919,16 @@ public final class RetopoEngine {
             break
         case .stroke(var capture):
             if activeTool == .pencil, strokeReachedMiddle { break }
-            capture.add(screen: screen, pressure: pressure)
+            if activeTool == .pencil, var steady = stabilizer {
+                for point in steady.pull(to: screen) { capture.add(screen: point, pressure: pressure) }
+                stabilizer = steady
+            } else {
+                capture.add(screen: screen, pressure: pressure)
+            }
             noteSide(of: capture)
             gesture = .stroke(capture)
             inkPath = capture.screenPath
-            inkPrediction = strokeReachedMiddle ? [] : predicted
+            inkPrediction = strokeReachedMiddle ? [] : (activeTool == .pencil ? [screen] + predicted : predicted)
             updateLiveMirrorOverlay(capture)
         case .select(var drag):
             updateSelectDrag(&drag, to: screen)
@@ -956,7 +965,11 @@ public final class RetopoEngine {
         case .tapOnly(let start):
             if activeTool == .face { faceToolTap(at: start) }
         case .stroke(var capture):
-            if activeTool != .pencil || !strokeReachedMiddle { capture.add(screen: screen, pressure: pressure) }
+            if activeTool != .pencil {
+                capture.add(screen: screen, pressure: pressure)
+            } else if !strokeReachedMiddle {
+                capture.add(screen: stabilizer?.end(at: screen) ?? screen, pressure: pressure)
+            }
             inkPath = []
             finishStroke(capture, tapPoint: screen)
         case .select(let drag):

@@ -32,13 +32,18 @@ final class AppSettings {
     var appearance: Appearance {
         didSet { defaults.set(appearance.rawValue, forKey: "appearance") }
     }
+    /// How much pencil lines are steadied as they're drawn, from 0 to 1.
+    var steadiness: Float {
+        didSet { defaults.set(steadiness, forKey: "steadiness") }
+    }
     /// Only tests turn this off, so a drag can't carry on spinning the model into the next step.
     let orbitInertia: Bool
 
     private init() {
-        defaults.register(defaults: ["orbitInertia": true])
+        defaults.register(defaults: ["orbitInertia": true, "steadiness": 0.4])
         oneFingerAction = OneFingerAction(rawValue: defaults.string(forKey: "oneFingerAction") ?? "") ?? .orbit
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .light
+        steadiness = defaults.float(forKey: "steadiness")
         orbitInertia = defaults.bool(forKey: "orbitInertia")
     }
 }

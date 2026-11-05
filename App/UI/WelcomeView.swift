@@ -181,6 +181,12 @@ struct SettingsView: View {
                 Picker("Appearance", selection: $settings.appearance) {
                     ForEach(Appearance.allCases) { Text($0.label).tag($0) }
                 }
+                LabeledContent("Steady lines") {
+                    Slider(value: $settings.steadiness, in: 0...1)
+                        .frame(maxWidth: 220)
+                        .accessibilityLabel("Steady lines")
+                        .accessibilityIdentifier("Steady Lines")
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
