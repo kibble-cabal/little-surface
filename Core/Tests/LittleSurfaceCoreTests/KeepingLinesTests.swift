@@ -374,3 +374,15 @@ final class RetracedLineTests: XCTestCase {
         XCTAssertEqual(mesh.aliveFaces.first.map(mesh.cornerCount(of:)), 2)
     }
 }
+
+final class StarPointTests: XCTestCase {
+    func testOnlyPointsWithFiveOrMoreLinesAreStars() throws {
+        var mesh = Mesh()
+        let center = mesh.addVertex(.zero)
+        let around = (0..<5).map { mesh.addVertex(Vec3(cos(Float($0)), sin(Float($0)), 0)) }
+        for v in around.prefix(4) { _ = try mesh.ensureEdge(center, v) }
+        XCTAssertEqual(MeshValidator.stars(mesh), [], "four lines is a normal point")
+        _ = try mesh.ensureEdge(center, around[4])
+        XCTAssertEqual(MeshValidator.stars(mesh), [center])
+    }
+}

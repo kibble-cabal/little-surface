@@ -48,6 +48,8 @@ private enum ElementFlag {
     static let issue: UInt8 = 3
     /// A line or a shape that isn't a finished quad.
     static let unfinished: UInt8 = 4
+    /// A point where five or more lines meet.
+    static let star: UInt8 = 5
 }
 
 struct ViewportStyle {
@@ -74,6 +76,7 @@ struct ViewportStyle {
         let issue = Vec4(0.86, 0.16, 0.25, 1)
         let wash = Vec4(ink.x, ink.y, ink.z, 0.14)
         let unfinished = dark ? Vec4(0.95, 0.72, 0.40, 0.2) : Vec4(0.88, 0.62, 0.28, 0.26)
+        let star = dark ? Vec4(0.76, 0.56, 1.0, 1) : Vec4(0.52, 0.22, 0.86, 1)
         return ViewportStyle(
             background: dark ? MTLClearColor(red: 0.13, green: 0.13, blue: 0.14, alpha: 1)
                 : MTLClearColor(red: 0.965, green: 0.955, blue: 0.93, alpha: 1),
@@ -84,7 +87,7 @@ struct ViewportStyle {
                 unfinished,
             ],
             edges: [ink, selected, hover, issue, graphite],
-            dots: [ink, selected, hover, issue, graphite],
+            dots: [ink, selected, hover, issue, graphite, star],
             backTint: Vec4(0.72, 0.18, 0.42, 0.7),
             preview: graphite,
             warning: issue,
@@ -399,11 +402,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             return mesh.facesOf(edge: e).contains(where: mesh.isQuad) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.edgeFlags)
         let inked = Set(mesh.aliveFaces.filter(mesh.isQuad).flatMap { mesh.loop($0) })
+        let stars = Set(MeshValidator.stars(mesh))
         write(topology.dots.map { v -> UInt8 in
             let id = VertexID(v)
             if issue?.vertices.contains(id) == true { return ElementFlag.issue }
             if selection.vertices.contains(id) { return ElementFlag.selected }
             if id == hoverVertex { return ElementFlag.hovered }
+            if stars.contains(id) { return ElementFlag.star }
             return inked.contains(id) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.dotFlags)
     }

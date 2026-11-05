@@ -135,6 +135,12 @@ public enum MeshValidator {
         }
     }
 
+    /// Points where five or more lines meet, drawn or finished: the stars in a mesh, which pull at how
+    /// it bends and are worth placing on purpose.
+    public static func stars(_ mesh: Mesh) -> [VertexID] {
+        mesh.aliveVertices.filter { mesh.edgesOf($0).count >= 5 }
+    }
+
     /// Connected components by edge connectivity, largest first.
     public static func connectedComponents(_ mesh: Mesh) -> [[VertexID]] {
         var visited = [Bool](repeating: false, count: mesh.positions.count)

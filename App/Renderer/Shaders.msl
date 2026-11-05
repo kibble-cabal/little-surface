@@ -211,7 +211,7 @@ vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     uint slot = slots[iid];
     uchar f = flags[iid];
     float2 corner = quadCorners[vid] * float2(2, 1) - float2(1, 0);
-    float size = u.dotSize * ((f == 1 || f == 2 || f == 3) ? 1.7 : 1.0);
+    float size = u.dotSize * ((f == 1 || f == 2 || f == 3 || f == 5) ? 1.7 : 1.0);
     float4 clip = pulled(positions[slot], u);
     if (clip.w < 1e-4) clip = float4(2, 2, 2, 1);
     clip.xy += corner * size * 0.5 / (u.viewport * 0.5) * clip.w;
