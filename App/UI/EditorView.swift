@@ -1,6 +1,7 @@
 import LittleSurfaceCore
 import MetalKit
 import SwiftUI
+import simd
 import UniformTypeIdentifiers
 
 struct ViewportRepresentable: UIViewRepresentable {
@@ -37,8 +38,11 @@ struct EditorView: View {
                 BrushSizeSlider(model: model)
 
                 VStack(spacing: 8) {
-                    MirrorAxisPicker(model: model)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    VStack(alignment: .trailing, spacing: 8) {
+                        OrientationGizmo(model: model)
+                        MirrorAxisPicker(model: model)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                     Spacer(minLength: 0)
                     MessageToast(model: model)
                     PickChips(model: model)
@@ -255,6 +259,68 @@ private struct BrushSizeSlider: View {
                 .accessibilityLabel("Brush size")
                 .accessibilityIdentifier("Brush Size")
         }
+    }
+}
+
+/// Which way the model is facing. Tapping an axis looks along it, level.
+private struct OrientationGizmo: View {
+    let model: EditorModel
+
+    private struct Axis: Identifiable {
+        let id: String
+        let direction: Vec3Value
+        let preset: ViewPreset
+        let color: Color
+        let positive: Bool
+    }
+
+    private struct Vec3Value { let x, y, z: Float }
+
+    private let axes: [Axis] = [
+        Axis(id: "X", direction: .init(x: 1, y: 0, z: 0), preset: .right, color: Color(red: 0.82, green: 0.30, blue: 0.27), positive: true),
+        Axis(id: "-X", direction: .init(x: -1, y: 0, z: 0), preset: .left, color: Color(red: 0.82, green: 0.30, blue: 0.27), positive: false),
+        Axis(id: "Y", direction: .init(x: 0, y: 1, z: 0), preset: .top, color: Color(red: 0.36, green: 0.62, blue: 0.27), positive: true),
+        Axis(id: "-Y", direction: .init(x: 0, y: -1, z: 0), preset: .bottom, color: Color(red: 0.36, green: 0.62, blue: 0.27), positive: false),
+        Axis(id: "Z", direction: .init(x: 0, y: 0, z: 1), preset: .front, color: Color(red: 0.25, green: 0.47, blue: 0.80), positive: true),
+        Axis(id: "-Z", direction: .init(x: 0, y: 0, z: -1), preset: .back, color: Color(red: 0.25, green: 0.47, blue: 0.80), positive: false),
+    ]
+
+    var body: some View {
+        _ = model.cameraRevision
+        _ = model.revision
+        let camera = model.engine.camera
+        let right = camera.right, up = camera.up, back = -camera.forward
+        let radius: CGFloat = 30
+        func placed(_ a: Axis) -> (x: CGFloat, y: CGFloat, depth: Float) {
+            let d = SIMD3<Float>(a.direction.x, a.direction.y, a.direction.z)
+            return (CGFloat(simd_dot(d, right)) * radius, CGFloat(-simd_dot(d, up)) * radius, simd_dot(d, back))
+        }
+        let ordered = axes.sorted { placed($0).depth < placed($1).depth }
+        return ZStack {
+            ForEach(ordered) { axis in
+                let p = placed(axis)
+                Button {
+                    model.engine.camera.setPreset(axis.preset)
+                    model.engine.cameraChanged()
+                    model.cameraDidChange()
+                } label: {
+                    ZStack {
+                        Circle().fill(axis.positive ? axis.color : axis.color.opacity(0.28)).frame(width: 22, height: 22)
+                        if axis.positive {
+                            Text(axis.id).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: 30, height: 30)
+                    .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: p.x, y: p.y)
+                .accessibilityLabel("\(axis.preset.rawValue.capitalized) view")
+                .accessibilityIdentifier("view-\(axis.preset.rawValue)")
+            }
+        }
+        .frame(width: 92, height: 92)
+        .panel(corner: 46)
     }
 }
 
