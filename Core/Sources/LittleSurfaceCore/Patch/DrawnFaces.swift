@@ -52,7 +52,7 @@ public enum DrawnFaces {
 
     /// How far apart two lines between the same two points can be, against how far apart those points
     /// are, and still be one line drawn twice rather than a narrow shape.
-    private static let retracedLineLimit: Float = 0.15
+    private static let retracedLineLimit: Float = 0.08
 
     /// Going back over a line is how a line gets drawn on paper. It would otherwise leave a sliver of a
     /// shape between the two, so the longer of them stands for both.

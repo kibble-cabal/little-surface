@@ -364,6 +364,16 @@ final class RetracedLineTests: XCTestCase {
         XCTAssertTrue(mesh.aliveEdges.allSatisfy { !mesh.isWire($0) }, "nothing left over")
     }
 
+    func testANarrowShapeDrawnOnPurposeStays() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500), bow: 12))
+        Fixtures.drawPath(engine, straight(Vec2(600, 500), Vec2(400, 500), bow: 12))
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.faceCount, 1, "a thin almond, 24 across and 200 long")
+        XCTAssertEqual(mesh.aliveFaces.first.map(mesh.cornerCount(of:)), 2)
+    }
+
     func testTwoLinesWellApartAreStillAShape() throws {
         let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
         engine.setTool(.pencil)
