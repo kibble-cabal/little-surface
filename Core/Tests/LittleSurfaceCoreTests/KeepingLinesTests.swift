@@ -78,4 +78,42 @@ final class KeepingLinesTests: XCTestCase {
         XCTAssertGreaterThan(out.bendCount, 0)
         assertValid(out)
     }
+
+    // MARK: Points only where they're meant
+
+    private func realPoints(_ engine: RetopoEngine) -> Int { engine.mesh.vertexCount - engine.mesh.bendCount }
+
+    func testAFlickAsThePencilLiftsIsNotAPoint() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)) + straight(Vec2(600, 500), Vec2(610, 488), steps: 3).dropFirst())
+        XCTAssertEqual(realPoints(engine), 2)
+    }
+
+    func testAFlickAsThePencilLandsIsNotAPoint() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(390, 488), Vec2(400, 500), steps: 3) + straight(Vec2(400, 500), Vec2(600, 500)).dropFirst())
+        XCTAssertEqual(realPoints(engine), 2)
+    }
+
+    func testACurlAtTheEndIsNotAPoint() {
+        let engine = pencil()
+        let curl = (0...7).map { Vec2(600, 496) + Vec2(sin(Float($0) * 0.7), cos(Float($0) * 0.7)) * 4 }
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)) + curl)
+        XCTAssertEqual(realPoints(engine), 2)
+    }
+
+    func testASharpCornerAwayFromTheEndsIsStillAPoint() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(500, 500)) + straight(Vec2(500, 500), Vec2(500, 600)).dropFirst())
+        XCTAssertEqual(realPoints(engine), 3)
+    }
+
+    func testACrossingBesideAPointUsesThatPoint() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        Fixtures.drawPath(engine, straight(Vec2(500, 400), Vec2(500, 600)))
+        XCTAssertEqual(realPoints(engine), 5)
+        Fixtures.drawPath(engine, straight(Vec2(514, 460), Vec2(514, 540)))
+        XCTAssertEqual(realPoints(engine), 7, "Its ends, but the one in the middle meets the crossing that's there")
+    }
 }

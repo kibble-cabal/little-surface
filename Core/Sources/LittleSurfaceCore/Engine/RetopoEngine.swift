@@ -1175,7 +1175,10 @@ public final class RetopoEngine {
         }
         pickedMark = nil
         guard let projector else { return }
-        let runs = capture.usableRuns
+        // Scraps from where a stroke clipped an edge of the model would be tiny lines of their own.
+        let runs = capture.usableRuns.filter { run in
+            zip(run, run.dropFirst()).reduce(Float(0)) { $0 + simd_length($1.1.screen - $1.0.screen) } >= minimumStrokeLength
+        }
         guard !runs.isEmpty else { return }
         let scale = camera.worldPerPoint(at: runs[0][runs[0].count / 2].position)
         let closeRadius = tools.stroke.closeRadiusPoints * scale

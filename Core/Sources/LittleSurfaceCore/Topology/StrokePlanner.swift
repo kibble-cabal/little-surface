@@ -66,6 +66,9 @@ public enum StrokePlanner {
 
     /// How sharply a pencil line has to turn for the turn to be a corner rather than a curve.
     private static let cornerAngle: Float = 60 * .pi / 180
+    /// How many stroke points at each end can't be corners or weld to the line, since a Pencil tends to
+    /// flick or curl as it lands and lifts, and nobody means that as a point.
+    private static let endMargin = 3
 
     public static func plan(path: ProcessedPath, mesh: Mesh, options: StrokePlanOptions) -> StrokePlan {
         let offset = options.surfaceOffset
@@ -215,6 +218,7 @@ public enum StrokePlanner {
                     if path.isClosed && (path.length - nodes[j].along + nodes[i].along) < spacing * 2.5 { continue }
                     // Joining an open stroke's two ends would be closing it, which only the artist may ask for.
                     if !path.isClosed && i == 0 && j == nodes.count - 1 { continue }
+                    if options.camera != nil, !path.isClosed, i < endMargin || j >= nodes.count - endMargin { continue }
                     if simd_length(nodes[i].position - nodes[j].position) < selfTolerance {
                         canonical[j] = i
                         nodes[i].isReal = true
@@ -289,7 +293,7 @@ public enum StrokePlanner {
         guard n >= reach * 2 + 1 else { return }
         let screens = nodes.map { camera.project($0.position)?.screen }
         func turn(at i: Int) -> Float {
-            if !isClosed, i < reach || i >= n - reach { return 0 }
+            if !isClosed, i < max(reach, endMargin) || i >= n - max(reach, endMargin) { return 0 }
             guard let before = screens[(i + n - reach) % n], let here = screens[i], let after = screens[(i + reach) % n] else { return 0 }
             let a = here - before, b = after - here
             guard simd_length_squared(a) > 0, simd_length_squared(b) > 0 else { return 0 }
@@ -413,7 +417,7 @@ public enum StrokePlanner {
                 let here = p + stroke * s
                 let node: PlanNode
                 let position: Vec3
-                if let v = realPoint(near: here, radius: options.snapRadiusPoints * 0.5, normal: from.normal, position: onStroke, mesh: mesh, options: options, camera: camera) {
+                if let v = realPoint(near: here, radius: options.snapRadiusPoints * 0.75, normal: from.normal, position: onStroke, mesh: mesh, options: options, camera: camera) {
                     node = .existing(v)
                     position = mesh.position(v)
                 } else if let place = on(edge: line.edge, t: t, near: onStroke, mesh: mesh, options: options, camera: camera) {
