@@ -4,8 +4,9 @@ import simd
 /// Keeps the faces in step with the lines: every area that lines fence in is one face, however many
 /// corners it has, until more lines divide it.
 public enum DrawnFaces {
-    /// After a stroke: `result` is what it added, and `met` holds the points it used that were already there.
-    static func update(after result: PlanResult, met: [VertexID], in mesh: inout Mesh, projector: SurfaceProjector?, mirrored: Bool) throws {
+    /// After a stroke: `result` is what it added, and `met` holds the points it used that were already
+    /// there. `around` is the edges of any faces already taken out.
+    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, mirrored: Bool) throws {
         mesh.settleBends()
 
         // A line reaches as far as the lines it joins, so two strokes can cut a face between them.
@@ -15,7 +16,7 @@ public enum DrawnFaces {
         })
         for v in reached where mesh.mirrorPartner[Int(v)] >= 0 { reached.insert(mesh.mirrorPartner[Int(v)]) }
         var frontier = Array(reached)
-        var border = result.edges
+        var border = result.edges + around
         while let v = frontier.popLast() {
             for e in mesh.edgesOf(v) where mesh.isWire(e) {
                 border.append(e)

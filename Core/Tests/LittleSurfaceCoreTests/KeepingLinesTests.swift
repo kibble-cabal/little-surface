@@ -116,4 +116,101 @@ final class KeepingLinesTests: XCTestCase {
         Fixtures.drawPath(engine, straight(Vec2(514, 460), Vec2(514, 540)))
         XCTAssertEqual(realPoints(engine), 7, "Its ends, but the one in the middle meets the crossing that's there")
     }
+
+    // MARK: The eraser
+
+    private func eraser(_ engine: RetopoEngine, radius: Float = 12) {
+        engine.setTool(.erase)
+        engine.setSelectionMode(.face)
+        engine.tools.brush.radiusPoints = radius
+    }
+
+    private func tap(_ engine: RetopoEngine, _ at: Vec2) {
+        engine.pencilBegan(at: at)
+        engine.pencilEnded(at: at)
+    }
+
+    private func drawBoxOfLines(_ engine: RetopoEngine) {
+        for y: Float in [420, 580] { Fixtures.drawPath(engine, straight(Vec2(390, y), Vec2(610, y))) }
+        for x: Float in [400, 500, 600] { Fixtures.drawPath(engine, straight(Vec2(x, 410), Vec2(x, 590))) }
+    }
+
+    func testErasingAPointOnALineLetsTheLineCarryOn() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        Fixtures.drawPath(engine, straight(Vec2(500, 480), Vec2(500, 520)))
+        // The tick only left a point behind.
+        XCTAssertEqual(realPoints(engine), 3)
+        let edges = engine.mesh.edgeCount
+        eraser(engine)
+        tap(engine, Vec2(500, 500))
+        XCTAssertEqual(realPoints(engine), 2)
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+        engine.undo()
+        XCTAssertEqual(realPoints(engine), 3)
+    }
+
+    func testErasingACrossingTakesTheLinesThatMeetThere() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        Fixtures.drawPath(engine, straight(Vec2(500, 400), Vec2(500, 600)))
+        let before = engine.mesh.vertexCount
+        eraser(engine)
+        tap(engine, Vec2(500, 500))
+        XCTAssertLessThan(engine.mesh.vertexCount, before)
+        XCTAssertFalse(engine.mesh.aliveVertices.contains { engine.mesh.edgesOf($0).count > 2 })
+        assertValid(engine.mesh)
+    }
+
+    func testErasingALineBetweenTwoQuadsMakesOneShape() {
+        let engine = pencil()
+        drawBoxOfLines(engine)
+        XCTAssertEqual(engine.statistics.quads, 2)
+        eraser(engine)
+        tap(engine, Vec2(500, 500))
+        XCTAssertEqual(engine.statistics.quads, 0)
+        XCTAssertEqual(engine.mesh.aliveFaces.map { engine.mesh.cornerCount(of: $0) }, [6])
+        assertValid(engine.mesh)
+    }
+
+    func testErasingPartOfACurveLeavesTheRest() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 100, steps: 48, closes: false))
+        let before = engine.mesh.edgeCount
+        eraser(engine, radius: 10)
+        tap(engine, Vec2(500, 600))
+        XCTAssertLessThan(engine.mesh.edgeCount, before)
+        XCTAssertGreaterThan(engine.mesh.edgeCount, before / 2)
+    }
+
+    func testRubbingInsideAFaceOpensItAndKeepsItsLines() {
+        let engine = pencil()
+        drawBoxOfLines(engine)
+        let edges = engine.mesh.edgeCount
+        eraser(engine, radius: 20)
+        tap(engine, Vec2(450, 500))
+        XCTAssertEqual(engine.mesh.faceCount, 1)
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+    }
+
+    func testARubThatStartsOnAPointDoesNotTakeTheLineWithIt() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        Fixtures.drawPath(engine, straight(Vec2(500, 480), Vec2(500, 520)))
+        let edges = engine.mesh.edgeCount
+        eraser(engine)
+        Fixtures.drawPath(engine, [Vec2(500, 500), Vec2(503, 501), Vec2(499, 499), Vec2(501, 500)])
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+    }
+
+    func testTheEraserWorksOnBothSidesOfTheMirror() {
+        let engine = pencil()
+        engine.setSymmetryEnabled(true)
+        Fixtures.drawPath(engine, straight(Vec2(350, 500), Vec2(450, 500)))
+        Fixtures.drawPath(engine, straight(Vec2(400, 480), Vec2(400, 520)))
+        XCTAssertEqual(realPoints(engine), 6)
+        eraser(engine)
+        tap(engine, Vec2(400, 500))
+        XCTAssertEqual(realPoints(engine), 4)
+    }
 }

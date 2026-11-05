@@ -844,6 +844,10 @@ public final class RetopoEngine {
     /// How much a pencil line is steadied as it's drawn, from 0 to 1.
     public var steadiness: Float = 0.4
     private var stabilizer: StrokeStabilizer?
+    /// How close to a point the eraser has to be for the point to be what's erased, in screen points.
+    private static let erasePointReach: Float = 14
+    /// Where the eraser last took out a point, in the rub still going.
+    private var erasedPointAt: Vec2?
     private var strokeSide: Float = 0
     private var strokeReachedMiddle = false
 
@@ -891,6 +895,7 @@ public final class RetopoEngine {
         case .erase:
             gesture = .erase(before: currentSnapshot, changed: false)
             brushCursor = screen
+            erasedPointAt = nil
             eraseAt(screen)
         case .sketch:
             guard let projector else {
@@ -2131,13 +2136,10 @@ public final class RetopoEngine {
         gesture = .erase(before: before, changed: changedSoFar || changed)
     }
 
-    /// Takes out whatever is under the brush, as an eraser would: quads, lines and pencil marks.
+    /// Takes out what's under the brush, as an eraser would: pencil marks, then a point if it's right on
+    /// one, or else the lines it touches, or else the inside of a face with no line in reach.
     private func rubOut(at screen: Vec2, with picker: MeshPicker) -> Bool {
         let radius = tools.brush.radiusPoints
-        func isUnder(_ p: Vec3, normal: Vec3?) -> Bool {
-            guard let projected = camera.project(p), simd_length(projected.screen - screen) <= radius else { return false }
-            return picker.isVisible(p, normal: normal)
-        }
         var changed = false
         let kept = sketches.filter { !touches($0, at: screen, radius: radius) }
         if kept.count != sketches.count {
@@ -2145,21 +2147,81 @@ public final class RetopoEngine {
             sketchRevision &+= 1
             changed = true
         }
-        let faces = mesh.aliveFaces.filter { isUnder(mesh.faceCenter($0), normal: mesh.faceNormal($0)) }
-        if !faces.isEmpty {
-            mesh.deleteFaces(symmetry.isEnabled ? Symmetry.expanded(faces: Set(faces), in: mesh) : Set(faces))
-            changed = true
+
+        let pointReach = min(radius, Self.erasePointReach)
+        var nearest: (vertex: VertexID, distance: Float)?
+        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
+            let p = mesh.position(v)
+            guard let there = camera.project(p)?.screen else { continue }
+            let d = simd_length(there - screen)
+            if d <= pointReach, d < (nearest?.distance ?? .infinity), picker.isVisible(p, normal: mesh.vertexNormal(v)) { nearest = (v, d) }
         }
+        if let nearest {
+            erasePoint(nearest.vertex)
+            erasedPointAt = screen
+            return true
+        }
+        // A rub that started on a point shouldn't go on to take the line through it, until it moves away.
+        if let erasedPointAt {
+            if simd_length(erasedPointAt - screen) <= pointReach { return changed }
+            self.erasedPointAt = nil
+        }
+
         let lines = mesh.aliveEdges.filter { e in
             let (a, b) = mesh.ends(e)
-            return mesh.isWire(e) && isUnder((mesh.position(a) + mesh.position(b)) / 2, normal: nil)
+            let pa = mesh.position(a), pb = mesh.position(b)
+            guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { return false }
+            let span = sb - sa
+            let t = simd_clamp(simd_dot(screen - sa, span) / max(simd_length_squared(span), 1e-6), 0, 1)
+            guard simd_length(sa + span * t - screen) <= radius else { return false }
+            return picker.isVisible(simd_mix(pa, pb, Vec3(repeating: t)), normal: nil)
         }
         if !lines.isEmpty {
-            mesh.deleteEdges(symmetry.isEnabled ? Symmetry.expanded(edges: Set(lines), in: mesh) : Set(lines))
+            eraseLines(Set(lines))
+            return true
+        }
+
+        let faces = mesh.aliveFaces.filter { f in
+            guard let there = camera.project(mesh.faceCenter(f))?.screen, simd_length(there - screen) <= radius else { return false }
+            return picker.isVisible(mesh.faceCenter(f), normal: mesh.faceNormal(f))
+        }
+        if !faces.isEmpty {
+            mesh.deleteFaces(symmetry.isEnabled ? Symmetry.expanded(faces: Set(faces), in: mesh) : Set(faces), keepEdges: true)
             changed = true
         }
-        if changed { mesh.settleBends() }
         return changed
+    }
+
+    /// A point in the middle of a line stops being one, and the line carries on through. Anywhere else,
+    /// it goes along with the lines that meet there.
+    private func erasePoint(_ v: VertexID) {
+        var points = [v]
+        let partner = mesh.mirrorPartner[Int(v)]
+        if symmetry.isEnabled, partner >= 0, partner != v, mesh.isVertexAlive(VertexID(partner)) { points.append(VertexID(partner)) }
+        var lines = Set<EdgeID>()
+        for point in points {
+            if mesh.edgesOf(point).count == 2 {
+                mesh.setBend(point, true)
+            } else {
+                lines.formUnion(mesh.edgesOf(point))
+            }
+        }
+        if lines.isEmpty {
+            mesh.straightenQuads(mirrored: symmetry.isEnabled)
+        } else {
+            eraseLines(lines)
+        }
+    }
+
+    /// Takes out lines, and whatever they fenced in becomes one face with what's next to it if lines still go all the way round.
+    private func eraseLines(_ lines: Set<EdgeID>) {
+        let gone = symmetry.isEnabled ? Symmetry.expanded(edges: lines, in: mesh) : lines
+        var around: [EdgeID] = []
+        for f in mesh.aliveFaces where !mesh.edgeLoop(f).allSatisfy({ !gone.contains($0) }) {
+            around += mesh.edgeLoop(f).filter { !gone.contains($0) }
+        }
+        mesh.deleteEdges(gone)
+        try? DrawnFaces.update(after: PlanResult(), met: [], around: around, in: &mesh, projector: projector, mirrored: symmetry.isEnabled)
     }
 
     // MARK: Selection commands
