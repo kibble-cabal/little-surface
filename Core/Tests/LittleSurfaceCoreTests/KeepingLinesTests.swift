@@ -401,6 +401,26 @@ final class RetracedLineTests: XCTestCase {
         XCTAssertTrue(mesh.aliveEdges.allSatisfy { !mesh.isWire($0) }, "nothing left over")
     }
 
+    private func joined(turning degrees: Float) -> Mesh {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        let join = Vec2(500, 500)
+        Fixtures.drawPath(engine, straight(Vec2(380, 500), join))
+        let angle = degrees * .pi / 180
+        Fixtures.drawPath(engine, straight(join, join + Vec2(cos(angle), sin(angle)) * 120))
+        return engine.mesh
+    }
+
+    func testCarryingALineOnWithAGentleTurnLeavesNoCorner() {
+        let mesh = joined(turning: 50)
+        XCTAssertEqual(mesh.aliveVertices.filter { !mesh.isBendVertex($0) }.count, 2, "Only its two ends")
+    }
+
+    func testCarryingALineOnWithASharpTurnLeavesACorner() {
+        let mesh = joined(turning: 80)
+        XCTAssertEqual(mesh.aliveVertices.filter { !mesh.isBendVertex($0) }.count, 3)
+    }
+
     func testGoingOverPartOfALineRedrawsThatPart() throws {
         let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
         engine.setTool(.pencil)

@@ -306,11 +306,12 @@ public enum StrokePlanner {
         }
     }
 
-    /// A stroke carrying a line on without turning leaves no corner where they join.
+    /// A stroke carrying a line on without turning sharply leaves no corner where they join, just as a
+    /// turn that gentle wouldn't be a corner partway along a stroke.
     private static func flows(from v: VertexID, heading: Vec3, in mesh: Mesh) -> Bool {
         guard let edge = mesh.edgesOf(v).first, simd_length_squared(heading) > 0 else { return false }
         let outward = mesh.position(v) - mesh.position(mesh.otherEnd(edge, from: v))
-        return simd_length_squared(outward) > 0 && simd_dot(simd_normalize(outward), simd_normalize(heading)) >= 0.7
+        return simd_length_squared(outward) > 0 && simd_dot(simd_normalize(outward), simd_normalize(heading)) >= cos(cornerAngle)
     }
 
     /// Where a pencil line's end lands: on a real point in reach, or else on a line in reach.
