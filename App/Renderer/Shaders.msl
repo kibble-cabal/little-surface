@@ -155,12 +155,15 @@ vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
                            const device uchar *flags [[buffer(2)]],
                            constant Uniforms &u [[buffer(3)]],
                            constant float4 *palette [[buffer(4)]],
-                           constant float &alphaScale [[buffer(5)]]) {
+                           constant float &alphaScale [[buffer(5)]],
+                           const device float *lineWeights [[buffer(6)]]) {
     LineOut out;
     uint2 e = edges[iid];
     uchar f = flags[iid];
     float2 corner = quadCorners[vid];
-    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : (f == 4 ? 2.4 : 1.0));
+    // Pencil follows the hand, getting wider and darker the harder it was pressed. Ink stays even.
+    float weight = f == 4 ? lineWeights[corner.x < 0.5 ? e.x : e.y] : 1;
+    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : (f == 4 ? 2.4 : 1.0)) * weight;
     // The longer a straight edge, the further it can sag under a curved surface it's still in front of.
     float sag = length(positions[e.x] - positions[e.y]) * 0.2;
     float4 a = pulled(positions[e.x], u, sag);
@@ -169,7 +172,7 @@ vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     out.position = thickLine(a, b, corner, width, u.viewport, f == 4 ? 0 : 0.35);
     out.position.z -= u.depthBias * 1.5 * out.position.w;
     float4 c = palette[f];
-    out.color = float4(c.rgb, c.a * alphaScale);
+    out.color = float4(c.rgb, c.a * alphaScale * mix(0.7, 1.0, saturate((weight - 0.5) * 2)));
     out.side = corner.y;
     out.pencil = f == 4 ? 1 : 0;
     return out;

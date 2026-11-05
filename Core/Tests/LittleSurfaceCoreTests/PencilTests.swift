@@ -548,3 +548,90 @@ private struct SplitMix {
         return Float((z ^ (z >> 31)) % 2001) / 1000 - 1
     }
 }
+
+final class LineWeightTests: XCTestCase {
+    private func pencil(mirrored: Bool = false) -> RetopoEngine {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        if mirrored { engine.setSymmetryEnabled(true) }
+        return engine
+    }
+
+    /// Left to right across the sphere, pressing harder as it goes.
+    private func drawPressingHarder(_ engine: RetopoEngine, from a: Vec2 = Vec2(420, 500), to b: Vec2 = Vec2(580, 500)) {
+        engine.pencilBegan(at: a, pressure: 0.05)
+        for i in 1...40 {
+            let t = Float(i) / 40
+            engine.pencilMoved(to: simd_mix(a, b, Vec2(repeating: t)), pressure: 0.05 + 0.6 * t)
+        }
+        engine.pencilEnded(at: b, pressure: 0.65)
+    }
+
+    func testPressingHarderMakesAHeavierLine() throws {
+        let engine = pencil()
+        drawPressingHarder(engine)
+        let mesh = engine.mesh
+        let inMiddle = mesh.aliveVertices.sorted { mesh.position($0).x < mesh.position($1).x }.map { mesh.lineWeights[Int($0)] }
+        XCTAssertGreaterThan(inMiddle.count, 6)
+        XCTAssertLessThan(inMiddle[0], 0.7)
+        XCTAssertGreaterThan(inMiddle[inMiddle.count - 1], 1.4)
+        for (a, b) in zip(inMiddle, inMiddle.dropFirst()) { XCTAssertLessThanOrEqual(a, b + 0.01) }
+    }
+
+    func testAnEvenStrokeKeepsTheUsualWeight() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 500), to: Vec2(580, 500))
+        XCTAssertGreaterThan(engine.mesh.vertexCount, 2)
+        for v in engine.mesh.aliveVertices { XCTAssertEqual(engine.mesh.lineWeights[Int(v)], 1) }
+    }
+
+    func testTheLiveLineFollowsThePressureToo() {
+        let engine = pencil()
+        engine.pencilBegan(at: Vec2(420, 500), pressure: 0.05)
+        for i in 1...20 { engine.pencilMoved(to: Vec2(420 + Float(i) * 4, 500), pressure: 0.05 + Float(i) * 0.03) }
+        XCTAssertEqual(engine.inkWeights.count, engine.inkPath.count)
+        XCTAssertLessThan(engine.inkWeights[0], 0.7)
+        XCTAssertGreaterThan(engine.inkWeights[engine.inkWeights.count - 1], 1.2)
+        engine.pencilEnded(at: Vec2(500, 500), pressure: 0.65)
+    }
+
+    func testAMirroredLineWeighsTheSameOnBothSides() {
+        let engine = pencil(mirrored: true)
+        drawPressingHarder(engine, from: Vec2(540, 450), to: Vec2(620, 560))
+        let mesh = engine.mesh
+        var pairs = 0
+        for v in mesh.aliveVertices where mesh.mirrorPartner[Int(v)] >= 0 && mesh.mirrorPartner[Int(v)] != v {
+            XCTAssertEqual(mesh.lineWeights[Int(v)], mesh.lineWeights[Int(mesh.mirrorPartner[Int(v)])])
+            pairs += 1
+        }
+        XCTAssertGreaterThan(pairs, 6)
+    }
+
+    func testAPointSplitIntoALineTakesItsWeightThere() throws {
+        var mesh = Mesh()
+        let a = mesh.addVertex(Vec3(0, 0, 0)), b = mesh.addVertex(Vec3(1, 0, 0))
+        mesh.lineWeights[Int(a)] = 0.5
+        mesh.lineWeights[Int(b)] = 1.5
+        let split = try mesh.splitEdge(try mesh.ensureEdge(a, b), at: 0.25)
+        XCTAssertEqual(mesh.lineWeights[Int(split.vertex)], 0.75, accuracy: 1e-5)
+    }
+
+    func testALooseEndThinsUntilTheLineCarriesOn() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 500), to: Vec2(500, 500))
+        var mesh = engine.mesh
+        let end = mesh.aliveVertices.first { abs((engine.camera.project(mesh.position($0))?.screen.x ?? 0) - 500) < 2 }!
+        XCTAssertLessThan(mesh.lineWeightsWithLooseEndsThinned()[Int(end)], 0.5)
+        Fixtures.draw(engine, from: Vec2(500, 500), to: Vec2(580, 500))
+        mesh = engine.mesh
+        XCTAssertEqual(mesh.lineWeightsWithLooseEndsThinned()[Int(end)], 1)
+    }
+
+    func testWeightsSurviveSaving() throws {
+        let engine = pencil()
+        drawPressingHarder(engine)
+        let saved = ProjectCodec.encodeTimelapseGeometry(mesh: engine.mesh, sketches: [])
+        let loaded = try ProjectCodec.decodeTimelapseGeometry(saved).mesh
+        XCTAssertEqual(loaded.lineWeights, engine.mesh.lineWeights)
+    }
+}

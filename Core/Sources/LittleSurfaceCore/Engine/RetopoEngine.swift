@@ -112,6 +112,8 @@ public final class RetopoEngine {
     public private(set) var lassoPath: [Vec2] = []
     public private(set) var inkPath: [Vec2] = []
     public private(set) var inkPrediction: [Vec2] = []
+    /// How heavy the pencil line is at each point of `inkPath`, once it's a stroke of that tool.
+    public private(set) var inkWeights: [Float] = []
     public private(set) var inkingIn = InkingIn()
     public private(set) var brushCursor: Vec2?
     /// How far around the cursor a brush reaches, in screen points. The eraser takes whole lines, so it's
@@ -1010,6 +1012,7 @@ public final class RetopoEngine {
             noteSide(of: capture)
             gesture = .stroke(capture)
             inkPath = capture.screenPath
+            inkWeights = LineWeight.weights(pressures: capture.screenPressures)
             inkPrediction = strokeReachedMiddle ? [] : (activeTool == .pencil ? [screen] + predicted : predicted)
             updateLiveMirrorOverlay(capture)
             if activeTool == .pencil { showPointsAhead(of: capture) }

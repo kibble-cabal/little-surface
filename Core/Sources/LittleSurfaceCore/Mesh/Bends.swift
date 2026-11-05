@@ -75,6 +75,24 @@ public extension Mesh {
         return simd_dot(setsOff, arrives) < cos(Self.wrappingTurn)
     }
 
+    /// How heavy each vertex of a line looks. A line thins away where it ends in the open, over its last
+    /// few bends, and carrying it on from there brings it back to its full weight.
+    func lineWeightsWithLooseEndsThinned() -> [Float] {
+        var weights = lineWeights
+        for v in aliveVertices where vertexEdges[Int(v)].count == 1 {
+            weights[Int(v)] *= LineWeight.looseEnd[0]
+            var previous = v, current = otherEnd(vertexEdges[Int(v)][0], from: v)
+            for thinning in LineWeight.looseEnd.dropFirst() {
+                guard isBend[Int(current)] else { break }
+                weights[Int(current)] *= thinning
+                guard let next = vertexEdges[Int(current)].map({ otherEnd($0, from: current) }).first(where: { $0 != previous }) else { break }
+                previous = current
+                current = next
+            }
+        }
+        return weights
+    }
+
     var bendCount: Int {
         var count = 0
         for i in isBend.indices where isBend[i] && vertexAlive[i] { count += 1 }

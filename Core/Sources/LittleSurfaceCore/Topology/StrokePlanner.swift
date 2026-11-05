@@ -62,6 +62,7 @@ public enum StrokePlanner {
         var isCrossing = false
         /// A real point of a pencil line rather than a bend.
         var isReal = false
+        var weight: Float = 1
     }
 
     /// How sharply a pencil line has to turn for the turn to be a corner rather than a curve.
@@ -74,10 +75,11 @@ public enum StrokePlanner {
         let offset = options.surfaceOffset
         var nodes: [PathNode] = []
         var along: Float = 0
+        let weights = LineWeight.weights(pressures: path.points.map(\.pressure))
         for (i, p) in path.points.enumerated() {
             if i > 0 { along += simd_length(p.position - path.points[i - 1].position) }
             let lifted = p.position + p.normal * offset
-            nodes.append(PathNode(node: .new(position: lifted, normal: p.normal), position: lifted, normal: p.normal, along: along, isReal: p.isCorner))
+            nodes.append(PathNode(node: .new(position: lifted, normal: p.normal), position: lifted, normal: p.normal, along: along, isReal: p.isCorner, weight: weights[i]))
         }
 
         var out = StrokePlan(plan: TopologyPlan())
@@ -237,6 +239,7 @@ public enum StrokePlanner {
             let id = Int32(plan.nodes.count - 1)
             nodeIndex[c] = id
             if options.camera != nil, !nodes[c].isReal { plan.bends.insert(id) }
+            if options.camera != nil, case .new = nodes[c].node { plan.lineWeights[id] = nodes[c].weight }
             return id
         }
         var seenEdges = Set<UInt64>()

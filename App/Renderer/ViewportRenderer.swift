@@ -113,6 +113,7 @@ private final class RetopoBuffers {
     var triFlags: MTLBuffer?
     var edges: MTLBuffer?
     var edgeFlags: MTLBuffer?
+    var lineWeights: MTLBuffer?
     var dots: MTLBuffer?
     var dotFlags: MTLBuffer?
     var cornerCount = 0
@@ -393,6 +394,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         if b.positionVersion != mesh.positionVersion {
             write(mesh.positions, into: &b.positions)
+            write(mesh.lineWeightsWithLooseEndsThinned(), into: &b.lineWeights)
             b.positionVersion = mesh.positionVersion
         }
         let key = FlagsKey(selection: engine.selection, hover: engine.hoverElement, issue: engine.issueHighlight, topology: mesh.topologyVersion, inkingIn: inkProgress == nil ? nil : engine.inkingIn.generation)
@@ -605,7 +607,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
 
         func lines(alpha: Float) {
-            guard b.edgeCount > 0, let edges = b.edges, let flags = b.edgeFlags else { return }
+            guard b.edgeCount > 0, let edges = b.edges, let flags = b.edgeFlags, let weights = b.lineWeights else { return }
             var a = alpha
             e.setRenderPipelineState(edgePipeline)
             e.setVertexBuffer(positions, offset: 0, index: 0)
@@ -614,6 +616,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             e.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 3)
             style.edges.withUnsafeBytes { e.setVertexBytes($0.baseAddress!, length: $0.count, index: 4) }
             e.setVertexBytes(&a, length: 4, index: 5)
+            e.setVertexBuffer(weights, offset: 0, index: 6)
             e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: b.edgeCount)
         }
         func dots(alpha: Float) {
@@ -783,11 +786,23 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             for i in 1..<points.count { lines.append(ScreenLine(a: points[i - 1], b: points[i], color: color, width: width, pencil: pencil)) }
             if closed { lines.append(ScreenLine(a: points[points.count - 1], b: points[0], color: color, width: width, pencil: pencil)) }
         }
-        polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : Self.pencilWidth, pencil: 1)
+        let weights = engine.inkWeights
+        if engine.activeTool == .pencil, weights.count == engine.inkPath.count {
+            for i in engine.inkPath.indices.dropFirst() {
+                // As the line will be once it's down, wider and darker the harder it's pressed.
+                let weight = (weights[i - 1] + weights[i]) / 2
+                var color = style.ink
+                color.w *= 0.7 + 0.3 * simd_clamp((weight - 0.5) * 2, 0, 1)
+                lines.append(ScreenLine(a: engine.inkPath[i - 1], b: engine.inkPath[i], color: color, width: Self.pencilWidth * weight, pencil: 1))
+            }
+        } else {
+            polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : Self.pencilWidth, pencil: 1)
+        }
         if let last = engine.inkPath.last, !engine.inkPrediction.isEmpty {
             var faded = style.ink
             faded.w = 0.45
-            polyline([last] + engine.inkPrediction, color: faded, width: Self.pencilWidth, pencil: 1)
+            let weight = engine.activeTool == .pencil ? weights.last ?? 1 : 1
+            polyline([last] + engine.inkPrediction, color: faded, width: Self.pencilWidth * weight, pencil: 1)
         }
         var lassoColor = style.ink
         lassoColor.w = 0.8

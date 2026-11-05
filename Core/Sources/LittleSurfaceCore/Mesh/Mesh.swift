@@ -27,6 +27,8 @@ public struct Mesh {
     public internal(set) var mirrorPartner: [VertexID] = []
     /// Whether each vertex only shapes a drawn line. See `Bends.swift`.
     public internal(set) var isBend: [Bool] = []
+    /// How heavy a drawn line is at each vertex, where 1 is its usual weight. See `LineWeight`.
+    public internal(set) var lineWeights: [Float] = []
 
     public internal(set) var edgeEnds: [SIMD2<Int32>] = []
     /// Up to two incident faces, -1 for an empty side. A wire edge has none.
@@ -253,6 +255,7 @@ public struct Mesh {
             vertexEdges[Int(id)] = []
             mirrorPartner[Int(id)] = invalidID
             isBend[Int(id)] = false
+            lineWeights[Int(id)] = 1
         } else {
             id = VertexID(positions.count)
             positions.append(p)
@@ -260,6 +263,7 @@ public struct Mesh {
             vertexEdges.append([])
             mirrorPartner.append(invalidID)
             isBend.append(false)
+            lineWeights.append(1)
         }
         vertexCount += 1
         positionVersion &+= 1
@@ -456,6 +460,7 @@ public struct Mesh {
         let (a, b) = ends(e)
         let p = position ?? simd_mix(positions[Int(a)], positions[Int(b)], Vec3(repeating: t))
         let v = addVertex(p)
+        lineWeights[Int(v)] = lineWeights[Int(a)] + (lineWeights[Int(b)] - lineWeights[Int(a)]) * t
 
         // Re-point e to a-v without disturbing its face slots.
         edgeEnds[Int(e)] = SIMD2<Int32>(a, v)
@@ -493,6 +498,7 @@ public struct Mesh {
         for i in 0..<positions.count where vertexAlive[i] {
             vertexMap[i] = out.addVertex(positions[i])
             out.isBend[Int(vertexMap[i])] = isBend[i]
+            out.lineWeights[Int(vertexMap[i])] = lineWeights[i]
         }
         for i in 0..<positions.count where vertexAlive[i] {
             let partner = mirrorPartner[i]

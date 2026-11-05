@@ -24,9 +24,29 @@ public struct StrokePoint: Equatable {
 /// which keeps the path on the surface across triangle boundaries and small features. A place where
 /// the surface really does jump in depth, such as passing over a silhouette, ends the current run
 /// rather than bridging it with invented geometry.
+/// How heavy a pencil line is, from how hard it was pressed. 1 is its usual weight.
+public enum LineWeight {
+    /// How much a line thins at its loose end and at each bend back from it.
+    static let looseEnd: [Float] = [0.35, 0.6, 0.85]
+
+    /// One weight for each pressure along a stroke, from 0 to 1. A stroke with no change in pressure,
+    /// as from a finger, stays at the usual weight. An even hand on the Pencil presses around a quarter.
+    public static func weights(pressures: [Float]) -> [Float] {
+        guard let low = pressures.min(), let high = pressures.max(), high - low > 0.02 else {
+            return [Float](repeating: 1, count: pressures.count)
+        }
+        let reach = 2
+        return pressures.indices.map { i in
+            let around = pressures[max(0, i - reach)...min(pressures.count - 1, i + reach)]
+            return simd_clamp(0.45 + 2.2 * around.reduce(0, +) / Float(around.count), 0.5, 1.7)
+        }
+    }
+}
+
 public struct StrokeCapture {
     public private(set) var runs: [[StrokePoint]] = []
     public private(set) var screenPath: [Vec2] = []
+    public private(set) var screenPressures: [Float] = []
     public private(set) var missCount = 0
     private var runIsOpen = false
 
@@ -56,6 +76,7 @@ public struct StrokeCapture {
         if let last = screenPath.last, simd_length(last - screen) < 0.5 { return }
         let previousScreen = screenPath.last
         screenPath.append(screen)
+        screenPressures.append(pressure)
 
         let current = sample(screen, pressure: pressure)
         guard let current else {

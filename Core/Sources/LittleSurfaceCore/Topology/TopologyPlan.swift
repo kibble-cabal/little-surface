@@ -20,6 +20,8 @@ public struct TopologyPlan {
     public var removeEdges: [EdgeID] = []
     /// Nodes that only shape a drawn line. Every other node this plan touches is a real point.
     public var bends: Set<Int32> = []
+    /// How heavy the line is at the nodes it adds. See `LineWeight`.
+    public var lineWeights: [Int32: Float] = [:]
     /// Plain-language notes for the artist, such as "stopped at existing faces".
     public var notes: [String] = []
 
@@ -183,8 +185,12 @@ public enum PlanApplier {
             } else if case .existing(let v) = node {
                 work.setBend(v, false)
             }
+            if let weight = plan.lineWeights[Int32(i)] { work.lineWeights[Int(nodeVertices[i])] = weight }
             let partner = work.mirrorPartner[Int(nodeVertices[i])]
-            if partner >= 0, partner != nodeVertices[i] { work.setBend(partner, work.isBend[Int(nodeVertices[i])]) }
+            if partner >= 0, partner != nodeVertices[i] {
+                work.setBend(partner, work.isBend[Int(nodeVertices[i])])
+                work.lineWeights[Int(partner)] = work.lineWeights[Int(nodeVertices[i])]
+            }
         }
 
         let stranded = leftBehind.filter { work.isVertexAlive($0) && work.edgesOf($0).isEmpty && !nodeVertices.contains($0) }
