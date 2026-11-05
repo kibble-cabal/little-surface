@@ -8,9 +8,10 @@ public enum DrawnFaces {
     /// there. `around` is the edges of any faces already taken out.
     static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws {
         mesh.settleBends()
+        absorbRetracedLines(along: result.edges, in: &mesh, symmetry: symmetry)
 
         // A line reaches as far as the lines it joins, so two strokes can cut a face between them.
-        var reached = Set(met + result.edges.flatMap { edge -> [VertexID] in
+        var reached = Set(met.filter(mesh.isVertexAlive) + result.edges.flatMap { edge -> [VertexID] in
             let (a, b) = mesh.ends(edge)
             return [a, b]
         })
@@ -93,6 +94,62 @@ public enum DrawnFaces {
     /// How far apart two lines between the same two points can be, against how far apart those points
     /// are, and still be one line drawn twice rather than a narrow shape.
     private static let retracedLineLimit: Float = 0.08
+
+    /// A loose line that a stroke has gone over from end to end is that stroke now. Left in, it would
+    /// run past whatever the stroke joined along the way, and the shapes there couldn't close.
+    private static func absorbRetracedLines(along stroke: [EdgeID], in mesh: inout Mesh, symmetry: SymmetrySettings) {
+        guard !stroke.isEmpty else { return }
+        let drawn = Set(stroke)
+        let segments = stroke.map { edge -> (Vec3, Vec3) in
+            let (a, b) = mesh.ends(edge)
+            return (mesh.position(a), mesh.position(b))
+        }
+        func distanceToStroke(_ p: Vec3) -> Float {
+            segments.reduce(Float.infinity) { closest, segment in
+                let span = segment.1 - segment.0
+                let t = simd_clamp(simd_dot(p - segment.0, span) / max(simd_length_squared(span), 1e-12), 0, 1)
+                return min(closest, simd_length(segment.0 + span * t - p))
+            }
+        }
+        var seen = Set<EdgeID>()
+        var gone = Set<EdgeID>()
+        for edge in mesh.aliveEdges where mesh.isWire(edge) && !drawn.contains(edge) && !seen.contains(edge) {
+            let (chain, points) = wholeLine(through: edge, in: mesh)
+            seen.formUnion(chain)
+            guard chain.allSatisfy({ mesh.isWire($0) && !drawn.contains($0) }), let start = points.first, let end = points.last else { continue }
+            let limit = simd_length(mesh.position(start) - mesh.position(end)) * retracedLineLimit
+            if points.allSatisfy({ distanceToStroke(mesh.position($0)) <= limit }) { gone.formUnion(chain) }
+        }
+        let mirrored = symmetry.activePlane != nil
+        if mirrored { gone = Symmetry.expanded(edges: gone, in: mesh) }
+        let ends = Set(gone.flatMap { edge -> [VertexID] in
+            let (a, b) = mesh.ends(edge)
+            return [a, b]
+        })
+        let strokes = mirrored ? Symmetry.expanded(edges: drawn, in: mesh) : drawn
+        mesh.deleteEdges(gone)
+        // Where it stopped was only ever the end of that line, so the stroke just carries on through.
+        for v in ends where mesh.isVertexAlive(v) && mesh.edgesOf(v).count == 2 && mesh.edgesOf(v).allSatisfy(strokes.contains) {
+            mesh.setBend(v, true)
+        }
+    }
+
+    /// The edges of a line between its real points, and the vertices along it in order.
+    private static func wholeLine(through edge: EdgeID, in mesh: Mesh) -> (edges: [EdgeID], points: [VertexID]) {
+        func walk(from start: VertexID, leaving: EdgeID) -> (edges: [EdgeID], points: [VertexID]) {
+            var edges: [EdgeID] = [], points = [start], at = start, through = leaving
+            while mesh.isBendVertex(at), let next = mesh.edgesOf(at).first(where: { $0 != through }), next != edge {
+                edges.append(next)
+                at = mesh.otherEnd(next, from: at)
+                points.append(at)
+                through = next
+            }
+            return (edges, points)
+        }
+        let (a, b) = mesh.ends(edge)
+        let back = walk(from: a, leaving: edge), on = walk(from: b, leaving: edge)
+        return (back.edges + [edge] + on.edges, back.points.reversed() + on.points)
+    }
 
     /// Going back over a line is how a line gets drawn on paper. It would otherwise leave a sliver of a
     /// shape between the two, so the longer of them stands for both.

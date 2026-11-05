@@ -428,6 +428,20 @@ final class LooseLinesTests: XCTestCase {
         let mesh = engine.mesh
         XCTAssertFalse(mesh.aliveVertices.contains { mesh.edgesOf($0).count == 3 })
     }
+
+    func testDrawingOverALooseLineTakesItsPlace() {
+        let engine = engine()
+        Fixtures.drawPath(engine, straight(Vec2(300, 590), Vec2(500, 590)))
+        Fixtures.drawPath(engine, straight(Vec2(200, 591), Vec2(600, 591)))
+        XCTAssertEqual(engine.statistics.vertices, 2, "one line, with only the stroke's ends as points")
+    }
+
+    func testALineBesideALooseLineIsKept() {
+        let engine = engine()
+        Fixtures.drawPath(engine, straight(Vec2(300, 590), Vec2(500, 590)))
+        Fixtures.drawPath(engine, straight(Vec2(300, 640), Vec2(500, 640)))
+        XCTAssertEqual(engine.statistics.vertices, 4)
+    }
 }
 
 final class LinesOverADipTests: XCTestCase {
