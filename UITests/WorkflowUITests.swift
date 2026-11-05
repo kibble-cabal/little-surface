@@ -196,6 +196,33 @@ final class WorkflowUITests: XCTestCase {
         XCTAssertTrue(button("Undo").isEnabled)
     }
 
+    func testAPickCanBeUndoneAndDraggedAndAStrokeElsewhereStillDraws() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        let drawn = stats
+
+        tap(340, 480)
+        XCTAssertTrue(button("Delete").exists, "a tap picks the point")
+        button("Undo").tap()
+        settle()
+        XCTAssertFalse(app.buttons["Delete"].exists, "undo lets it go")
+        XCTAssertEqual(stats, drawn, "and leaves the drawing alone")
+        button("Redo").tap()
+        settle()
+        XCTAssertTrue(button("Delete").exists)
+
+        point(340, 480).press(forDuration: 0.05, thenDragTo: point(330, 440), withVelocity: 200, thenHoldForDuration: 0.05)
+        settle()
+        XCTAssertEqual(stats, drawn, "dragging it moves it, and draws nothing")
+        XCTAssertTrue(button("Delete").exists, "and it stays picked")
+        shot("a point moved")
+
+        tap(300, 900)
+        XCTAssertFalse(app.buttons["Delete"].exists)
+        draw(CGPoint(x: 340, y: 560), CGPoint(x: 480, y: 560))
+        XCTAssertEqual(stats.lines, drawn.lines + 1)
+    }
+
     // MARK: The brushes
 
     func testEraserAndSmoothAreOneTapAway() throws {

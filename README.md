@@ -24,8 +24,8 @@ There's one pencil, and everything you get comes from the lines you draw. Nothin
 - **Cutting:** draw across a shape to divide it. One stroke can go through as many shapes as it likes. A stroke that stops inside a shape doesn't divide it until another one meets it.
 - **Quads:** a shape with exactly four corners is a quad, as long as no side wraps too far around, about a third of a circle. Its sides go straight and turn to ink. Two cuts across a ring make a quad between them, and the long way around stays curved until you cut it more. If a line ends on the side of a quad, the quad gains a corner and goes back to being a shape, so you can see where the rows don't line up.
 - **Fill:** tap a shape with six or more points on its sides, an even number of them, and **Fill** makes quads between them. It adds no points along the sides, so tick where you want the rows first.
-- **Moving a point:** rest the Pencil on a point for a moment, then drag.
-- **Picking:** tap a line, a shape or a mark, and **Delete** appears. Tapping a tinted shape also shows its points and how many there are.
+- **Picking:** tap a point, a line, a shape or a mark, and **Delete** appears. Tapping a tinted shape also shows its points and how many there are. To pick a line between two shapes, tap right on it. Undo and redo go back and forth through what you've picked, too.
+- **Moving:** tap something, then drag it. It stays picked so you can keep adjusting it, and you can tap somewhere else to draw from there. You can also rest the Pencil on a point for a moment and drag it straight away.
 
 A smooth loop has no points of its own, so it stays a tinted shape until lines cross it.
 

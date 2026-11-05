@@ -167,6 +167,8 @@ public final class RetopoEngine {
         var grabPlaneNormal: Vec3
         var moved = false
         var targets: [VertexID]
+        /// A point picked up by resting on it goes back to being drawn from once it's been put down.
+        var staysPicked = true
     }
 
     private var gesture = Gesture.idle
@@ -898,6 +900,10 @@ public final class RetopoEngine {
                 gesture = .idle
                 return
             }
+            if startsOnPick(screen) {
+                beginSelectGesture(at: screen)
+                break
+            }
             var capture = StrokeCapture(camera: camera, projector: projector)
             capture.add(screen: screen, pressure: pressure)
             gesture = .stroke(capture)
@@ -934,9 +940,8 @@ public final class RetopoEngine {
         case .face:
             gesture = .tapOnly(start: screen)
         case .moveBrush, .relaxBrush:
-            let before = EditSnapshot(mesh: mesh, selection: selection)
             let label = activeTool == .moveBrush ? "Move brush" : "Relax brush"
-            gesture = .brush(before: before, lastHit: nil, label: label)
+            gesture = .brush(before: currentSnapshot, lastHit: nil, label: label)
             brushCursor = screen
             applyBrush(at: screen, pressure: pressure)
         case .erase:
@@ -1026,8 +1031,15 @@ public final class RetopoEngine {
             inkPath = []
             finishStroke(capture, tapPoint: screen)
         case .select(let drag):
-            finishSelectDrag(drag, at: screen)
-            if activeTool == .pencil { selection.clear() }
+            if activeTool == .pencil, !drag.moved {
+                // A press that went nowhere is a tap.
+                selection = drag.before.selection
+                pencilTap(at: screen)
+                recordPick(from: drag.before)
+            } else {
+                finishSelectDrag(drag, at: screen)
+                if activeTool == .pencil, !drag.staysPicked { selection.clear() }
+            }
         case .lasso(let points):
             lassoPath = []
             finishLasso(points, tapPoint: screen)
@@ -1225,10 +1237,16 @@ public final class RetopoEngine {
         picker.ignoresOcclusion = ignoresOcclusionForPicking
         guard let vertex = picker.pickVertex(at: start, radius: pickRadius) else { return }
         inkPath = []
+        let before = currentSnapshot
         selection.clear()
         selection.mode = .vertex
         selection.vertices = [vertex]
         beginSelectGesture(at: start)
+        if case .select(var drag) = gesture {
+            drag.before = before
+            drag.staysPicked = false
+            gesture = .select(drag)
+        }
         rebuildOverlay()
         notify()
     }
@@ -1372,15 +1390,49 @@ public final class RetopoEngine {
             sketchRevision &+= 1
             pickedMark = nil
             recordEdit(before: before, label: "Erase mark")
-        } else {
+        } else if selection.mode == .face {
             deleteSelection()
             clearMessage()
+        } else {
+            let before = currentSnapshot
+            let points = selection.vertices, lines = selection.edges
+            for v in points where mesh.isVertexAlive(v) { erasePoint(v) }
+            if !lines.isEmpty { eraseLines(lines) }
+            selection.clear()
+            recordEdit(before: before, label: "Delete")
         }
         rebuildOverlay()
         notify()
     }
 
-    /// A tap picks what's under it: a whole line, or a quad, with further quads adding to the pick.
+    /// Whether a press landed on what's picked, which picks it up rather than drawing from it.
+    private func startsOnPick(_ screen: Vec2) -> Bool {
+        guard !selection.isEmpty else { return false }
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        return picker.pick(at: screen, mode: selection.mode, radius: pickRadius).map(isSelected) ?? false
+    }
+
+    /// How close to a point a tap has to be to pick it rather than a line running through it.
+    private static let pointPickReach: Float = 14
+    /// How close to a line between two shapes a tap has to be to pick it rather than a shape, which is
+    /// closer than for other lines since the shapes have to stay easy to tap.
+    private static let sharedLinePickReach: Float = 8
+
+    /// An edge and whatever carries it on through bends, up to the real point at each end.
+    private func lineBetweenPoints(through edge: EdgeID) -> Set<EdgeID> {
+        var line: Set<EdgeID> = [edge]
+        let (a, b) = mesh.ends(edge)
+        for start in [a, b] {
+            var current = start
+            while mesh.isBendVertex(current), let next = mesh.edgesOf(current).first(where: { !line.contains($0) }) {
+                line.insert(next)
+                current = mesh.otherEnd(next, from: current)
+            }
+        }
+        return line
+    }
+
     /// Puts a dot wherever the stroke so far has crossed a line, which is where it's making a point.
     private func showPointsAhead(of capture: StrokeCapture) {
         let path = capture.screenPath
@@ -1484,6 +1536,7 @@ public final class RetopoEngine {
         return (out, crossed)
     }
 
+    /// A tap picks what's under it: a point, a whole line, or a quad, with further quads adding to the pick.
     private func pencilTap(at screen: Vec2) {
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
         picker.ignoresOcclusion = ignoresOcclusionForPicking
@@ -1493,11 +1546,20 @@ public final class RetopoEngine {
             sketchRevision &+= 1
             return
         }
-        if let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius, where: { mesh.faceCountOf(edge: $0) < 2 }),
-           let chain = ChainFinder.chain(through: edge, in: mesh) {
+        if let vertex = picker.pickVertex(at: screen, radius: Self.pointPickReach) {
+            let wasPicked = selection.mode == .vertex && selection.vertices == [vertex]
+            selection.clear()
+            selection.mode = .vertex
+            if !wasPicked { selection.vertices = [vertex] }
+        } else if let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius, where: { mesh.faceCountOf(edge: $0) < 2 }),
+                  let chain = ChainFinder.chain(through: edge, in: mesh) {
             selection.clear()
             selection.mode = .edge
             selection.edges = Set(chain.edges)
+        } else if let (edge, _) = picker.pickEdge(at: screen, radius: Self.sharedLinePickReach) {
+            selection.clear()
+            selection.mode = .edge
+            selection.edges = lineBetweenPoints(through: edge)
         } else if let face = picker.pickFace(at: screen) {
             if selection.mode != .face { selection.clear() }
             selection.mode = .face
@@ -1999,10 +2061,14 @@ public final class RetopoEngine {
             grab = simd_mix(mesh.position(a), mesh.position(b), Vec3(repeating: t))
         case .face(let f): grab = mesh.faceCenter(f)
         }
+        // Held by the spot under the Pencil, so that doesn't jump to it when the drag starts.
+        if case .vertex = hit {} else if let projector = activeProjector, let there = projector.raycast(camera.ray(through: screen)) {
+            grab = there.offsetPosition(projector.surfaceOffset)
+        }
         gesture = .select(SelectDrag(
             start: screen,
             startedOn: hit,
-            before: EditSnapshot(mesh: mesh, selection: selection),
+            before: currentSnapshot,
             basePositions: [:],
             grabPoint: grab,
             grabPlaneNormal: camera.forward,
@@ -2150,6 +2216,11 @@ public final class RetopoEngine {
 
     private func finishSelectDrag(_ drag: SelectDrag, at screen: Vec2) {
         if drag.moved {
+            if activeTool == .pencil {
+                // A side moved short enough to go straight now does, as it would have when it was drawn.
+                mesh.straightenQuads(mirrored: symmetry.isEnabled)
+                selection.prune(in: mesh)
+            }
             recordEdit(before: drag.before, label: dragBehavior == .slide ? "Slide" : "Move")
             onEvent?(.vertexMoved)
             return
