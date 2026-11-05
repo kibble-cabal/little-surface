@@ -159,6 +159,9 @@ public final class RetopoEngine {
         case lasso([Vec2])
         case brush(before: EditSnapshot, lastHit: SurfaceHit?, label: String)
         case erase
+        /// A stroke that's become a clean shape. `grabbed` is where the Pencil was when it did, and it
+        /// can still resize and turn it from there, until it lifts.
+        case quickShape(base: QuickShape, grabbed: Vec2, current: QuickShape)
         case sketch(StrokeCapture)
         case sketchErase(before: EditSnapshot, changed: Bool)
     }
@@ -1023,6 +1026,8 @@ public final class RetopoEngine {
         case .erase:
             brushCursor = screen
             rub(to: screen)
+        case .quickShape(let base, let grabbed, _):
+            showQuickShape(base.dragged(from: grabbed, to: screen), base: base, grabbed: grabbed)
         case .sketch(var capture):
             capture.add(screen: screen, pressure: pressure)
             gesture = .sketch(capture)
@@ -1074,6 +1079,13 @@ public final class RetopoEngine {
         case .erase:
             brushCursor = nil
             finishRub()
+        case .quickShape(_, _, let shape):
+            inkPath = []
+            if let projector {
+                var capture = StrokeCapture(camera: camera, projector: projector)
+                for p in shape.points { capture.add(screen: p) }
+                finishPencilStroke(capture, tapPoint: screen, shape: shape)
+            }
         case .sketch(var capture):
             capture.add(screen: screen, pressure: pressure)
             inkPath = []
@@ -1272,7 +1284,43 @@ public final class RetopoEngine {
         notify()
     }
 
-    private func finishPencilStroke(_ capture: StrokeCapture, tapPoint: Vec2) {
+    /// The Pencil has rested partway through a stroke. If it looks like it's going for a shape, it
+    /// becomes that shape. Nothing's made until it lifts.
+    public func pencilPaused(at screen: Vec2) {
+        guard activeTool == .pencil, !strokeReachedMiddle, case .stroke(let capture) = gesture,
+              let shape = QuickShape.recognize(capture.screenPath + [screen]) else { return }
+        overlay.previewPoints = []
+        inkPrediction = []
+        showQuickShape(shape, base: shape, grabbed: screen)
+        notify()
+    }
+
+    private func showQuickShape(_ shape: QuickShape, base: QuickShape, grabbed: Vec2) {
+        gesture = .quickShape(base: base, grabbed: grabbed, current: shape)
+        inkPath = shape.points
+        guard let plane = symmetry.activePlane, let projector else { return }
+        // Mirrored points are only shown, so a rough outline will do, and this runs at Pencil rate.
+        let step = max(shape.points.count / 64, 1)
+        var outline: [Vec3] = []
+        for i in stride(from: 0, to: shape.points.count, by: step) {
+            if let hit = projector.raycast(camera.ray(through: shape.points[i])) { outline.append(plane.reflect(hit.position)) }
+        }
+        overlay.mirrorEdges = zip(outline, outline.dropFirst()).flatMap { [$0, $1] }
+    }
+
+    /// Where a clean shape's corners land on the surface, on the point of the path nearest each one.
+    private func placeCorners(of shape: QuickShape, on path: inout ProcessedPath) {
+        guard let projector else { return }
+        for corner in shape.corners {
+            guard let i = path.points.indices.min(by: { simd_length(path.points[$0].screen - corner) < simd_length(path.points[$1].screen - corner) }),
+                  let hit = projector.raycast(camera.ray(through: corner)) else { continue }
+            path.points[i].position = hit.position
+            path.points[i].normal = hit.normal
+            path.points[i].isCorner = true
+        }
+    }
+
+    private func finishPencilStroke(_ capture: StrokeCapture, tapPoint: Vec2, shape: QuickShape? = nil) {
         overlay.mirrorEdges = []
         guard capture.screenLength >= minimumStrokeLength else {
             let before = currentSnapshot
@@ -1290,7 +1338,13 @@ public final class RetopoEngine {
         let scale = camera.worldPerPoint(at: runs[0][runs[0].count / 2].position)
         let closeRadius = tools.stroke.closeRadiusPoints * scale
         tools.stroke.edgeLength = Self.bendSpacingPoints * scale
-        var paths = runs.compactMap { StrokeProcessor.process(run: $0, settings: tools.stroke, projector: projector, closeRadius: closeRadius) }
+        var settings = tools.stroke
+        // A clean shape has nothing to steady, and smoothing would round its corners.
+        if shape != nil { settings.smoothing = 0 }
+        var paths = runs.compactMap { StrokeProcessor.process(run: $0, settings: settings, projector: projector, closeRadius: closeRadius) }
+        if let shape {
+            for i in paths.indices { placeCorners(of: shape, on: &paths[i]) }
+        }
         if let plane = symmetry.activePlane {
             var kept: [ProcessedPath] = []
             for path in paths {
@@ -1300,7 +1354,7 @@ public final class RetopoEngine {
             }
             paths = kept
         }
-        if paths.count == 1, paths[0].canClose, closesLoopsAutomatically {
+        if paths.count == 1, paths[0].canClose, closesLoopsAutomatically || shape?.isClosed == true {
             paths = [StrokeProcessor.closed(paths[0], spacing: tools.stroke.edgeLength, projector: projector)]
         }
         guard !paths.isEmpty else {

@@ -77,7 +77,7 @@ public enum StrokePlanner {
         for (i, p) in path.points.enumerated() {
             if i > 0 { along += simd_length(p.position - path.points[i - 1].position) }
             let lifted = p.position + p.normal * offset
-            nodes.append(PathNode(node: .new(position: lifted, normal: p.normal), position: lifted, normal: p.normal, along: along))
+            nodes.append(PathNode(node: .new(position: lifted, normal: p.normal), position: lifted, normal: p.normal, along: along, isReal: p.isCorner))
         }
 
         var out = StrokePlan(plan: TopologyPlan())

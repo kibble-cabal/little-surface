@@ -63,6 +63,8 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
     }
 
     private var holdTimer: Timer?
+    private var pauseTimer: Timer?
+    private var pauseSpot = CGPoint.zero
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
@@ -95,6 +97,19 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         }
     }
 
+    /// Resting the tip partway through a stroke tidies it into the shape it was going for. A real
+    /// Pencil never quite stops, so only moving away from where it last settled counts.
+    private func watchForPause(at p: CGPoint) {
+        if pauseTimer != nil, hypot(p.x - pauseSpot.x, p.y - pauseSpot.y) <= 4 { return }
+        pauseSpot = p
+        pauseTimer?.invalidate()
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            guard let self, let touch = self.pencilTouch ?? self.fingerStroke else { return }
+            self.engine?.pencilPaused(at: self.point(touch))
+            self.setNeedsDisplay()
+        }
+    }
+
     override var accessibilityValue: String? {
         get {
             guard let engine else { return nil }
@@ -120,6 +135,9 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 engine?.steadiness = settings.steadiness
                 engine?.pencilBegan(at: point(touch), pressure: pressure(touch))
                 scheduleHold()
+                pauseTimer?.invalidate()
+                pauseTimer = nil
+                watchForPause(at: touch.location(in: self))
             default:
                 // Palm rejection: nothing counts while the Pencil is down or just after, or if it's palm-sized.
                 if pencilTouch != nil || now - lastPencilTime < 0.35 || touch.majorRadius > 60 {
@@ -148,6 +166,9 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 engine?.steadiness = settings.steadiness
                 engine?.pencilBegan(at: point(navTouches[0]), pressure: 1)
                 scheduleHold()
+                pauseTimer?.invalidate()
+                pauseTimer = nil
+                watchForPause(at: navTouches[0].location(in: self))
             }
         default:
             // A second finger arriving just after the first means it was a navigation gesture all along.
@@ -187,6 +208,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
             let last = i == coalesced.count - 1
             let p = sample.location(in: self)
             engine?.pencilMoved(to: Vec2(Float(p.x), Float(p.y)), pressure: pressure(sample), predicted: last ? predicted : [])
+            watchForPause(at: p)
         }
     }
 

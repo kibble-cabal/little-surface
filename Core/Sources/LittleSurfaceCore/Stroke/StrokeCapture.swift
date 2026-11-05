@@ -7,6 +7,8 @@ public struct StrokePoint: Equatable {
     public var normal: Vec3
     public var screen: Vec2
     public var pressure: Float
+    /// A corner someone means, rather than one the stroke happens to turn sharply at.
+    public var isCorner = false
 
     public init(position: Vec3, normal: Vec3, screen: Vec2 = .zero, pressure: Float = 1) {
         self.position = position
