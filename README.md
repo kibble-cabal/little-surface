@@ -9,22 +9,25 @@ Little Surface is built for the 2020 iPad and newer, with iPadOS 18 or later. It
 ## Getting started
 
 1. On the welcome screen, tap **+**, then **Example** for a model to practice on, or **Import Model** for your own OBJ, GLB or glTF file.
-2. Draw two lines side by side on the model.
-3. Quads appear between them in pencil. Draw somewhere else and they turn to ink.
+2. Draw a shape on the model. It stays pencil, with a soft tint, until it has four corners.
+3. Draw lines across it to cut it up. Every shape with four corners is a quad, and it turns to ink.
 
 No Pencil? One finger turns the model by default. Under **… > Settings**, set **One finger** to **Draws, as a Pencil would**.
 
 ## Drawing
 
-There's one pencil, and the mark says what you mean:
+There's one pencil, and everything you get comes from the lines you draw. Nothing fills itself in, and there's no number to set.
 
-- **Lines:** draw a line and it becomes edges. Start from the end of another line to carry it on, or draw across lines to connect them.
-- **Loops:** bring a stroke back to its start and it closes.
-- **Quad size:** zoom sets it. Zoom in for smaller quads and out for bigger ones. A stroke that starts or ends on existing topology matches it instead.
-- **Fills:** when your lines enclose an area, it fills with quads in pencil. Draw through them and they reshape. They turn to ink when you move on, and undo takes them away while leaving your line.
-- **Marks:** a stroke that can't become topology stays as a pencil line. Trace over it, or leave it. Marks don't export.
-- **Moving a point:** rest the Pencil on a point for a moment, then drag. Points show up as you zoom in.
-- **Picking:** tap a line, a quad or a mark, and **Delete** appears. If you tap an empty loop, **Fill** appears too.
+- **Lines:** a line keeps the curve you drew until it's part of a quad. Start from the end of another line to carry it on.
+- **Points:** a line only has points at its ends, at its sharp corners and wherever another line meets it. A short tick across a line puts a point there.
+- **Shapes:** when lines enclose an area, it becomes one shape, however many corners it has. It's tinted until it's a quad.
+- **Cutting:** draw across a shape to divide it. One stroke can go through as many shapes as it likes. A stroke that stops inside a shape doesn't divide it until another one meets it.
+- **Quads:** a shape with exactly four corners is a quad. Its sides go straight and turn to ink. If a line ends on the side of a quad, the quad gains a corner and goes back to being a shape, so you can see where the rows don't line up.
+- **Fill:** tap a shape with an even number of points on its sides, and **Fill** makes quads between them. It adds no points along the sides, so tick where you want the rows first.
+- **Moving a point:** rest the Pencil on a point for a moment, then drag.
+- **Picking:** tap a line, a shape or a mark, and **Delete** appears.
+
+A smooth loop has no points of its own, so it stays a tinted shape until lines cross it. Shapes that aren't quads yet still export: as n-gons with straight sides, or with their curve if they have fewer than three points.
 
 Fingers always move the view: two fingers pan and pinch to zoom. Tap with two fingers to undo, or three to redo.
 

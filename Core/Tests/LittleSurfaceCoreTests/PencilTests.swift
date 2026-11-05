@@ -79,6 +79,24 @@ final class PencilTests: XCTestCase {
         XCTAssertEqual(curved.statistics.vertices, 2)
     }
 
+    /// How many points a shaky stroke gets, with this much jitter on every sample, in screen points.
+    private func pointsOnAShakyLine(jitter: Float) -> Int {
+        var random = SplitMix(seed: 7)
+        let engine = pencil()
+        let path = (0...60).map { i -> Vec2 in
+            let t = Float(i) / 60
+            return Vec2(400 + 200 * t, 400 + 30 * sin(t * 3)) + Vec2(random.next(), random.next()) * jitter
+        }
+        Fixtures.drawPath(engine, path)
+        return engine.statistics.vertices
+    }
+
+    func testAShakyHandDoesNotMakeCorners() {
+        XCTAssertEqual(pointsOnAShakyLine(jitter: 1), 2)
+        XCTAssertEqual(pointsOnAShakyLine(jitter: 2), 2)
+        XCTAssertEqual(pointsOnAShakyLine(jitter: 3), 2)
+    }
+
     func testAShortOvershootPastALineIsLeftOut() {
         let engine = pencil()
         Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
@@ -519,5 +537,18 @@ final class PencilTests: XCTestCase {
         XCTAssertGreaterThan(engine.mesh.edgeCount, 0, "the two sides are left")
         XCTAssertEqual(engine.statistics.vertices, 4, "each with a point at its new end")
         XCTAssertEqual(engine.statistics.edges, 2)
+    }
+}
+
+/// Repeatable noise from -1 to 1.
+private struct SplitMix {
+    var state: UInt64
+    init(seed: UInt64) { state = seed }
+    mutating func next() -> Float {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return Float((z ^ (z >> 31)) % 2001) / 1000 - 1
     }
 }
