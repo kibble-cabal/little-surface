@@ -80,6 +80,7 @@ struct FaceOut {
     float4 position [[position]];
     float3 world;
     float4 color;
+    float showsFlip;
 };
 
 vertex FaceOut face_vertex(uint vid [[vertex_id]],
@@ -93,7 +94,11 @@ vertex FaceOut face_vertex(uint vid [[vertex_id]],
     out.position = pulled(p, u);
     out.position.z -= u.depthBias * out.position.w;
     out.world = p;
-    out.color = palette[flags[vid / 3]];
+    uchar flag = flags[vid / 3];
+    out.color = palette[flag];
+    // A shape that isn't a quad yet follows its curve wherever it goes, so parts of it can face away
+    // without anything being wrong. Only a finished quad can really be inside out.
+    out.showsFlip = flag == 0 ? 1 : 0;
     return out;
 }
 
@@ -103,7 +108,7 @@ fragment float4 face_fragment(FaceOut in [[stage_in]],
                               constant float4 &backTint [[buffer(1)]]) {
     float3 n = normalize(cross(dfdx(in.world), dfdy(in.world)));
     float4 c = in.color;
-    if (!front) {
+    if (!front && in.showsFlip > 0.5) {
         // Flipped faces read differently, so wrong winding shows at a glance.
         c = float4(mix(c.rgb, backTint.rgb, backTint.a), c.a);
     }
