@@ -7,7 +7,11 @@ import simd
 public extension Mesh {
     func isBendVertex(_ v: VertexID) -> Bool { isBend[Int(v)] }
 
-    mutating func setBend(_ v: VertexID, _ bend: Bool) { isBend[Int(v)] = bend }
+    mutating func setBend(_ v: VertexID, _ bend: Bool) {
+        guard isBend[Int(v)] != bend else { return }
+        isBend[Int(v)] = bend
+        topologyVersion &+= 1
+    }
 
     /// A face's real corners.
     func cornerCount(of f: FaceID) -> Int { loop(f).reduce(0) { $0 + (isBend[Int($1)] ? 0 : 1) } }
@@ -22,7 +26,7 @@ public extension Mesh {
 
     /// Anything that isn't simply passing along a line is a real point, whatever made it so.
     mutating func settleBends() {
-        for i in isBend.indices where isBend[i] && (!vertexAlive[i] || vertexEdges[i].count != 2) { isBend[i] = false }
+        for i in isBend.indices where isBend[i] && (!vertexAlive[i] || vertexEdges[i].count != 2) { setBend(VertexID(i), false) }
     }
 
     /// Quads have straight sides. The curve they were drawn with has done its job.

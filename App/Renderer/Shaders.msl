@@ -17,12 +17,12 @@ struct Uniforms {
 
 /// Projects a retopology point at its true place on screen, but with the depth of a point nearer the
 /// viewer. Flat quads on a curved surface dip below it, and this keeps them showing above it.
-static float4 pulled(float3 p, constant Uniforms &u) {
+static float4 pulled(float3 p, constant Uniforms &u, float extra = 0) {
     float4 clip = u.viewProj * float4(p, 1);
     float3 toEye = u.eye - p;
     float distance = length(toEye);
     if (distance < 1e-5) return clip;
-    float4 near = u.viewProj * float4(p + toEye / distance * min(u.surfacePull, distance * 0.5), 1);
+    float4 near = u.viewProj * float4(p + toEye / distance * min(u.surfacePull + extra, distance * 0.5), 1);
     if (near.w > 1e-4) clip.z = max(near.z / near.w, 0.0f) * clip.w;
     return clip;
 }
@@ -154,8 +154,10 @@ vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     uchar f = flags[iid];
     float2 corner = quadCorners[vid];
     float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : 1.0);
-    float4 a = pulled(positions[e.x], u);
-    float4 b = pulled(positions[e.y], u);
+    // The longer a straight edge, the further it can sag under a curved surface it's still in front of.
+    float sag = length(positions[e.x] - positions[e.y]) * 0.2;
+    float4 a = pulled(positions[e.x], u, sag);
+    float4 b = pulled(positions[e.y], u, sag);
     out.position = thickLine(a, b, corner, width, u.viewport);
     out.position.z -= u.depthBias * 1.5 * out.position.w;
     float4 c = palette[f];

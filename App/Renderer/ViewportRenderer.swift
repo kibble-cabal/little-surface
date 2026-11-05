@@ -44,7 +44,8 @@ private enum ElementFlag {
     static let selected: UInt8 = 1
     static let hovered: UInt8 = 2
     static let issue: UInt8 = 3
-    static let boundary: UInt8 = 4
+    /// A line or a shape that isn't a finished quad.
+    static let unfinished: UInt8 = 4
 }
 
 struct ViewportStyle {
@@ -71,6 +72,7 @@ struct ViewportStyle {
         let hover = dark ? Vec4(1.0, 0.84, 0.04, 1) : Vec4(0.95, 0.72, 0.0, 1)
         let issue = Vec4(0.86, 0.16, 0.25, 1)
         let wash = Vec4(ink.x, ink.y, ink.z, 0.14)
+        let unfinished = dark ? Vec4(0.95, 0.72, 0.40, 0.2) : Vec4(0.88, 0.62, 0.28, 0.26)
         return ViewportStyle(
             background: dark ? MTLClearColor(red: 0.13, green: 0.13, blue: 0.14, alpha: 1)
                 : MTLClearColor(red: 0.965, green: 0.955, blue: 0.93, alpha: 1),
@@ -78,7 +80,7 @@ struct ViewportStyle {
             faces: [
                 wash, Vec4(selected.x, selected.y, selected.z, 0.7),
                 Vec4(hover.x, hover.y, hover.z, 0.7), Vec4(issue.x, issue.y, issue.z, 0.8),
-                wash,
+                unfinished,
             ],
             edges: [ink, selected, hover, issue, graphite],
             dots: [ink, selected, hover, issue, ink],
@@ -387,14 +389,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             if issue?.faces.contains(f) == true { return ElementFlag.issue }
             if selection.faces.contains(f) { return ElementFlag.selected }
             if f == hoverFace { return ElementFlag.hovered }
-            return ElementFlag.normal
+            return mesh.isQuad(f) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.triFlags)
         write(topology.edgeIDs.map { e -> UInt8 in
             if issue?.edges.contains(e) == true { return ElementFlag.issue }
             if selection.edges.contains(e) || edgesOfSelectedFaces.contains(e) { return ElementFlag.selected }
             if e == hoverEdge { return ElementFlag.hovered }
-            if mesh.isWire(e) { return ElementFlag.boundary }
-            return ElementFlag.normal
+            let faces = mesh.facesOf(edge: e)
+            return !faces.isEmpty && faces.allSatisfy(mesh.isQuad) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.edgeFlags)
         write(topology.dots.map { v -> UInt8 in
             let id = VertexID(v)
@@ -553,9 +555,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             if !xray {
                 // Where a face dips under the model, it tints the surface instead of disappearing.
                 // Only faces turned toward the viewer do this, so the far side of the model stays hidden.
-                var tint = uniforms
-                tint.faceOpacity *= 0.65
-                e.setFragmentBytes(&tint, length: MemoryLayout<Uniforms>.stride, index: 0)
+                e.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
                 e.setDepthStencilState(depthOccluded)
                 e.setCullMode(.back)
                 e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: b.cornerCount)
