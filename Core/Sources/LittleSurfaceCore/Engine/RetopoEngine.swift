@@ -1320,7 +1320,7 @@ public final class RetopoEngine {
                 met += result.nodeVertices
             }
             guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
-            try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector, mirrored: symmetry.isEnabled)
+            try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector, symmetry: symmetry)
             selection.clear()
         }
         clearMessage()
@@ -2405,7 +2405,7 @@ public final class RetopoEngine {
             around += mesh.edgeLoop(f).filter { !gone.contains($0) }
         }
         mesh.deleteEdges(gone)
-        try? DrawnFaces.update(after: PlanResult(), met: [], around: around, in: &mesh, projector: projector, mirrored: symmetry.isEnabled)
+        try? DrawnFaces.update(after: PlanResult(), met: [], around: around, in: &mesh, projector: projector, symmetry: symmetry)
     }
 
     // MARK: Selection commands

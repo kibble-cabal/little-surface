@@ -396,3 +396,58 @@ final class StarPointTests: XCTestCase {
         XCTAssertEqual(MeshValidator.stars(mesh), [center])
     }
 }
+
+/// A straight edge can stand well off the model where it spans a dip.
+final class LinesOverADipTests: XCTestCase {
+    /// A bowl facing the camera, steep enough that an edge across it is far from the bottom.
+    private func bowl() -> SourceObject {
+        var positions: [Vec3] = []
+        var indices: [UInt32] = []
+        let divisions = 60
+        for y in 0...divisions {
+            for x in 0...divisions {
+                let p = Vec2(Float(x), Float(y)) / Float(divisions) * 4 - 2
+                positions.append(Vec3(p.x, p.y, simd_length_squared(p) * 0.8))
+            }
+        }
+        let stride = UInt32(divisions + 1)
+        for y in 0..<UInt32(divisions) {
+            for x in 0..<UInt32(divisions) {
+                let a = y * stride + x, b = a + 1, c = a + stride + 1, d = a + stride
+                indices += [a, b, c, a, c, d]
+            }
+        }
+        return SourceObject(name: "Bowl", positions: positions, indices: indices)
+    }
+
+    private func straight(_ a: Vec2, _ b: Vec2, steps: Int = 24) -> [Vec2] {
+        (0...steps).map { simd_mix(a, b, Vec2(repeating: Float($0) / Float(steps))) }
+    }
+
+    private func engineWithEdgeAcrossBowl() throws -> RetopoEngine {
+        var camera = Fixtures.frontCamera(distance: 9)
+        camera.sceneRadius = 4
+        let engine = Fixtures.engine(with: bowl(), camera: camera)
+        engine.setTool(.pencil)
+        engine.perform("Edge") { mesh, _ in
+            let a = mesh.addVertex(Vec3(-1, 0, 0.8)), b = mesh.addVertex(Vec3(1, 0, 0.8))
+            _ = try mesh.ensureEdge(a, b)
+        }
+        return engine
+    }
+
+    func testAStraightLineThatIsNoLongerAQuadsSideGoesBackOnTheModel() throws {
+        let engine = try engineWithEdgeAcrossBowl()
+        let start = try XCTUnwrap(engine.camera.project(Vec3(-1, 0, 0.8))).screen
+        // Any stroke brings the drawing up to date.
+        Fixtures.drawPath(engine, straight(start + Vec2(-30, -90), start + Vec2(30, -90)))
+        let mesh = engine.mesh
+        XCTAssertEqual(engine.statistics.vertices, 4, "the line gains no points of its own")
+        let onTheLine = mesh.aliveVertices.filter { mesh.isBendVertex($0) && abs(mesh.position($0).y) < 0.05 }
+        XCTAssertFalse(onTheLine.isEmpty, "it has to bend to follow the bowl")
+        for v in onTheLine {
+            let gap = try XCTUnwrap(engine.projector?.closest(to: mesh.position(v), maxDistance: .greatestFiniteMagnitude))
+            XCTAssertLessThan(simd_length(gap.position - mesh.position(v)), 0.01)
+        }
+    }
+}

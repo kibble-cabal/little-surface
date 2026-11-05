@@ -6,7 +6,7 @@ import simd
 public enum DrawnFaces {
     /// After a stroke: `result` is what it added, and `met` holds the points it used that were already
     /// there. `around` is the edges of any faces already taken out.
-    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, mirrored: Bool) throws {
+    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws {
         mesh.settleBends()
 
         // A line reaches as far as the lines it joins, so two strokes can cut a face between them.
@@ -47,7 +47,47 @@ public enum DrawnFaces {
             try mesh.addFace(loop, autoOrient: false)
         }
         mergeRetracedLines(in: &mesh)
-        mesh.straightenQuads(mirrored: mirrored)
+        mesh.straightenQuads(mirrored: symmetry.isEnabled)
+        try layLinesOnModel(in: &mesh, projector: projector, symmetry: symmetry)
+    }
+
+    /// How far a straight line can stand off the model, against its length, before it's put back on.
+    private static let liftedLineLimit: Float = 0.05
+    private static let liftedLinePieces = 8
+
+    /// Only a quad's sides are straight. A straight line left over from a quad that's since gained a
+    /// corner goes back to lying on the model as a pencil line does, rather than spanning any dips.
+    private static func layLinesOnModel(in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws {
+        guard let projector else { return }
+        var plan = TopologyPlan()
+        var covered = Set<EdgeID>()
+        for e in mesh.aliveEdges where !covered.contains(e) && !mesh.facesOf(edge: e).contains(where: mesh.isQuad) {
+            let (a, b) = mesh.ends(e)
+            guard !mesh.isBendVertex(a), !mesh.isBendVertex(b) else { continue }
+            let pa = mesh.position(a), pb = mesh.position(b)
+            func onModel(_ t: Float) -> SurfaceHit? {
+                projector.closest(to: simd_mix(pa, pb, Vec3(repeating: t)), maxDistance: .greatestFiniteMagnitude)
+            }
+            let limit = simd_length(pb - pa) * liftedLineLimit
+            let lifted = [0.25, 0.5, 0.75].contains { (t: Float) in
+                guard let hit = onModel(t) else { return false }
+                return simd_length(hit.position - simd_mix(pa, pb, Vec3(repeating: t))) > limit
+            }
+            guard lifted else { continue }
+            if symmetry.activePlane != nil, let mirror = Symmetry.mirrorEdge(of: e, in: mesh) {
+                // A line along the middle is its own mirror image, and the other side of one follows it.
+                if mirror == e { continue }
+                covered.insert(mirror)
+            }
+            for piece in 1..<liftedLinePieces {
+                let t = Float(piece) / Float(liftedLinePieces)
+                guard let hit = onModel(t) else { continue }
+                plan.bends.insert(Int32(plan.nodes.count))
+                plan.nodes.append(.split(edge: e, t: t, position: hit.position + hit.normal * projector.surfaceOffset))
+            }
+        }
+        guard !plan.nodes.isEmpty else { return }
+        _ = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
     }
 
     /// How far apart two lines between the same two points can be, against how far apart those points
