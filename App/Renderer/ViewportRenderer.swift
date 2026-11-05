@@ -50,6 +50,8 @@ private enum ElementFlag {
     static let unfinished: UInt8 = 4
     /// A point where five or more lines meet.
     static let star: UInt8 = 5
+    /// The end of a line that isn't joined to anything.
+    static let looseEnd: UInt8 = 6
 }
 
 struct ViewportStyle {
@@ -87,7 +89,7 @@ struct ViewportStyle {
                 unfinished,
             ],
             edges: [ink, selected, hover, issue, graphite],
-            dots: [ink, selected, hover, issue, graphite, star],
+            dots: [ink, selected, hover, issue, graphite, star, Vec4(1, 1, 1, 1)],
             backTint: Vec4(0.72, 0.18, 0.42, 0.7),
             preview: graphite,
             warning: issue,
@@ -411,6 +413,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             if selection.vertices.contains(id) { return ElementFlag.selected }
             if id == hoverVertex { return ElementFlag.hovered }
             if stars.contains(id) { return ElementFlag.star }
+            if mesh.edgesOf(id).count == 1 { return ElementFlag.looseEnd }
             return inked.contains(id) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.dotFlags)
     }

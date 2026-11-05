@@ -206,6 +206,8 @@ struct DotOut {
     float4 position [[position]];
     float4 color;
     float2 uv;
+    /// 1 for a white dot with a black outline.
+    float outlined;
 };
 
 vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
@@ -219,7 +221,7 @@ vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     uint slot = slots[iid];
     uchar f = flags[iid];
     float2 corner = quadCorners[vid] * float2(2, 1) - float2(1, 0);
-    float size = u.dotSize * ((f == 1 || f == 2 || f == 3 || f == 5) ? 1.7 : 1.0);
+    float size = u.dotSize * ((f == 1 || f == 2 || f == 3 || f == 5) ? 1.7 : (f == 6 ? 1.5 : 1.0));
     float4 clip = pulled(positions[slot], u);
     if (clip.w < 1e-4) clip = float4(2, 2, 2, 1);
     clip.xy += corner * size * 0.5 / (u.viewport * 0.5) * clip.w;
@@ -229,6 +231,7 @@ vertex DotOut dot_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     // Picked, hovered and flagged points always show.
     out.color = float4(c.rgb, (f == 1 || f == 2 || f == 3) ? c.a : c.a * alphaScale);
     out.uv = corner;
+    out.outlined = f == 6 ? 1 : 0;
     return out;
 }
 
@@ -236,7 +239,9 @@ fragment float4 dot_fragment(DotOut in [[stage_in]]) {
     float r = length(in.uv);
     float a = 1 - smoothstep(0.82, 1.0, r);
     if (a <= 0) discard_fragment();
-    return float4(in.color.rgb, in.color.a * a);
+    float3 color = in.color.rgb;
+    if (in.outlined > 0.5) color *= 1 - smoothstep(0.48, 0.62, r);
+    return float4(color, in.color.a * a);
 }
 
 // MARK: Overlays
