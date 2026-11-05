@@ -213,4 +213,56 @@ final class KeepingLinesTests: XCTestCase {
         tap(engine, Vec2(400, 500))
         XCTAssertEqual(realPoints(engine), 4)
     }
+
+    // MARK: Seeing points as they're made
+
+    private func moveAlong(_ engine: RetopoEngine, _ path: [Vec2]) {
+        engine.pencilBegan(at: path[0])
+        for p in path.dropFirst() { engine.pencilMoved(to: p) }
+    }
+
+    func testADotShowsWhereAStrokeCrossesALineAsItGoes() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        moveAlong(engine, straight(Vec2(500, 400), Vec2(500, 480), steps: 10))
+        XCTAssertEqual(engine.overlay.previewPoints.count, 0)
+        for p in straight(Vec2(500, 480), Vec2(500, 560), steps: 10).dropFirst() { engine.pencilMoved(to: p) }
+        XCTAssertEqual(engine.overlay.previewPoints.count, 1)
+        engine.pencilEnded(at: Vec2(500, 560))
+        XCTAssertEqual(engine.overlay.previewPoints.count, 0, "The real point has taken over")
+        XCTAssertEqual(realPoints(engine), 5)
+    }
+
+    func testTheDotIsWhereThePointEndsUp() throws {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        moveAlong(engine, straight(Vec2(460, 420), Vec2(460, 580), steps: 30))
+        let dot = try XCTUnwrap(engine.overlay.previewPoints.first)
+        engine.pencilEnded(at: Vec2(460, 580))
+        let mesh = engine.mesh
+        let nearest = mesh.aliveVertices.filter { !mesh.isBendVertex($0) }.map { simd_length(mesh.position($0) - dot) }.min() ?? .infinity
+        XCTAssertLessThan(nearest, 0.02)
+    }
+
+    func testDotsMirrorAndOneShowsWhereTheStrokeStopsAtTheMiddle() {
+        let engine = pencil()
+        engine.setSymmetryEnabled(true)
+        Fixtures.drawPath(engine, straight(Vec2(420, 420), Vec2(420, 580)))
+        moveAlong(engine, straight(Vec2(380, 500), Vec2(560, 500), steps: 40))
+        // Crossing the line, its mirror image, and the middle, where it stopped.
+        XCTAssertEqual(engine.overlay.previewPoints.count, 3)
+        engine.pencilCancelled()
+        XCTAssertEqual(engine.overlay.previewPoints.count, 0)
+    }
+
+    func testNoDotForALineOnTheFarSide() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        var back = Fixtures.frontCamera()
+        back.setPreset(.back)
+        engine.camera = back
+        moveAlong(engine, straight(Vec2(500, 400), Vec2(500, 600), steps: 30))
+        XCTAssertEqual(engine.overlay.previewPoints.count, 0)
+        engine.pencilCancelled()
+    }
 }

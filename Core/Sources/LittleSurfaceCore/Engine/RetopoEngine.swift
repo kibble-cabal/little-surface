@@ -844,6 +844,9 @@ public final class RetopoEngine {
     /// How much a pencil line is steadied as it's drawn, from 0 to 1.
     public var steadiness: Float = 0.4
     private var stabilizer: StrokeStabilizer?
+    /// The lines on screen as a pencil stroke starts, to see where it crosses them as it goes.
+    private var strokeLines: [(a: Vec2, b: Vec2, pa: Vec3, pb: Vec3)] = []
+    private var strokeLinesChecked = 0
     /// How close to a point the eraser has to be for the point to be what's erased, in screen points.
     private static let erasePointReach: Float = 14
     /// Where the eraser last took out a point, in the rub still going.
@@ -864,6 +867,14 @@ public final class RetopoEngine {
             gesture = .stroke(capture)
             inkPath = [screen]
             stabilizer = StrokeStabilizer(start: screen, strength: steadiness)
+            strokeLines = mesh.aliveEdges.compactMap { e in
+                let (a, b) = mesh.ends(e)
+                let pa = mesh.position(a), pb = mesh.position(b)
+                guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { return nil }
+                return (sa, sb, pa, pb)
+            }
+            strokeLinesChecked = 0
+            overlay.previewPoints = []
             strokeSide = 0
             strokeReachedMiddle = false
             noteSide(of: capture)
@@ -935,6 +946,7 @@ public final class RetopoEngine {
             inkPath = capture.screenPath
             inkPrediction = strokeReachedMiddle ? [] : (activeTool == .pencil ? [screen] + predicted : predicted)
             updateLiveMirrorOverlay(capture)
+            if activeTool == .pencil { showPointsAhead(of: capture) }
         case .select(var drag):
             updateSelectDrag(&drag, to: screen)
             gesture = .select(drag)
@@ -1322,6 +1334,43 @@ public final class RetopoEngine {
     }
 
     /// A tap picks what's under it: a whole line, or a quad, with further quads adding to the pick.
+    /// Puts a dot wherever the stroke so far has crossed a line, which is where it's making a point.
+    private func showPointsAhead(of capture: StrokeCapture) {
+        let path = capture.screenPath
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        func add(_ p: Vec3) {
+            let plane = symmetry.activePlane
+            for dot in [p] + (plane.map { [$0.reflect(p)] } ?? []) where !overlay.previewPoints.contains(where: { simd_length($0 - dot) < 1e-4 }) {
+                overlay.previewPoints.append(dot)
+            }
+        }
+        while strokeLinesChecked + 1 < path.count {
+            let p = path[strokeLinesChecked], stroke = path[strokeLinesChecked + 1] - p
+            strokeLinesChecked += 1
+            for line in strokeLines {
+                let span = line.b - line.a
+                let denominator = stroke.x * span.y - stroke.y * span.x
+                guard abs(denominator) > 1e-6 else { continue }
+                let gap = line.a - p
+                let s = (gap.x * span.y - gap.y * span.x) / denominator
+                let t = (gap.x * stroke.y - gap.y * stroke.x) / denominator
+                guard s >= 0, s <= 1, t >= 0, t <= 1 else { continue }
+                let onLine = simd_mix(line.pa, line.pb, Vec3(repeating: t))
+                guard picker.isVisible(onLine, normal: nil) else { continue }
+                // A crossing right beside a point uses that point.
+                let here = p + stroke * s
+                let reach = tools.stroke.snapRadiusPoints * 0.75
+                let beside = (t < 0.5 ? [line.pa, line.pb] : [line.pb, line.pa]).first { end in
+                    guard let there = camera.project(end)?.screen, simd_length(there - here) <= reach else { return false }
+                    return mesh.aliveVertices.contains { !mesh.isBendVertex($0) && mesh.position($0) == end }
+                }
+                add(beside ?? onLine)
+            }
+        }
+        if strokeReachedMiddle, let plane = symmetry.activePlane, let end = capture.runs.last?.last { add(plane.snap(end.position)) }
+    }
+
     /// With mirror on, a pencil line belongs to the side it starts on, so it stops once it gets past the middle.
     private func noteSide(of capture: StrokeCapture) {
         guard let plane = symmetry.activePlane, let point = capture.runs.last?.last else { return }
