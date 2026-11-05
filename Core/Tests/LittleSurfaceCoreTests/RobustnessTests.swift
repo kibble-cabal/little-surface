@@ -193,7 +193,6 @@ final class BrushTests: XCTestCase {
         let depth = engine.history.undoStack.count
         let faces = engine.mesh.faceCount
         engine.setTool(.erase)
-        engine.setSelectionMode(.face)
         Fixtures.draw(engine, from: Vec2(430, 500), to: Vec2(570, 500), steps: 20)
         XCTAssertLessThan(engine.mesh.faceCount, faces)
         XCTAssertEqual(engine.history.undoStack.count, depth + 1)

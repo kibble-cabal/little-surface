@@ -74,6 +74,8 @@ public struct OverlayGeometry {
     public var previewTriangles: [Vec3] = []
     public var mirrorEdges: [Vec3] = []
     public var warningEdges: [Vec3] = []
+    /// What the eraser is about to take, as line-segment pairs.
+    public var erasingEdges: [Vec3] = []
     /// Each picked patch chain, as line-segment pairs.
     public var chains: [[Vec3]] = []
     public init() {}
@@ -111,6 +113,9 @@ public final class RetopoEngine {
     public private(set) var inkPath: [Vec2] = []
     public private(set) var inkPrediction: [Vec2] = []
     public private(set) var brushCursor: Vec2?
+    /// How far around the cursor a brush reaches, in screen points. The eraser takes whole lines, so it's
+    /// kept to about the size of its tip.
+    public var brushReach: Float { tools.brush.radiusPoints * (activeTool == .erase ? 0.4 : 1) }
 
     public private(set) var pendingStroke: PendingStroke?
     public private(set) var pendingStrip: PendingStrip?
@@ -153,7 +158,7 @@ public final class RetopoEngine {
         case select(SelectDrag)
         case lasso([Vec2])
         case brush(before: EditSnapshot, lastHit: SurfaceHit?, label: String)
-        case erase(before: EditSnapshot, changed: Bool)
+        case erase
         case sketch(StrokeCapture)
         case sketchErase(before: EditSnapshot, changed: Bool)
     }
@@ -901,10 +906,10 @@ public final class RetopoEngine {
     /// The lines on screen as a pencil stroke starts, to see where it crosses them as it goes.
     private var strokeLines: [(a: Vec2, b: Vec2, pa: Vec3, pb: Vec3)] = []
     private var strokeLinesChecked = 0
-    /// How close to a point the eraser has to be for the point to be what's erased, in screen points.
-    private static let erasePointReach: Float = 14
-    /// Where the eraser last took out a point, in the rub still going.
-    private var erasedPointAt: Vec2?
+    /// The lines and marks the rub still going has reached, shown until they go as it lifts.
+    private var rubbedLines = Set<EdgeID>()
+    private var rubbedMarks = Set<Int>()
+    private var lastRub: Vec2?
     private var strokeSide: Float = 0
     private var strokeReachedMiddle = false
 
@@ -961,10 +966,10 @@ public final class RetopoEngine {
             brushCursor = screen
             applyBrush(at: screen, pressure: pressure)
         case .erase:
-            gesture = .erase(before: currentSnapshot, changed: false)
+            gesture = .erase
             brushCursor = screen
-            erasedPointAt = nil
-            eraseAt(screen)
+            clearRub()
+            rub(to: screen)
         case .sketch:
             guard let projector else {
                 say(sources.isEmpty ? "Import a model first, then sketch on its surface." : "The surface is still being prepared.")
@@ -1017,7 +1022,7 @@ public final class RetopoEngine {
             applyBrush(at: screen, pressure: pressure)
         case .erase:
             brushCursor = screen
-            eraseAt(screen)
+            rub(to: screen)
         case .sketch(var capture):
             capture.add(screen: screen, pressure: pressure)
             gesture = .sketch(capture)
@@ -1066,11 +1071,9 @@ public final class RetopoEngine {
                 recordEdit(before: before, label: label)
                 if label == "Move brush" { onEvent?(.vertexMoved) }
             }
-        case .erase(let before, let changed):
+        case .erase:
             brushCursor = nil
-            if changed {
-                recordEdit(before: before, label: "Erase")
-            }
+            finishRub()
         case .sketch(var capture):
             capture.add(screen: screen, pressure: pressure)
             inkPath = []
@@ -1084,8 +1087,10 @@ public final class RetopoEngine {
 
     public func pencilCancelled() {
         switch gesture {
-        case .brush(let before, _, _), .erase(let before, _):
+        case .brush(let before, _, _):
             install(before)
+        case .erase:
+            clearRub()
         case .select(let drag):
             if drag.moved { install(drag.before) }
         case .sketchErase(let before, _):
@@ -2294,86 +2299,52 @@ public final class RetopoEngine {
         gesture = .brush(before: before, lastHit: hit, label: label)
     }
 
-    private func eraseAt(_ screen: Vec2) {
-        guard case .erase(let before, let changedSoFar) = gesture else { return }
+    /// Marks the whole lines and the marks the eraser has reached since it last moved. They go when it lifts.
+    private func rub(to screen: Vec2) {
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
         picker.ignoresOcclusion = ignoresOcclusionForPicking
-        let radius = max(tools.brush.radiusPoints * 0.35, 12)
-        var changed = false
-        switch selection.mode {
-        case .face:
-            changed = rubOut(at: screen, with: picker)
-        case .edge:
-            if let (e, _) = picker.pickEdge(at: screen, radius: radius) {
-                let edges = symmetry.isEnabled ? Symmetry.expanded(edges: [e], in: mesh) : [e]
-                mesh.deleteEdges(edges)
-                changed = true
-            }
-        case .vertex:
-            if let v = picker.pickVertex(at: screen, radius: radius) {
-                let vertices = symmetry.isEnabled ? Symmetry.expanded(vertices: [v], in: mesh) : [v]
-                mesh.deleteVertices(vertices)
-                changed = true
-            }
-        }
-        if changed { selection.prune(in: mesh) }
-        gesture = .erase(before: before, changed: changedSoFar || changed)
-    }
+        let radius = brushReach
+        let start = lastRub ?? screen
+        lastRub = screen
+        let steps = max(Int((simd_length(screen - start) / max(radius, 1)).rounded(.up)), 1)
+        let spots = (0...steps).map { simd_mix(start, screen, Vec2(repeating: Float($0) / Float(steps))) }
 
-    /// Takes out what's under the brush, as an eraser would: pencil marks, then a point if it's right on
-    /// one, or else the lines it touches, or else the inside of a face with no line in reach.
-    private func rubOut(at screen: Vec2, with picker: MeshPicker) -> Bool {
-        let radius = tools.brush.radiusPoints
-        var changed = false
-        let kept = sketches.filter { !touches($0, at: screen, radius: radius) }
-        if kept.count != sketches.count {
-            sketches = kept
-            sketchRevision &+= 1
-            changed = true
+        for (index, mark) in sketches.enumerated() where !rubbedMarks.contains(index) {
+            if spots.contains(where: { touches(mark, at: $0, radius: radius) }) { rubbedMarks.insert(index) }
         }
-
-        let pointReach = min(radius, Self.erasePointReach)
-        var nearest: (vertex: VertexID, distance: Float)?
-        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
-            let p = mesh.position(v)
-            guard let there = camera.project(p)?.screen else { continue }
-            let d = simd_length(there - screen)
-            if d <= pointReach, d < (nearest?.distance ?? .infinity), picker.isVisible(p, normal: mesh.vertexNormal(v)) { nearest = (v, d) }
-        }
-        if let nearest {
-            erasePoint(nearest.vertex)
-            erasedPointAt = screen
-            return true
-        }
-        // A rub that started on a point shouldn't go on to take the line through it, until it moves away.
-        if let erasedPointAt {
-            if simd_length(erasedPointAt - screen) <= pointReach { return changed }
-            self.erasedPointAt = nil
-        }
-
-        let lines = mesh.aliveEdges.filter { e in
+        for e in mesh.aliveEdges where !rubbedLines.contains(e) {
             let (a, b) = mesh.ends(e)
             let pa = mesh.position(a), pb = mesh.position(b)
-            guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { return false }
+            guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { continue }
             let span = sb - sa
-            let t = simd_clamp(simd_dot(screen - sa, span) / max(simd_length_squared(span), 1e-6), 0, 1)
-            guard simd_length(sa + span * t - screen) <= radius else { return false }
-            return picker.isVisible(simd_mix(pa, pb, Vec3(repeating: t)), normal: nil)
+            let isReached = spots.contains { spot in
+                let t = simd_clamp(simd_dot(spot - sa, span) / max(simd_length_squared(span), 1e-6), 0, 1)
+                return simd_length(sa + span * t - spot) <= radius && picker.isVisible(simd_mix(pa, pb, Vec3(repeating: t)), normal: nil)
+            }
+            if isReached { rubbedLines.formUnion(lineBetweenPoints(through: e)) }
         }
-        if !lines.isEmpty {
-            eraseLines(Set(lines))
-            return true
-        }
+        rebuildOverlay()
+    }
 
-        let faces = mesh.aliveFaces.filter { f in
-            guard let there = camera.project(mesh.faceCenter(f))?.screen, simd_length(there - screen) <= radius else { return false }
-            return picker.isVisible(mesh.faceCenter(f), normal: mesh.faceNormal(f))
+    /// Takes out what the rub went over, as one step.
+    private func finishRub() {
+        let lines = rubbedLines, marks = rubbedMarks
+        clearRub()
+        guard !lines.isEmpty || !marks.isEmpty else { return }
+        let before = currentSnapshot
+        if !marks.isEmpty {
+            sketches = sketches.enumerated().filter { !marks.contains($0.offset) }.map(\.element)
+            sketchRevision &+= 1
         }
-        if !faces.isEmpty {
-            mesh.deleteFaces(symmetry.isEnabled ? Symmetry.expanded(faces: Set(faces), in: mesh) : Set(faces), keepEdges: true)
-            changed = true
-        }
-        return changed
+        if !lines.isEmpty { eraseLines(lines) }
+        selection.prune(in: mesh)
+        recordEdit(before: before, label: "Erase")
+    }
+
+    private func clearRub() {
+        rubbedLines = []
+        rubbedMarks = []
+        lastRub = nil
     }
 
     /// A point in the middle of a line stops being one, and the line carries on through. Anywhere else,
@@ -2991,6 +2962,14 @@ public final class RetopoEngine {
                 out.warningEdges.append(points[points.count - 1])
                 out.warningEdges.append(points[0])
             }
+        }
+        for e in symmetry.isEnabled ? Symmetry.expanded(edges: rubbedLines, in: mesh) : rubbedLines where mesh.isEdgeAlive(e) {
+            let (a, b) = mesh.ends(e)
+            out.erasingEdges += [mesh.position(a), mesh.position(b)]
+        }
+        for index in rubbedMarks where sketches.indices.contains(index) {
+            let points = sketches[index].points
+            for (a, b) in zip(points, points.dropFirst()) { out.erasingEdges += [a, b] }
         }
         overlay = out
     }

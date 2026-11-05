@@ -692,6 +692,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         add(overlay.previewEdges, color: style.preview, width: 1.5)
         add(overlay.mirrorEdges, color: style.ink, width: Self.pencilWidth, pencil: 1)
         add(overlay.warningEdges, color: style.warning, width: 2.4)
+        add(overlay.erasingEdges, color: style.warning, width: 4)
         for chain in overlay.chains { add(chain, color: style.chain, width: 3.2) }
         e.setDepthStencilState(depthRead)
         setWorldLines(e, lines, uniforms: &uniforms)
@@ -749,7 +750,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         lassoColor.w = 0.8
         polyline(engine.lassoPath, color: lassoColor, width: 1.5, closed: true)
         if let cursor = engine.brushCursor {
-            let radius = engine.tools.brush.radiusPoints
+            let radius = engine.brushReach
             let ring = (0..<64).map { i -> Vec2 in
                 let a = 2 * Float.pi * Float(i) / 64
                 return cursor + Vec2(cos(a), sin(a)) * radius

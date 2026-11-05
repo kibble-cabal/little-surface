@@ -155,19 +155,12 @@ final class EditorModel {
 
     func undo() {
         engine.undo()
-        keepEraserGoingByWhatsUnderIt()
         refreshSubdivisionPreview()
     }
 
     func redo() {
         engine.redo()
-        keepEraserGoingByWhatsUnderIt()
         refreshSubdivisionPreview()
-    }
-
-    /// Undo can bring back a picked point or line, which mustn't turn the eraser into one for just those.
-    private func keepEraserGoingByWhatsUnderIt() {
-        if engine.activeTool == .erase { engine.setSelectionMode(.face) }
     }
 
     // MARK: Tools
@@ -176,8 +169,6 @@ final class EditorModel {
         guard tool != engine.activeTool else { return }
         engine.clearPick()
         engine.setTool(tool)
-        // The eraser goes by what's under it, not by a kind of element.
-        if tool == .erase { engine.setSelectionMode(.face) }
     }
 
     func pencilDoubleTapped() {

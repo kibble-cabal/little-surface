@@ -515,7 +515,6 @@ final class PencilTests: XCTestCase {
         XCTAssertGreaterThan(faces, 0)
 
         engine.setTool(.erase)
-        engine.setSelectionMode(.face)
         Fixtures.draw(engine, from: Vec2(500, 380), to: Vec2(500, 640))
         XCTAssertLessThan(engine.mesh.faceCount, faces)
         XCTAssertLessThan(engine.mesh.edgeCount, edges)
@@ -528,15 +527,12 @@ final class PencilTests: XCTestCase {
         XCTAssertEqual(engine.sketches.count, marks)
     }
 
-    func testTheEraserLeavesNoBendAtTheEndOfALine() {
+    func testTheEraserTakesAWholeLineNotJustWhatItTouched() {
         let engine = pencil()
         Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
         engine.setTool(.erase)
-        engine.setSelectionMode(.face)
         Fixtures.draw(engine, from: Vec2(500, 380), to: Vec2(500, 420))
-        XCTAssertGreaterThan(engine.mesh.edgeCount, 0, "the two sides are left")
-        XCTAssertEqual(engine.statistics.vertices, 4, "each with a point at its new end")
-        XCTAssertEqual(engine.statistics.edges, 2)
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
     }
 }
 

@@ -37,7 +37,7 @@ The buttons at the top are **Draw**, **Smooth**, **Move** and **Erase**. Double-
 
 - **Smooth** evens out the points under it.
 - **Move** nudges whatever is under it, following the Pencil.
-- **Erase** goes by what's under it. Right on a point, it erases the point: the line carries on through, or at a crossing, the lines meeting there go too. Otherwise it erases the lines and marks it touches, and the shapes either side join up. Rubbing inside a shape with no line in reach opens a hole and leaves the lines.
+- **Erase** takes whole lines, from point to point, and marks. Whatever it touches shows in red, and goes when you lift, and the shapes either side join up. To take out a point or a shape, tap it and use **Delete**.
 
 They have a size slider on the left. Your work saves itself a couple of seconds after each change. Undo history lasts until you close the project.
 

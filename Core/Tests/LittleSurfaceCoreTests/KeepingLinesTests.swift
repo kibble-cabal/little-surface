@@ -121,7 +121,6 @@ final class KeepingLinesTests: XCTestCase {
 
     private func eraser(_ engine: RetopoEngine, radius: Float = 12) {
         engine.setTool(.erase)
-        engine.setSelectionMode(.face)
         engine.tools.brush.radiusPoints = radius
     }
 
@@ -135,22 +134,22 @@ final class KeepingLinesTests: XCTestCase {
         for x: Float in [400, 500, 600] { Fixtures.drawPath(engine, straight(Vec2(x, 410), Vec2(x, 590))) }
     }
 
-    func testErasingAPointOnALineLetsTheLineCarryOn() {
+    func testDeletingAPointOnALineLetsTheLineCarryOn() {
         let engine = pencil()
         Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
         Fixtures.drawPath(engine, straight(Vec2(500, 480), Vec2(500, 520)))
         // The tick only left a point behind.
         XCTAssertEqual(realPoints(engine), 3)
         let edges = engine.mesh.edgeCount
-        eraser(engine)
         tap(engine, Vec2(500, 500))
+        engine.deletePick()
         XCTAssertEqual(realPoints(engine), 2)
         XCTAssertEqual(engine.mesh.edgeCount, edges)
         engine.undo()
         XCTAssertEqual(realPoints(engine), 3)
     }
 
-    func testErasingACrossingTakesTheLinesThatMeetThere() {
+    func testErasingAtACrossingTakesBothLinesUpToTheirPoints() {
         let engine = pencil()
         Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
         Fixtures.drawPath(engine, straight(Vec2(500, 400), Vec2(500, 600)))
@@ -173,45 +172,83 @@ final class KeepingLinesTests: XCTestCase {
         assertValid(engine.mesh)
     }
 
-    func testErasingPartOfACurveLeavesTheRest() {
+    func testErasingACurveTakesAllOfIt() {
         let engine = pencil()
         Fixtures.drawPath(engine, Fixtures.circle(center: Vec2(500, 500), radius: 100, steps: 48, closes: false))
-        let before = engine.mesh.edgeCount
         eraser(engine, radius: 10)
         tap(engine, Vec2(500, 600))
-        XCTAssertLessThan(engine.mesh.edgeCount, before)
-        XCTAssertGreaterThan(engine.mesh.edgeCount, before / 2)
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
     }
 
-    func testRubbingInsideAFaceOpensItAndKeepsItsLines() {
-        let engine = pencil()
-        drawBoxOfLines(engine)
-        let edges = engine.mesh.edgeCount
-        eraser(engine, radius: 20)
-        tap(engine, Vec2(450, 500))
-        XCTAssertEqual(engine.mesh.faceCount, 1)
-        XCTAssertEqual(engine.mesh.edgeCount, edges)
-    }
-
-    func testARubThatStartsOnAPointDoesNotTakeTheLineWithIt() {
+    func testTheEraserStopsAtALinesPoints() {
         let engine = pencil()
         Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
         Fixtures.drawPath(engine, straight(Vec2(500, 480), Vec2(500, 520)))
+        eraser(engine)
+        tap(engine, Vec2(450, 500))
+        XCTAssertEqual(realPoints(engine), 2, "the far side and the point it stopped at")
+        XCTAssertEqual(engine.statistics.edges, 1)
+    }
+
+    func testRubbingInsideAShapeLeavesItAlone() {
+        let engine = pencil()
+        drawBoxOfLines(engine)
+        let faces = engine.mesh.faceCount, edges = engine.mesh.edgeCount, depth = engine.history.undoStack.count
+        eraser(engine)
+        Fixtures.drawPath(engine, [Vec2(450, 480), Vec2(450, 500), Vec2(460, 520)])
+        XCTAssertEqual(engine.mesh.faceCount, faces)
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+        XCTAssertEqual(engine.history.undoStack.count, depth, "nothing to take back")
+    }
+
+    func testNothingGoesUntilTheEraserLifts() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
         let edges = engine.mesh.edgeCount
         eraser(engine)
-        Fixtures.drawPath(engine, [Vec2(500, 500), Vec2(503, 501), Vec2(499, 499), Vec2(501, 500)])
+        engine.pencilBegan(at: Vec2(500, 450))
+        XCTAssertTrue(engine.overlay.erasingEdges.isEmpty)
+        engine.pencilMoved(to: Vec2(500, 500))
         XCTAssertEqual(engine.mesh.edgeCount, edges)
+        XCTAssertEqual(engine.overlay.erasingEdges.count, edges * 2, "the whole line shows")
+        engine.pencilEnded(at: Vec2(500, 500))
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
+        XCTAssertTrue(engine.overlay.erasingEdges.isEmpty)
+    }
+
+    func testAnEraserCancelledPartWayTakesNothing() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        let edges = engine.mesh.edgeCount, depth = engine.history.undoStack.count
+        eraser(engine)
+        engine.pencilBegan(at: Vec2(500, 500))
+        engine.pencilCancelled()
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+        XCTAssertEqual(engine.history.undoStack.count, depth)
+        XCTAssertTrue(engine.overlay.erasingEdges.isEmpty)
+    }
+
+    func testAFastRubStillReachesWhatItPassedOver() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500)))
+        eraser(engine)
+        // One long jump, right over the line.
+        engine.pencilBegan(at: Vec2(500, 300))
+        engine.pencilMoved(to: Vec2(500, 700))
+        engine.pencilEnded(at: Vec2(500, 700))
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
     }
 
     func testTheEraserWorksOnBothSidesOfTheMirror() {
         let engine = pencil()
         engine.setSymmetryEnabled(true)
         Fixtures.drawPath(engine, straight(Vec2(350, 500), Vec2(450, 500)))
-        Fixtures.drawPath(engine, straight(Vec2(400, 480), Vec2(400, 520)))
-        XCTAssertEqual(realPoints(engine), 6)
-        eraser(engine)
-        tap(engine, Vec2(400, 500))
         XCTAssertEqual(realPoints(engine), 4)
+        eraser(engine)
+        engine.pencilBegan(at: Vec2(400, 500))
+        XCTAssertEqual(engine.overlay.erasingEdges.count, engine.mesh.edgeCount * 2, "both sides show")
+        engine.pencilEnded(at: Vec2(400, 500))
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
     }
 
     // MARK: Seeing points as they're made
