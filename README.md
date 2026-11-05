@@ -18,7 +18,7 @@ No Pencil? One finger turns the model by default. Under **… > Settings**, set 
 
 There's one pencil, and everything you get comes from the lines you draw. Nothing fills itself in, and there's no number to set.
 
-- **Lines:** a line keeps the curve you drew until it's part of a quad, so nothing you've drawn goes missing before it's used. Start from the end of another line to carry it on. Your hand is steadied as you draw, and **… > Settings > Steady lines** sets how much.
+- **Lines:** a line is pencil, soft and grainy, until it's part of a quad and turns to ink. It keeps the curve you drew until then, so nothing you've drawn goes missing before it's used. Start from the end of another line to carry it on. Your hand is steadied as you draw, and **… > Settings > Steady lines** sets how much.
 - **Points:** a line only has points at its ends, at its sharp corners and wherever another line meets it. A short tick across a line puts a point there. A dot shows each point as your stroke makes it.
 - **Shapes:** when lines enclose an area, it becomes one shape, however many corners it has. It's tinted until it's a quad.
 - **Cutting:** draw across a shape to divide it. One stroke can go through as many shapes as it likes. A stroke that stops inside a shape doesn't divide it until another one meets it.

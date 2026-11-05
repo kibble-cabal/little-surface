@@ -122,6 +122,8 @@ struct LineOut {
     float4 position [[position]];
     float4 color;
     float side;
+    /// 1 for a pencil line, 0 for ink.
+    float pencil;
 };
 
 constant float2 quadCorners[6] = {
@@ -129,7 +131,7 @@ constant float2 quadCorners[6] = {
 };
 
 /// A screen-space quad from a to b, `width` points across, clipped against the near plane.
-static float4 thickLine(float4 a, float4 b, float2 corner, float width, float2 viewport) {
+static float4 thickLine(float4 a, float4 b, float2 corner, float width, float2 viewport, float cap = 0.35) {
     const float nearW = 1e-4;
     if (a.w < nearW && b.w < nearW) return float4(2, 2, 2, 1);
     if (a.w < nearW) a = mix(a, b, (nearW - a.w) / (b.w - a.w));
@@ -141,7 +143,7 @@ static float4 thickLine(float4 a, float4 b, float2 corner, float width, float2 v
     d = len > 1e-4 ? d / len : float2(1, 0);
     float2 n = float2(-d.y, d.x);
     float4 clip = corner.x < 0.5 ? a : b;
-    float ext = (corner.x < 0.5 ? -1 : 1) * width * 0.35;
+    float ext = (corner.x < 0.5 ? -1 : 1) * width * cap;
     float2 offset = (n * corner.y * width * 0.5 + d * ext) / half_;
     clip.xy += offset * clip.w;
     return clip;
@@ -158,21 +160,37 @@ vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     uint2 e = edges[iid];
     uchar f = flags[iid];
     float2 corner = quadCorners[vid];
-    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : 1.0);
+    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : (f == 4 ? 1.35 : 1.0));
     // The longer a straight edge, the further it can sag under a curved surface it's still in front of.
     float sag = length(positions[e.x] - positions[e.y]) * 0.2;
     float4 a = pulled(positions[e.x], u, sag);
     float4 b = pulled(positions[e.y], u, sag);
-    out.position = thickLine(a, b, corner, width, u.viewport);
+    // Pencil is see-through, so where its segments overlapped they'd show as beads along the line.
+    out.position = thickLine(a, b, corner, width, u.viewport, f == 4 ? 0 : 0.35);
     out.position.z -= u.depthBias * 1.5 * out.position.w;
     float4 c = palette[f];
     out.color = float4(c.rgb, c.a * alphaScale);
     out.side = corner.y;
+    out.pencil = f == 4 ? 1 : 0;
     return out;
+}
+
+/// How much of a graphite line takes on the paper here, between 0 and 1. It sits still on the screen,
+/// as the paper would, with fine grain inside larger patches.
+static float paperTooth(float2 pixel) {
+    float fine = fract(sin(dot(floor(pixel * 0.7), float2(12.9898, 78.233))) * 43758.5453);
+    float patchy = fract(sin(dot(floor(pixel * 0.16), float2(39.346, 11.135))) * 24634.6345);
+    return fine * 0.7 + patchy * 0.3;
 }
 
 fragment float4 line_fragment(LineOut in [[stage_in]]) {
     float a = 1 - smoothstep(0.65, 1.0, abs(in.side));
+    if (in.pencil > 0.5) {
+        // Graphite is soft across the line and broken along it, where ink is solid and crisp.
+        float tooth = paperTooth(in.position.xy);
+        float across = abs(in.side) + (tooth - 0.5) * 0.5;
+        a = (1 - smoothstep(0.25, 0.95, across)) * mix(0.45, 1.0, smoothstep(0.2, 0.7, tooth));
+    }
     return float4(in.color.rgb, in.color.a * a);
 }
 
@@ -220,6 +238,7 @@ struct WorldLine {
     float3 b;
     float4 color;
     float width;
+    float pencil;
 };
 
 vertex LineOut world_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
@@ -228,10 +247,11 @@ vertex LineOut world_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]
     LineOut out;
     WorldLine l = lines[iid];
     float2 corner = quadCorners[vid];
-    out.position = thickLine(pulled(l.a, u), pulled(l.b, u), corner, l.width, u.viewport);
+    out.position = thickLine(pulled(l.a, u), pulled(l.b, u), corner, l.width, u.viewport, l.pencil > 0.5 ? 0 : 0.35);
     out.position.z -= u.depthBias * 2 * out.position.w;
     out.color = l.color;
     out.side = corner.y;
+    out.pencil = l.pencil;
     return out;
 }
 
@@ -240,6 +260,7 @@ struct ScreenLine {
     float2 b;
     float4 color;
     float width;
+    float pencil;
 };
 
 vertex LineOut screen_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
@@ -251,9 +272,10 @@ vertex LineOut screen_line_vertex(uint vid [[vertex_id]], uint iid [[instance_id
     float2 half_ = u.viewport * 0.5;
     float4 a = float4((l.a.x - half_.x) / half_.x, (half_.y - l.a.y) / half_.y, 0, 1);
     float4 b = float4((l.b.x - half_.x) / half_.x, (half_.y - l.b.y) / half_.y, 0, 1);
-    out.position = thickLine(a, b, corner, l.width, u.viewport);
+    out.position = thickLine(a, b, corner, l.width, u.viewport, l.pencil > 0.5 ? 0 : 0.35);
     out.color = l.color;
     out.side = corner.y;
+    out.pencil = l.pencil;
     return out;
 }
 

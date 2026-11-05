@@ -23,6 +23,7 @@ private struct WorldLine {
     var b: Vec3
     var color: Vec4
     var width: Float
+    var pencil: Float = 0
 }
 
 private struct ScreenLine {
@@ -30,6 +31,7 @@ private struct ScreenLine {
     var b: Vec2
     var color: Vec4
     var width: Float
+    var pencil: Float = 0
 }
 
 private struct WorldPoint {
@@ -56,7 +58,6 @@ struct ViewportStyle {
     var dots: [Vec4]
     var backTint: Vec4
     var preview: Vec4
-    var mirror: Vec4
     var warning: Vec4
     var chain: Vec4
     var ink: Vec4
@@ -67,7 +68,7 @@ struct ViewportStyle {
         // A drawing on paper: finished lines are ink, unfinished ones are graphite, and the model is
         // matte. Selection is the system's blue, so it stands out from all of that.
         let ink = dark ? Vec4(0.95, 0.93, 0.88, 1) : Vec4(0.10, 0.11, 0.16, 1)
-        let graphite = dark ? Vec4(0.72, 0.71, 0.68, 0.85) : Vec4(0.40, 0.40, 0.42, 0.8)
+        let graphite = dark ? Vec4(0.78, 0.77, 0.74, 0.95) : Vec4(0.32, 0.32, 0.34, 0.95)
         let selected = dark ? Vec4(0.04, 0.52, 1.0, 1) : Vec4(0.0, 0.48, 1.0, 1)
         let hover = dark ? Vec4(1.0, 0.84, 0.04, 1) : Vec4(0.95, 0.72, 0.0, 1)
         let issue = Vec4(0.86, 0.16, 0.25, 1)
@@ -83,10 +84,9 @@ struct ViewportStyle {
                 unfinished,
             ],
             edges: [ink, selected, hover, issue, graphite],
-            dots: [ink, selected, hover, issue, ink],
+            dots: [ink, selected, hover, issue, graphite],
             backTint: Vec4(0.72, 0.18, 0.42, 0.7),
             preview: graphite,
-            mirror: Vec4(graphite.x, graphite.y, graphite.z, 0.55),
             warning: issue,
             chain: selected,
             ink: graphite,
@@ -395,15 +395,16 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             if issue?.edges.contains(e) == true { return ElementFlag.issue }
             if selection.edges.contains(e) || edgesOfSelectedFaces.contains(e) { return ElementFlag.selected }
             if e == hoverEdge { return ElementFlag.hovered }
-            let faces = mesh.facesOf(edge: e)
-            return !faces.isEmpty && faces.allSatisfy(mesh.isQuad) ? ElementFlag.normal : ElementFlag.unfinished
+            // A quad is inked all the way round, whatever's on the other side of its lines.
+            return mesh.facesOf(edge: e).contains(where: mesh.isQuad) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.edgeFlags)
+        let inked = Set(mesh.aliveFaces.filter(mesh.isQuad).flatMap { mesh.loop($0) })
         write(topology.dots.map { v -> UInt8 in
             let id = VertexID(v)
             if issue?.vertices.contains(id) == true { return ElementFlag.issue }
             if selection.vertices.contains(id) { return ElementFlag.selected }
             if id == hoverVertex { return ElementFlag.hovered }
-            return ElementFlag.normal
+            return inked.contains(id) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.dotFlags)
     }
 
@@ -643,7 +644,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 let color = index == engine.pickedMark ? style.chain
                     : stroke.colorIndex == SketchPalette.graphite ? style.ink : SketchPalette.color(stroke.colorIndex)
                 for i in 1..<max(stroke.points.count, 1) {
-                    lines.append(WorldLine(a: stroke.points[i - 1], b: stroke.points[i], color: color, width: 3))
+                    lines.append(WorldLine(a: stroke.points[i - 1], b: stroke.points[i], color: color, width: 3, pencil: 1))
                 }
             }
             sketchLineCount = lines.count
@@ -674,15 +675,15 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         setFlatTriangles(e, overlay.previewTriangles, color: Vec4(style.preview.x, style.preview.y, style.preview.z, 0.24), uniforms: &uniforms)
 
         var lines: [WorldLine] = []
-        func add(_ pairs: [Vec3], color: Vec4, width: Float) {
+        func add(_ pairs: [Vec3], color: Vec4, width: Float, pencil: Float = 0) {
             var i = 0
             while i + 1 < pairs.count {
-                lines.append(WorldLine(a: pairs[i], b: pairs[i + 1], color: color, width: width))
+                lines.append(WorldLine(a: pairs[i], b: pairs[i + 1], color: color, width: width, pencil: pencil))
                 i += 2
             }
         }
         add(overlay.previewEdges, color: style.preview, width: 1.5)
-        add(overlay.mirrorEdges, color: style.mirror, width: 1.5)
+        add(overlay.mirrorEdges, color: style.ink, width: 2.2, pencil: 1)
         add(overlay.warningEdges, color: style.warning, width: 2.4)
         for chain in overlay.chains { add(chain, color: style.chain, width: 3.2) }
         e.setDepthStencilState(depthRead)
@@ -726,16 +727,16 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     private func drawScreenOverlays(_ e: MTLRenderCommandEncoder, engine: RetopoEngine, style: ViewportStyle, uniforms: inout Uniforms) {
         var lines: [ScreenLine] = []
-        func polyline(_ points: [Vec2], color: Vec4, width: Float, closed: Bool = false) {
+        func polyline(_ points: [Vec2], color: Vec4, width: Float, closed: Bool = false, pencil: Float = 0) {
             guard points.count > 1 else { return }
-            for i in 1..<points.count { lines.append(ScreenLine(a: points[i - 1], b: points[i], color: color, width: width)) }
-            if closed { lines.append(ScreenLine(a: points[points.count - 1], b: points[0], color: color, width: width)) }
+            for i in 1..<points.count { lines.append(ScreenLine(a: points[i - 1], b: points[i], color: color, width: width, pencil: pencil)) }
+            if closed { lines.append(ScreenLine(a: points[points.count - 1], b: points[0], color: color, width: width, pencil: pencil)) }
         }
-        polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : 2.6)
+        polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : 2.2, pencil: 1)
         if let last = engine.inkPath.last, !engine.inkPrediction.isEmpty {
             var faded = style.ink
             faded.w = 0.45
-            polyline([last] + engine.inkPrediction, color: faded, width: 2.2)
+            polyline([last] + engine.inkPrediction, color: faded, width: 2.2, pencil: 1)
         }
         var lassoColor = style.ink
         lassoColor.w = 0.8
