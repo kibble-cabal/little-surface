@@ -109,6 +109,9 @@ public enum EnclosedRegions {
             let p = mesh.position(v)
             guard simd_length(p - center) <= reach,
                   simd_dot(normal(at: p, vertex: v, in: mesh, projector: projector), meanNormal) > 0 else { continue }
+            // A line leaving the outline can lay its first bend a hair inside, where a cut crossed it right
+            // beside that bend. A line that's really inside goes on further and is caught by what comes next.
+            if mesh.isBendVertex(v), mesh.edgesOf(v).contains(where: { own.contains(mesh.otherEnd($0, from: v)) }) { continue }
             if contains(p, outline: points, axis: axis) { return false }
         }
         return true

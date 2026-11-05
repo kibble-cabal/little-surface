@@ -679,3 +679,31 @@ final class WrappingSideTests: XCTestCase {
         XCTAssertFalse(mesh.isQuad(f))
     }
 }
+
+final class EnclosedRegionTests: XCTestCase {
+    func testABendJustInsideTheOutlineDoesNotBlockTheShape() throws {
+        // A cut from a to b, under c. It crossed the line from c down to d right beside that line's bend,
+        // so the bend is outside the turn from a to c, but on this rising surface it's a hair inside the shape.
+        var mesh = Mesh()
+        let a = mesh.addVertex(Vec3(-1, 0, 0)), b = mesh.addVertex(Vec3(1, 0, 0)), c = mesh.addVertex(Vec3(0, 1, 1))
+        let d = mesh.addVertex(Vec3(-1.3, -1, 0)), e = mesh.addVertex(Vec3(1.3, -1, 0))
+        let bend = mesh.addVertex(Vec3(-0.99, 0.02, -0.01))
+        mesh.setBend(bend, true)
+        var edges: [EdgeID] = []
+        for (from, to) in [(a, b), (b, c), (c, a), (a, bend), (bend, d), (d, e), (e, b)] { edges.append(try mesh.ensureEdge(from, to)) }
+        let regions = EnclosedRegions.regions(bordering: edges, in: mesh, projector: Fixtures.projector(Fixtures.plane()))
+        XCTAssertTrue(regions.contains { Set($0.vertices) == [a, b, c] }, "the triangle above the cut")
+        XCTAssertTrue(regions.contains { Set($0.vertices) == [a, bend, d, e, b] }, "the shape below it")
+    }
+
+    func testARealShapeInsideTheOutlineStillBlocksIt() throws {
+        var mesh = Mesh()
+        let corners = [Vec3(-1, -1, 0), Vec3(1, -1, 0), Vec3(1, 1, 0), Vec3(-1, 1, 0)].map { mesh.addVertex($0) }
+        var edges: [EdgeID] = []
+        for i in 0..<4 { edges.append(try mesh.ensureEdge(corners[i], corners[(i + 1) % 4])) }
+        let inner = [Vec3(-0.2, -0.2, 0), Vec3(0.2, -0.2, 0), Vec3(0, 0.2, 0)].map { mesh.addVertex($0) }
+        for i in 0..<3 { _ = try mesh.ensureEdge(inner[i], inner[(i + 1) % 3]) }
+        let regions = EnclosedRegions.regions(bordering: edges, in: mesh, projector: Fixtures.projector(Fixtures.plane()))
+        XCTAssertFalse(regions.contains { Set($0.vertices) == Set(corners) })
+    }
+}
