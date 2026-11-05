@@ -398,6 +398,38 @@ final class StarPointTests: XCTestCase {
 }
 
 /// A straight edge can stand well off the model where it spans a dip.
+final class LooseLinesTests: XCTestCase {
+    private func engine() -> RetopoEngine {
+        let engine = Fixtures.engine(with: Fixtures.plane(size: 8), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        return engine
+    }
+
+    private func straight(_ a: Vec2, _ b: Vec2, steps: Int = 24) -> [Vec2] {
+        (0...steps).map { simd_mix(a, b, Vec2(repeating: Float($0) / Float(steps))) }
+    }
+
+    func testAStrokePassingRightByALooseEndJoinsIt() {
+        let engine = engine()
+        Fixtures.drawPath(engine, straight(Vec2(400, 590), Vec2(300, 590)))
+        let before = engine.statistics.vertices
+        // It stops 3pt short of this one, so nothing actually crosses.
+        Fixtures.drawPath(engine, straight(Vec2(403, 450), Vec2(403, 730)))
+        XCTAssertEqual(engine.statistics.vertices, before + 2, "only the new stroke's ends are new points")
+        let mesh = engine.mesh
+        let joined = mesh.aliveVertices.filter { mesh.edgesOf($0).count == 3 }
+        XCTAssertEqual(joined.count, 1, "the loose end is now part of the stroke")
+    }
+
+    func testAStrokePassingWellClearOfALooseEndLeavesItAlone() {
+        let engine = engine()
+        Fixtures.drawPath(engine, straight(Vec2(400, 590), Vec2(300, 590)))
+        Fixtures.drawPath(engine, straight(Vec2(440, 450), Vec2(440, 730)))
+        let mesh = engine.mesh
+        XCTAssertFalse(mesh.aliveVertices.contains { mesh.edgesOf($0).count == 3 })
+    }
+}
+
 final class LinesOverADipTests: XCTestCase {
     /// A bowl facing the camera, steep enough that an edge across it is far from the bottom.
     private func bowl() -> SourceObject {
@@ -449,5 +481,13 @@ final class LinesOverADipTests: XCTestCase {
             let gap = try XCTUnwrap(engine.projector?.closest(to: mesh.position(v), maxDistance: .greatestFiniteMagnitude))
             XCTAssertLessThan(simd_length(gap.position - mesh.position(v)), 0.01)
         }
+    }
+
+    func testAStrokeOverTheDipCrossesTheEdgeAboveIt() throws {
+        let engine = try engineWithEdgeAcrossBowl()
+        XCTAssertEqual(engine.statistics.vertices, 2)
+        let middle = try XCTUnwrap(engine.camera.project(Vec3(0, 0, 0.8))).screen
+        Fixtures.drawPath(engine, straight(middle + Vec2(0, -60), middle + Vec2(0, 60)))
+        XCTAssertEqual(engine.statistics.vertices, 5, "its two ends, the edge's two ends, and where they cross")
     }
 }

@@ -377,6 +377,9 @@ public enum StrokePlanner {
         return best
     }
 
+    /// How close a stroke has to pass the loose end of a line to pick it up, as a share of the snap radius.
+    private static let looseEndReach: Float = 0.35
+
     /// Where a pencil line crosses other lines, as seen on screen.
     private static func findScreenCrossings(path: ProcessedPath, nodes: [PathNode], mesh: Mesh, options: StrokePlanOptions, camera: Camera, spacing: Float) -> [PathNode] {
         struct Line {
@@ -406,7 +409,8 @@ public enum StrokePlanner {
                 guard s >= 0, s <= 1, t >= 0, t <= 1 else { continue }
                 let onStroke = simd_mix(from.position, to.position, Vec3(repeating: s))
                 let onLine = simd_mix(line.pa, line.pb, Vec3(repeating: t))
-                guard simd_length(onStroke - onLine) <= max(options.snapRadius * 4, simd_length(line.pa - line.pb) * 0.25),
+                let isClose = simd_length(onStroke - onLine) <= max(options.snapRadius * 4, simd_length(line.pa - line.pb) * 0.25)
+                guard isClose || isInFront(onLine, of: onStroke, camera: camera),
                       sameSide(of: mesh.ends(line.edge).0, normal: from.normal, mesh: mesh, options: options) else { continue }
                 let along = from.along + (to.along - from.along) * s
                 // A snapped end already deals with the topology there.
@@ -417,7 +421,8 @@ public enum StrokePlanner {
                 let here = p + stroke * s
                 let node: PlanNode
                 let position: Vec3
-                if let v = realPoint(near: here, radius: options.snapRadiusPoints * 0.75, normal: from.normal, position: onStroke, mesh: mesh, options: options, camera: camera) {
+                if let v = realPoint(near: here, radius: options.snapRadiusPoints * 0.75, normal: from.normal, position: onStroke, mesh: mesh, options: options, camera: camera),
+                   !isLooseEnd(v, offLineOf: line.edge, in: mesh) {
                     node = .existing(v)
                     position = mesh.position(v)
                 } else if let place = on(edge: line.edge, t: t, near: onStroke, mesh: mesh, options: options, camera: camera) {
@@ -429,7 +434,64 @@ public enum StrokePlanner {
                 found.append(PathNode(node: node, position: position, normal: from.normal, along: along, isCrossing: true, isReal: true))
             }
         }
+        found += looseEndsPassed(nodes: nodes, crossings: found, path: path, mesh: mesh, options: options, camera: camera)
         return found
+    }
+
+    /// A line that stops right beside this stroke looks joined to it, so it should be. Nothing crosses
+    /// anything there, so it wouldn't be found as a crossing.
+    private static func looseEndsPassed(nodes: [PathNode], crossings: [PathNode], path: ProcessedPath, mesh: Mesh, options: StrokePlanOptions, camera: Camera) -> [PathNode] {
+        let reach = options.snapRadiusPoints * looseEndReach
+        let onScreen = nodes.map { camera.project($0.position)?.screen }
+        var found: [PathNode] = []
+        for v in mesh.aliveVertices where mesh.edgesOf(v).count == 1 {
+            guard !nodes.contains(where: { $0.node == .existing(v) }),
+                  let there = camera.project(mesh.position(v))?.screen else { continue }
+            var best: (distance: Float, along: Float, normal: Vec3, position: Vec3)?
+            for i in 0..<max(nodes.count - 1, 0) {
+                guard let p = onScreen[i], let q = onScreen[i + 1] else { continue }
+                let s = simd_clamp(simd_dot(there - p, q - p) / max(simd_length_squared(q - p), 1e-6), 0, 1)
+                let d = simd_length(p + (q - p) * s - there)
+                if d <= reach, d < best?.distance ?? .infinity {
+                    let position = simd_mix(nodes[i].position, nodes[i + 1].position, Vec3(repeating: s))
+                    best = (d, nodes[i].along + (nodes[i + 1].along - nodes[i].along) * s, nodes[i].normal, position)
+                }
+            }
+            guard let best,
+                  simd_length(mesh.position(v) - best.position) <= options.snapRadius,
+                  sameSide(of: v, normal: best.normal, mesh: mesh, options: options),
+                  !crossings.contains(where: { crossing in
+                      guard let at = camera.project(crossing.position)?.screen else { return false }
+                      return simd_length(at - there) <= reach
+                  }) else { continue }
+            // Its end is what the stroke's own ends already look for.
+            if !path.isClosed, best.along <= 0 || best.along >= path.length { continue }
+            found.append(PathNode(node: .existing(v), position: mesh.position(v), normal: best.normal, along: best.along, isCrossing: true, isReal: true))
+        }
+        return found
+    }
+
+    /// Whether this point is only the loose end of some other line, which has nothing to do with where
+    /// a stroke crosses this one.
+    private static func isLooseEnd(_ v: VertexID, offLineOf edge: EdgeID, in mesh: Mesh) -> Bool {
+        guard mesh.edgesOf(v).count == 1 else { return false }
+        let (a, b) = mesh.ends(edge)
+        return !([a, b].contains { start in
+            var at = start, through = edge
+            while mesh.isBendVertex(at), let next = mesh.edgesOf(at).first(where: { $0 != through }) {
+                through = next
+                at = mesh.otherEnd(next, from: at)
+            }
+            return at == v
+        })
+    }
+
+    /// Whether a line is nearer than the stroke it's lined up with. The stroke lies on the surface, so
+    /// nothing hides the line from it: it's a straight edge spanning a dip, however far it stands off,
+    /// and it looks crossed because it is.
+    private static func isInFront(_ line: Vec3, of stroke: Vec3, camera: Camera) -> Bool {
+        guard let there = camera.project(line), let here = camera.project(stroke) else { return false }
+        return there.depth < here.depth
     }
 
     /// A stroke that picked up a line from a distance would join it with one long edge. This spaces
