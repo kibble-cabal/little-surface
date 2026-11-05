@@ -173,6 +173,109 @@ final class PencilTests: XCTestCase {
         XCTAssertGreaterThan(engine.mesh.bendCount, 0, "and their curves")
     }
 
+    // MARK: Cutting
+
+    func testACutAcrossAQuadMakesTwo() {
+        let engine = pencil()
+        drawBox(engine, Vec2(440, 340), Vec2(560, 460))
+        Fixtures.draw(engine, from: Vec2(500, 320), to: Vec2(500, 480))
+        XCTAssertEqual(engine.statistics.quads, 2)
+        XCTAssertEqual(engine.statistics.faces, 2)
+        XCTAssertEqual(engine.mesh.bendCount, 0)
+        XCTAssertEqual(engine.statistics.vertices, 6)
+        checked(engine)
+    }
+
+    func testCutsBuildAGridWithExactlyThePointsDrawn() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(466, 280), to: Vec2(466, 520))
+        Fixtures.draw(engine, from: Vec2(533, 280), to: Vec2(533, 520))
+        Fixtures.draw(engine, from: Vec2(380, 400), to: Vec2(620, 400))
+        XCTAssertEqual(engine.statistics.quads, 6)
+        XCTAssertEqual(engine.statistics.faces, 6)
+        XCTAssertEqual(engine.statistics.vertices, 12)
+        checked(engine)
+    }
+
+    func testACutThatStopsAtASharedSideGivesTheFaceBesideItACorner() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(500, 280), to: Vec2(500, 520))
+        Fixtures.draw(engine, from: Vec2(380, 400), to: Vec2(500, 400))
+        XCTAssertEqual(engine.statistics.quads, 2, "the two on the left")
+        XCTAssertEqual(engine.statistics.ngons, 1, "the one on the right has five corners")
+        checked(engine)
+    }
+
+    func testAStrokeThatStopsInsideAFaceLeavesItWhole() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(500, 280), to: Vec2(500, 400))
+        XCTAssertEqual(engine.statistics.faces, 1)
+        XCTAssertGreaterThan(engine.statistics.edges, 4)
+        checked(engine)
+    }
+
+    func testTwoStrokesThatMeetInsideAFaceCutItBetweenThem() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(500, 280), to: Vec2(500, 400))
+        Fixtures.draw(engine, from: Vec2(500, 400), to: Vec2(500, 520))
+        XCTAssertEqual(engine.statistics.faces, 2)
+        checked(engine)
+    }
+
+    func testALineFloatingInsideAFaceLeavesItWhole() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(450, 400), to: Vec2(550, 400))
+        XCTAssertEqual(engine.statistics.faces, 1)
+        checked(engine)
+    }
+
+    func testAShapeInsideAShapeTakesOverUntilLinesJoinThem() {
+        let engine = pencil()
+        drawBox(engine, Vec2(380, 280), Vec2(620, 520))
+        drawBox(engine, Vec2(460, 360), Vec2(540, 440))
+        XCTAssertEqual(engine.statistics.faces, 1, "a face can't have a hole")
+        checked(engine)
+        Fixtures.draw(engine, from: Vec2(380, 400), to: Vec2(460, 400))
+        Fixtures.draw(engine, from: Vec2(540, 400), to: Vec2(620, 400))
+        XCTAssertEqual(engine.statistics.faces, 3, "the middle, and above and below")
+        checked(engine)
+    }
+
+    func testACutUndoesInOneStep() {
+        let engine = pencil()
+        drawBox(engine, Vec2(440, 340), Vec2(560, 460))
+        Fixtures.draw(engine, from: Vec2(500, 320), to: Vec2(500, 480))
+        engine.undo()
+        XCTAssertEqual(engine.statistics.quads, 1)
+        XCTAssertEqual(engine.mesh.vertexCount, 4)
+        checked(engine)
+    }
+
+    func testACutMirrorsAcrossTheModel() {
+        let engine = pencil()
+        engine.setSymmetryEnabled(true)
+        drawBox(engine, Vec2(560, 340), Vec2(660, 460))
+        XCTAssertEqual(engine.statistics.quads, 2)
+        Fixtures.draw(engine, from: Vec2(610, 320), to: Vec2(610, 480))
+        XCTAssertEqual(engine.statistics.quads, 4)
+        checked(engine)
+    }
+
+    func testLinesCrossAStraightEdgeWhereItLooksLikeTheyDo() {
+        // A big quad's sides run well under this curved surface.
+        let engine = pencil()
+        drawBox(engine, Vec2(380, 380), Vec2(620, 620))
+        XCTAssertEqual(engine.statistics.quads, 1)
+        Fixtures.draw(engine, from: Vec2(500, 360), to: Vec2(500, 640))
+        XCTAssertEqual(engine.statistics.quads, 2)
+        checked(engine)
+    }
+
     // MARK: Leaving the app
 
     func testBendsDoNotLeaveTheApp() {

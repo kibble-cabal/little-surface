@@ -102,9 +102,6 @@ public enum EnclosedRegions {
         guard simd_length(meanNormal) >= 0.5, simd_dot(facing, meanNormal) > 0 else { return false }
 
         let axis = simd_normalize(facing)
-        let u = GeometryMath.safeNormalize(points[0] - points[points.count / 2], fallback: Vec3(1, 0, 0))
-        let w = simd_cross(axis, u)
-        let polygon = points.map { Vec2(simd_dot($0, u), simd_dot($0, w)) }
         let center = points.reduce(.zero, +) / Float(points.count)
         let reach = points.map { simd_length($0 - center) }.max() ?? 0
         let own = Set(outline.vertices)
@@ -112,12 +109,17 @@ public enum EnclosedRegions {
             let p = mesh.position(v)
             guard simd_length(p - center) <= reach,
                   simd_dot(normal(at: p, vertex: v, in: mesh, projector: projector), meanNormal) > 0 else { continue }
-            if contains(Vec2(simd_dot(p, u), simd_dot(p, w)), polygon) { return false }
+            if contains(p, outline: points, axis: axis) { return false }
         }
         return true
     }
 
-    private static func contains(_ point: Vec2, _ polygon: [Vec2]) -> Bool {
+    /// Whether a point lies inside an outline, as seen along an axis.
+    static func contains(_ p: Vec3, outline points: [Vec3], axis: Vec3) -> Bool {
+        let u = GeometryMath.safeNormalize(points[0] - points[points.count / 2], fallback: Vec3(1, 0, 0))
+        let w = simd_cross(axis, u)
+        let point = Vec2(simd_dot(p, u), simd_dot(p, w))
+        let polygon = points.map { Vec2(simd_dot($0, u), simd_dot($0, w)) }
         var inside = false
         var j = polygon.count - 1
         for i in polygon.indices {

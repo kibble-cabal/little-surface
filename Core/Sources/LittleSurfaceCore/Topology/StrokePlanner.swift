@@ -44,7 +44,8 @@ public struct StrokePlan {
 /// - **Crossing a wire or boundary edge** snaps to that edge's end if it is close, otherwise splits the
 ///   edge. Either way the stroke and the edge end up sharing a vertex.
 /// - **Over existing faces** nothing is created. The stroke stops at the faces' boundary and resumes on
-///   the far side, because an edge across a face interior isn't valid topology.
+///   the far side, because an edge across a face interior isn't valid topology. A pencil line is the
+///   exception: it carries on, and `DrawnFaces` then divides the faces it cut.
 /// - **Starting at the end of a line** and heading on from it carries the line on, from further away
 ///   than a snap would reach.
 /// - **Crossing two or more lines** joins them, and a short overshoot past the outermost is left out.
@@ -142,11 +143,20 @@ public enum StrokePlanner {
                 nodes = merged
                 if !path.isClosed, crossings.count >= (options.camera == nil ? 2 : 1) {
                     connectedLines = crossings.count
-                    let overshoot = options.snapRadius * (options.camera == nil ? 1.5 : 1)
+                    let overshoot = options.snapRadius * 1.5
                     if let first = nodes.firstIndex(where: \.isCrossing), let last = nodes.lastIndex(where: \.isCrossing) {
                         var keep = 0...(nodes.count - 1)
-                        if case .new = nodes[0].node, nodes[first].along - nodes[0].along <= overshoot { keep = first...keep.upperBound }
-                        if case .new = nodes[nodes.count - 1].node, nodes[nodes.count - 1].along - nodes[last].along <= overshoot { keep = keep.lowerBound...last }
+                        // A pencil line's overshoot is what it looks like, however the surface tilts away.
+                        func tail(_ a: Int, _ b: Int) -> Float {
+                            guard let camera = options.camera else { return nodes[b].along - nodes[a].along }
+                            let scale = options.snapRadius / max(options.snapRadiusPoints, 1e-6)
+                            return (a..<b).reduce(Float(0)) { total, i in
+                                guard let p = camera.project(nodes[i].position)?.screen, let q = camera.project(nodes[i + 1].position)?.screen else { return total }
+                                return total + simd_length(q - p) * scale
+                            }
+                        }
+                        if case .new = nodes[0].node, tail(0, first) <= overshoot { keep = first...keep.upperBound }
+                        if case .new = nodes[nodes.count - 1].node, tail(last, nodes.count - 1) <= overshoot { keep = keep.lowerBound...last }
                         nodes = Array(nodes[keep])
                     }
                 }
@@ -162,7 +172,7 @@ public enum StrokePlanner {
         let coverage = FaceCoverage(mesh: mesh, depthTolerance: max(spacing, options.snapRadius))
         var keepSegment = [Bool](repeating: true, count: nodes.count)
         var dropped = false
-        if !mesh.isEmpty && mesh.faceCount > 0 {
+        if !mesh.isEmpty && mesh.faceCount > 0 && options.camera == nil {
             let segmentCount = path.isClosed ? nodes.count : nodes.count - 1
             for i in 0..<segmentCount {
                 let a = nodes[i], b = nodes[(i + 1) % nodes.count]
@@ -337,7 +347,6 @@ public enum StrokePlanner {
             var pa, pb: Vec3
         }
         let lines: [Line] = mesh.aliveEdges.compactMap { e in
-            guard mesh.faceCountOf(edge: e) < 2 else { return nil }
             let (a, b) = mesh.ends(e)
             let pa = mesh.position(a), pb = mesh.position(b)
             guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { return nil }

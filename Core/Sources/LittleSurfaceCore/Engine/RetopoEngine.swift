@@ -1189,14 +1189,16 @@ public final class RetopoEngine {
         let isLoop = paths.contains(where: \.isClosed)
         let ok = perform(isLoop ? "Draw loop" : "Draw line") { mesh, selection in
             var total = PlanResult()
+            var met: [VertexID] = []
             for path in paths {
                 let plan = StrokePlanner.plan(path: prepared(path), mesh: mesh, options: options)
                 guard !plan.plan.isEmpty else { continue }
                 let result = try PlanApplier.apply(plan.plan, to: &mesh, symmetry: symmetry, projector: projector)
                 total.edges += result.edges
+                met += result.nodeVertices
             }
             guard !total.edges.isEmpty else { throw MeshError.invalid("Nothing to add.") }
-            try DrawnFaces.update(after: total, in: &mesh, projector: projector)
+            try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector)
             selection.clear()
         }
         clearMessage()
