@@ -112,6 +112,7 @@ public final class RetopoEngine {
     public private(set) var lassoPath: [Vec2] = []
     public private(set) var inkPath: [Vec2] = []
     public private(set) var inkPrediction: [Vec2] = []
+    public private(set) var inkingIn = InkingIn()
     public private(set) var brushCursor: Vec2?
     /// How far around the cursor a brush reaches, in screen points. The eraser takes whole lines, so it's
     /// kept to about the size of its tip.
@@ -1367,6 +1368,8 @@ public final class RetopoEngine {
         options.mirror = symmetry.activePlane
 
         let quadsBefore = mesh.aliveFaces.filter(mesh.isQuad).count
+        let inkedBefore = InkingIn.Inked(mesh)
+        var straightened: [StraightenedSide] = []
         let isLoop = paths.contains(where: \.isClosed)
         let ok = perform(isLoop ? "Draw loop" : "Draw line") { mesh, selection in
             var total = PlanResult()
@@ -1379,7 +1382,7 @@ public final class RetopoEngine {
                 met += result.nodeVertices
             }
             guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
-            try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector, symmetry: symmetry)
+            straightened = try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector, symmetry: symmetry)
             selection.clear()
         }
         clearMessage()
@@ -1387,6 +1390,7 @@ public final class RetopoEngine {
             keepAsMark(capture)
             return
         }
+        inkingIn = InkingIn(generation: inkingIn.generation &+ 1, mesh: mesh, before: inkedBefore, straightened: straightened)
         if mesh.aliveFaces.filter(mesh.isQuad).count > quadsBefore {
             onEvent?(.facesGenerated)
         } else {

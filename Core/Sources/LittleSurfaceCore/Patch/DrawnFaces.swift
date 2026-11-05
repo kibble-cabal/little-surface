@@ -5,8 +5,9 @@ import simd
 /// corners it has, until more lines divide it.
 public enum DrawnFaces {
     /// After a stroke: `result` is what it added, and `met` holds the points it used that were already
-    /// there. `around` is the edges of any faces already taken out.
-    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws {
+    /// there. `around` is the edges of any faces already taken out. Returns the sides that went straight.
+    @discardableResult
+    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws -> [StraightenedSide] {
         mesh.settleBends()
         absorbRetracedLines(along: result.edges, in: &mesh, symmetry: symmetry)
 
@@ -48,8 +49,9 @@ public enum DrawnFaces {
             try mesh.addFace(loop, autoOrient: false)
         }
         mergeRetracedLines(in: &mesh)
-        mesh.straightenQuads(mirrored: symmetry.isEnabled)
+        let straightened = mesh.straightenQuads(mirrored: symmetry.isEnabled)
         try layLinesOnModel(in: &mesh, projector: projector, symmetry: symmetry)
+        return straightened
     }
 
     /// How far a straight line can stand off the model, against its length, before it's put back on.

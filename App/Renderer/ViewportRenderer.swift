@@ -24,6 +24,8 @@ private struct WorldLine {
     var color: Vec4
     var width: Float
     var pencil: Float = 0
+    /// How much further toward the eye to pull it, to stay clear of a surface it spans.
+    var sag: Float = 0
 }
 
 private struct ScreenLine {
@@ -52,6 +54,8 @@ private enum ElementFlag {
     static let star: UInt8 = 5
     /// The end of a line that isn't joined to anything.
     static let looseEnd: UInt8 = 6
+    /// A line going from pencil to ink, which is drawn on its own until it gets there.
+    static let inkingIn: UInt8 = 5
 }
 
 struct ViewportStyle {
@@ -88,7 +92,7 @@ struct ViewportStyle {
                 Vec4(hover.x, hover.y, hover.z, 0.7), Vec4(issue.x, issue.y, issue.z, 0.8),
                 unfinished,
             ],
-            edges: [ink, selected, hover, issue, graphite],
+            edges: [ink, selected, hover, issue, graphite, Vec4(0, 0, 0, 0)],
             dots: [ink, selected, hover, issue, graphite, star, Vec4(1, 1, 1, 1)],
             backTint: Vec4(0.72, 0.18, 0.42, 0.7),
             preview: graphite,
@@ -124,6 +128,7 @@ private struct FlagsKey: Equatable {
     var hover: PickedElement?
     var issue: MeshIssue?
     var topology: UInt64
+    var inkingIn: Int?
 }
 
 /// Flattened topology, computed once per topology change and shared by the buffer sets.
@@ -175,6 +180,11 @@ private final class SourceBuffers {
 final class ViewportRenderer: NSObject, MTKViewDelegate {
     /// Pencil lines are as wide as this, so the grain has room to show.
     private static let pencilWidth: Float = 3.8
+    private static let inkInSeconds: CFTimeInterval = 0.3
+    /// How far the sides of a new quad are from pencil to ink, while they're on their way.
+    private var inkProgress: Float?
+    private var inkGeneration = 0
+    private var inkStart: CFTimeInterval = 0
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let inFlight = DispatchSemaphore(value: 3)
@@ -300,14 +310,30 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         descriptor.colorAttachments[0].clearColor = style.background
         descriptor.colorAttachments[0].loadAction = .clear
         frameIndex = (frameIndex + 1) % buffers.count
+        inkProgress = currentInkProgress(engine)
         update(buffers[frameIndex], from: engine)
         if let encoder = commands.makeRenderCommandEncoder(descriptor: descriptor) {
             encode(encoder, engine: engine, style: style, camera: engine.camera, includesInteraction: true)
             encoder.endEncoding()
         }
+        if inkProgress != nil {
+            DispatchQueue.main.async { view.setNeedsDisplay() }
+        }
         commands.present(drawable)
         commands.addCompletedHandler { [inFlight] _ in inFlight.signal() }
         commands.commit()
+    }
+
+    private func currentInkProgress(_ engine: RetopoEngine) -> Float? {
+        let inking = engine.inkingIn
+        guard !inking.sides.isEmpty, inking.topologyVersion == engine.mesh.topologyVersion, !UIAccessibility.isReduceMotionEnabled else { return nil }
+        let now = CACurrentMediaTime()
+        if inking.generation != inkGeneration {
+            inkGeneration = inking.generation
+            inkStart = now
+        }
+        let t = Float((now - inkStart) / Self.inkInSeconds)
+        return t < 1 ? t : nil
     }
 
     // MARK: Buffers
@@ -369,14 +395,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             write(mesh.positions, into: &b.positions)
             b.positionVersion = mesh.positionVersion
         }
-        let key = FlagsKey(selection: engine.selection, hover: engine.hoverElement, issue: engine.issueHighlight, topology: mesh.topologyVersion)
+        let key = FlagsKey(selection: engine.selection, hover: engine.hoverElement, issue: engine.issueHighlight, topology: mesh.topologyVersion, inkingIn: inkProgress == nil ? nil : engine.inkingIn.generation)
         if b.flagsKey != key {
-            writeFlags(b, mesh: mesh, key: key)
+            writeFlags(b, mesh: mesh, key: key, inkingIn: key.inkingIn == nil ? [] : Set(engine.inkingIn.sides.map(\.edge)))
             b.flagsKey = key
         }
     }
 
-    private func writeFlags(_ b: RetopoBuffers, mesh: Mesh, key: FlagsKey) {
+    private func writeFlags(_ b: RetopoBuffers, mesh: Mesh, key: FlagsKey, inkingIn: Set<EdgeID>) {
         let selection = key.selection
         var hoverVertex = invalidID, hoverEdge = invalidID, hoverFace = invalidID
         switch key.hover {
@@ -402,6 +428,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             if issue?.edges.contains(e) == true { return ElementFlag.issue }
             if selection.edges.contains(e) || edgesOfSelectedFaces.contains(e) { return ElementFlag.selected }
             if e == hoverEdge { return ElementFlag.hovered }
+            if inkingIn.contains(e) { return ElementFlag.inkingIn }
             // A quad is inked all the way round, whatever's on the other side of its lines.
             return mesh.facesOf(edge: e).contains(where: mesh.isQuad) ? ElementFlag.normal : ElementFlag.unfinished
         }, into: &b.edgeFlags)
@@ -697,6 +724,19 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         add(overlay.warningEdges, color: style.warning, width: 2.4)
         add(overlay.erasingEdges, color: style.warning, width: 4)
         for chain in overlay.chains { add(chain, color: style.chain, width: 3.2) }
+        if let progress = inkProgress {
+            let eased = 1 - pow(1 - progress, 3)
+            let color = simd_mix(style.ink, style.edges[Int(ElementFlag.normal)], Vec4(repeating: eased))
+            let width = Self.pencilWidth + (uniforms.edgeWidth - Self.pencilWidth) * eased
+            for side in engine.inkingIn.sides {
+                // Matches how far the finished side is pulled, so it doesn't jump when it takes over.
+                let sag = simd_length(side.straight[side.straight.count - 1] - side.straight[0]) * 0.2 * eased
+                let points = zip(side.curve, side.straight).map { simd_mix($0, $1, Vec3(repeating: eased)) }
+                for (a, b) in zip(points, points.dropFirst()) {
+                    lines.append(WorldLine(a: a, b: b, color: color, width: width, pencil: 1 - eased, sag: sag))
+                }
+            }
+        }
         e.setDepthStencilState(depthRead)
         setWorldLines(e, lines, uniforms: &uniforms)
 
@@ -829,6 +869,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         pass.depthAttachment.clearDepth = 1
         inFlight.wait()
         frameIndex = (frameIndex + 1) % buffers.count
+        inkProgress = nil
         update(buffers[frameIndex], from: engine)
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
             inFlight.signal()

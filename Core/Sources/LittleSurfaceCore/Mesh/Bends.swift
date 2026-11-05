@@ -1,6 +1,13 @@
 import Foundation
 import simd
 
+/// The curve a side of a quad had before it went straight.
+public struct StraightenedSide {
+    public var a: VertexID
+    public var b: VertexID
+    public var curve: [Vec3]
+}
+
 /// A drawn line keeps its shape with bends: points that only follow the stroke and aren't corners of
 /// anything. A line's real points are its ends, its sharp corners and wherever another line meets it.
 /// Once a face has four real corners and no side wrapping too far round, it's a quad, and its sides go
@@ -61,7 +68,8 @@ public extension Mesh {
 
     /// Quads have straight sides. The curve they were drawn with has done its job.
     /// Under a mirror the two sides go straight together or not at all, so they can't drift apart.
-    mutating func straightenQuads(mirrored: Bool) {
+    @discardableResult
+    mutating func straightenQuads(mirrored: Bool) -> [StraightenedSide] {
         var quads = aliveFaces.filter(isQuad)
         var bends = Set(quads.flatMap { loop($0).filter { isBend[Int($0)] } })
         while mirrored {
@@ -75,7 +83,24 @@ public extension Mesh {
             quads.removeAll(where: waiting.contains)
             bends = Set(quads.flatMap { loop($0).filter { isBend[Int($0)] } })
         }
+        var sides: [StraightenedSide] = []
+        var noted = Set<VertexID>()
+        for f in quads {
+            let loop = self.loop(f)
+            guard let first = loop.firstIndex(where: { !isBend[Int($0)] }) else { continue }
+            var path = [loop[first]]
+            for offset in 1...loop.count {
+                let v = loop[(first + offset) % loop.count]
+                path.append(v)
+                guard !isBend[Int(v)] else { continue }
+                if path.count > 2, noted.insert(path[1]).inserted {
+                    sides.append(StraightenedSide(a: path[0], b: v, curve: path.map(position)))
+                }
+                path = [v]
+            }
+        }
         for v in bends where isVertexAlive(v) { try? dissolveVertex(v) }
+        return sides
     }
 
     /// The mesh as it leaves the app, with straight edges between real points. A shape with too few
