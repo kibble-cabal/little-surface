@@ -171,6 +171,8 @@ private final class SourceBuffers {
 }
 
 final class ViewportRenderer: NSObject, MTKViewDelegate {
+    /// Pencil lines are as wide as this, so the grain has room to show.
+    private static let pencilWidth: Float = 3.8
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let inFlight = DispatchSemaphore(value: 3)
@@ -688,7 +690,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             }
         }
         add(overlay.previewEdges, color: style.preview, width: 1.5)
-        add(overlay.mirrorEdges, color: style.ink, width: 2.2, pencil: 1)
+        add(overlay.mirrorEdges, color: style.ink, width: Self.pencilWidth, pencil: 1)
         add(overlay.warningEdges, color: style.warning, width: 2.4)
         for chain in overlay.chains { add(chain, color: style.chain, width: 3.2) }
         e.setDepthStencilState(depthRead)
@@ -737,11 +739,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             for i in 1..<points.count { lines.append(ScreenLine(a: points[i - 1], b: points[i], color: color, width: width, pencil: pencil)) }
             if closed { lines.append(ScreenLine(a: points[points.count - 1], b: points[0], color: color, width: width, pencil: pencil)) }
         }
-        polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : 2.2, pencil: 1)
+        polyline(engine.inkPath, color: engine.activeTool == .sketch ? SketchPalette.color(engine.sketchColorIndex) : style.ink, width: engine.activeTool == .sketch ? 3 : Self.pencilWidth, pencil: 1)
         if let last = engine.inkPath.last, !engine.inkPrediction.isEmpty {
             var faded = style.ink
             faded.w = 0.45
-            polyline([last] + engine.inkPrediction, color: faded, width: 2.2, pencil: 1)
+            polyline([last] + engine.inkPrediction, color: faded, width: Self.pencilWidth, pencil: 1)
         }
         var lassoColor = style.ink
         lassoColor.w = 0.8

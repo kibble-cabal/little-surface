@@ -160,7 +160,7 @@ vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     uint2 e = edges[iid];
     uchar f = flags[iid];
     float2 corner = quadCorners[vid];
-    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : (f == 4 ? 1.35 : 1.0));
+    float width = u.edgeWidth * ((f == 1 || f == 2 || f == 3) ? 1.6 : (f == 4 ? 2.4 : 1.0));
     // The longer a straight edge, the further it can sag under a curved surface it's still in front of.
     float sag = length(positions[e.x] - positions[e.y]) * 0.2;
     float4 a = pulled(positions[e.x], u, sag);
@@ -175,12 +175,20 @@ vertex LineOut edge_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
     return out;
 }
 
+static float paperSpeck(float2 cell) {
+    return fract(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+}
+
 /// How much of a graphite line takes on the paper here, between 0 and 1. It sits still on the screen,
 /// as the paper would, with fine grain inside larger patches.
 static float paperTooth(float2 pixel) {
-    float fine = fract(sin(dot(floor(pixel * 0.7), float2(12.9898, 78.233))) * 43758.5453);
-    float patchy = fract(sin(dot(floor(pixel * 0.16), float2(39.346, 11.135))) * 24634.6345);
-    return fine * 0.7 + patchy * 0.3;
+    float fine = paperSpeck(floor(pixel * 0.5));
+    float2 cell = pixel * 0.14;
+    float2 within = smoothstep(0.0, 1.0, fract(cell));
+    float2 base = floor(cell);
+    float patchy = mix(mix(paperSpeck(base), paperSpeck(base + float2(1, 0)), within.x),
+                       mix(paperSpeck(base + float2(0, 1)), paperSpeck(base + float2(1, 1)), within.x), within.y);
+    return fine * 0.6 + patchy * 0.4;
 }
 
 fragment float4 line_fragment(LineOut in [[stage_in]]) {
@@ -188,8 +196,8 @@ fragment float4 line_fragment(LineOut in [[stage_in]]) {
     if (in.pencil > 0.5) {
         // Graphite is soft across the line and broken along it, where ink is solid and crisp.
         float tooth = paperTooth(in.position.xy);
-        float across = abs(in.side) + (tooth - 0.5) * 0.5;
-        a = (1 - smoothstep(0.25, 0.95, across)) * mix(0.45, 1.0, smoothstep(0.2, 0.7, tooth));
+        float across = abs(in.side) + (tooth - 0.5) * 0.8;
+        a = (1 - smoothstep(0.3, 0.95, across)) * mix(0.15, 1.0, smoothstep(0.3, 0.62, tooth));
     }
     return float4(in.color.rgb, in.color.a * a);
 }
