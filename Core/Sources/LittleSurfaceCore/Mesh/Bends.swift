@@ -28,6 +28,14 @@ public extension Mesh {
     /// quarter of a ring is 1.11 and a third is 1.21, while half is 1.57 and the long way round far more.
     static var straightSideLimit: Float { 1.25 }
 
+    /// A side that climbs over a bump and comes back down is longer without wrapping around anything, so
+    /// up to this much longer it only counts as wrapping if it's turned to head back the way it came.
+    static var bumpySideLimit: Float { 1.6 }
+
+    /// How far a side's heading can turn from its start to its end, each judged over a fifth of its
+    /// length, before it's wrapping. A circular arc at the straight side limit turns about this far.
+    static var wrappingTurn: Float { 100 * .pi / 180 }
+
     func isQuad(_ f: FaceID) -> Bool {
         guard cornerCount(of: f) == 4 else { return false }
         return curvedSides(of: f).isEmpty
@@ -38,21 +46,33 @@ public extension Mesh {
         let loop = self.loop(f)
         guard let first = loop.firstIndex(where: { !isBend[Int($0)] }), loop.contains(where: { isBend[Int($0)] }) else { return [] }
         var sides: [[VertexID]] = []
-        var start = loop[first], previous = start, length: Float = 0, bends: [VertexID] = []
+        var side = [loop[first]]
         for offset in 1...loop.count {
             let v = loop[(first + offset) % loop.count]
-            length += simd_length(position(v) - position(previous))
-            previous = v
-            if isBend[Int(v)] {
-                bends.append(v)
-                continue
-            }
-            if !bends.isEmpty, length > simd_length(position(v) - position(start)) * Self.straightSideLimit { sides.append(bends) }
-            start = v
-            length = 0
-            bends = []
+            side.append(v)
+            if isBend[Int(v)] { continue }
+            if side.count > 2, wrapsTooFar(side) { sides.append(Array(side.dropFirst().dropLast())) }
+            side = [v]
         }
         return sides
+    }
+
+    private func wrapsTooFar(_ side: [VertexID]) -> Bool {
+        let points = side.map { position($0) }
+        var along: [Float] = [0]
+        for (a, b) in zip(points, points.dropFirst()) { along.append(along[along.count - 1] + simd_length(b - a)) }
+        let length = along[along.count - 1]
+        let straight = simd_length(points[points.count - 1] - points[0])
+        guard length > straight * Self.straightSideLimit else { return false }
+        guard length <= straight * Self.bumpySideLimit else { return true }
+        func point(at distance: Float) -> Vec3 {
+            guard let next = along.firstIndex(where: { $0 >= distance }), next > 0 else { return points[0] }
+            let t = (distance - along[next - 1]) / max(along[next] - along[next - 1], 1e-6)
+            return simd_mix(points[next - 1], points[next], Vec3(repeating: t))
+        }
+        let setsOff = GeometryMath.safeNormalize(point(at: length * 0.2) - points[0], fallback: .zero)
+        let arrives = GeometryMath.safeNormalize(points[points.count - 1] - point(at: length * 0.8), fallback: .zero)
+        return simd_dot(setsOff, arrives) < cos(Self.wrappingTurn)
     }
 
     var bendCount: Int {

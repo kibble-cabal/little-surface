@@ -627,3 +627,55 @@ final class LinesOverADipTests: XCTestCase {
         XCTAssertEqual(engine.statistics.vertices, 5, "its two ends, the edge's two ends, and where they cross")
     }
 }
+
+/// A quad's sides go straight unless they wrap around something, which a bump on the way doesn't.
+final class WrappingSideTests: XCTestCase {
+    /// A square whose top side follows these points, in the plane z = 0 unless they say otherwise.
+    private func face(topSide: [Vec3]) throws -> (Mesh, FaceID) {
+        var mesh = Mesh()
+        let a = mesh.addVertex(Vec3(-1, 0, 0)), b = mesh.addVertex(Vec3(1, 0, 0))
+        let c = mesh.addVertex(Vec3(1, -2, 0)), d = mesh.addVertex(Vec3(-1, -2, 0))
+        let bends = topSide.map { mesh.addVertex($0) }
+        for v in bends { mesh.setBend(v, true) }
+        let f = try mesh.addFace([a] + bends + [b, c, d], autoOrient: false)
+        return (mesh, f)
+    }
+
+    private func arc(degrees: Float) -> [Vec3] {
+        let half = degrees * .pi / 360, radius = 1 / sin(half)
+        return (1..<24).map { i in
+            let angle = -half + 2 * half * Float(i) / 24
+            return Vec3(radius * sin(angle), radius * (cos(angle) - cos(half)), 0)
+        }
+    }
+
+    func testASideOverABumpGoesStraight() throws {
+        // Flat, up over a nose and flat again, about 1.4 times as long as the straight line.
+        let side = [Vec3(-0.7, 0, 0), Vec3(-0.3, 0, 0), Vec3(-0.1, 0, 0.35), Vec3(0.1, 0, 0.35), Vec3(0.3, 0, 0), Vec3(0.7, 0, 0)]
+        let (mesh, f) = try face(topSide: side)
+        XCTAssertTrue(mesh.isQuad(f))
+    }
+
+    func testASideAroundAThirdOfARingGoesStraight() throws {
+        let (mesh, f) = try face(topSide: arc(degrees: 115))
+        XCTAssertTrue(mesh.isQuad(f))
+    }
+
+    func testASideAroundHalfARingStaysCurved() throws {
+        let (mesh, f) = try face(topSide: arc(degrees: 180))
+        XCTAssertFalse(mesh.isQuad(f))
+    }
+
+    func testASideJustPastTheLimitStaysCurved() throws {
+        // A circular arc of 140 degrees is about 1.31 times its straight line, and it's still wrapping.
+        let (mesh, f) = try face(topSide: arc(degrees: 140))
+        XCTAssertFalse(mesh.isQuad(f))
+    }
+
+    func testAScribbledSideStaysCurved() throws {
+        // Zigzags head the same way at both ends, but it's far too long to be a bump.
+        let side = (1..<16).map { i in Vec3(-1 + Float(i) / 8, i % 2 == 0 ? 0 : 0.4, 0) }
+        let (mesh, f) = try face(topSide: side)
+        XCTAssertFalse(mesh.isQuad(f))
+    }
+}
