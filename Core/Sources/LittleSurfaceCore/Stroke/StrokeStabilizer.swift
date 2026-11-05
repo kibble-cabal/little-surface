@@ -31,7 +31,8 @@ public struct StrokeStabilizer {
         guard distance > reach else { return [] }
         var points: [Vec2] = []
         let along = simd_length_squared(heading) > 0 ? simd_dot(gap / distance, heading) : 1
-        if along < Self.turned {
+        // Waiting too long means it's a gentler turn that's here to stay.
+        if along < Self.turned || (along < Self.turning && distance > reach * 2) {
             if let corner = ahead.max(by: { distanceFromLine(to: screen, $0) < distanceFromLine(to: screen, $1) }), corner != screen {
                 points.append(corner)
             }
