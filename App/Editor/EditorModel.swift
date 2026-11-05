@@ -315,8 +315,8 @@ final class EditorModel {
         return text
     }
 
-    func importExample() {
-        guard let url = Bundle.main.url(forResource: "Example", withExtension: "glb") else {
+    func importExample(_ example: ExampleModel = .bust) {
+        guard let url = example.url else {
             engine.say("The example model is missing from this build.", kind: .error)
             return
         }

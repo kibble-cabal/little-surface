@@ -84,8 +84,13 @@ struct WelcomeView: View {
             Menu {
                 Button("Import Model…", systemImage: "square.and.arrow.down") { pick(.model) }
                     .accessibilityIdentifier("Import Model")
-                Button("Example", systemImage: "cube") { app.newProject(name: "Example", start: .example) }
-                    .accessibilityIdentifier("Open Example")
+                Menu("Examples", systemImage: "cube") {
+                    ForEach(ExampleModel.allCases) { example in
+                        Button(example.title) { app.newProject(name: example.title, start: .example(example)) }
+                            .accessibilityIdentifier("Open \(example.title)")
+                    }
+                }
+                .accessibilityIdentifier("Examples")
                 Button("Empty Project", systemImage: "doc") { app.newProject() }
                     .accessibilityIdentifier("New Project")
                 Divider()
@@ -106,7 +111,7 @@ struct WelcomeView: View {
     private var emptyState: some View {
         VStack(spacing: 10) {
             Button("Import Model") { pick(.model) }.pillButton(prominent: true)
-            Button("Use the Example") { app.newProject(name: "Example", start: .example) }.pillButton()
+            Button("Use the Example") { app.newProject(name: ExampleModel.bust.title, start: .example(.bust)) }.pillButton()
         }
     }
 }

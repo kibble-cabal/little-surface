@@ -7,13 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		06EB247F472E0EF63C7E3217 /* Horse Head.glb in Resources */ = {isa = PBXBuildFile; fileRef = 6B174A350BCCA6E3C29FBBCB /* Horse Head.glb */; };
 		0BFE694CDD69FD8ED8D534C2 /* MenuSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09603273F981C15D5AB0A93B /* MenuSheets.swift */; };
 		117F07A2EC61B24AB283090D /* BlenderLinkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */; };
+		123F76752A583D698969253F /* Spot the Cow.glb in Resources */ = {isa = PBXBuildFile; fileRef = CEF8E520DA2B129CBADBB277 /* Spot the Cow.glb */; };
 		175F1F83129526F3D0D68010 /* little_surface_link.py in Resources */ = {isa = PBXBuildFile; fileRef = 7DE70E72F97E8E358C2FBE33 /* little_surface_link.py */; };
 		1AEE19D627CF604BCE93E6B9 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069771140D1C2C22DE3B20A8 /* Theme.swift */; };
 		20BF909B8805F464B4434ACF /* LittleSurfaceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698C798F81E379D1E9A20233 /* LittleSurfaceApp.swift */; };
 		28C67CB5770916452B11EFD8 /* EditorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F59F4BAB4DCBF1FE470F3BA /* EditorModel.swift */; };
 		2C6DE9CD3B751F72CA635013 /* ProjectDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA242867357FBD8D7B1CD7C0 /* ProjectDocument.swift */; };
+		3DBB0EE2DB37AAB664CF3FCB /* Rubber Duck.glb in Resources */ = {isa = PBXBuildFile; fileRef = 53FBA03846583C062A5E7C90 /* Rubber Duck.glb */; };
 		3FA58251E03D18B177DBAE18 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 804563D7FDEE3D22BEDDA3E3 /* AppSettings.swift */; };
 		41E939F6A70455FBD3AE6954 /* TimelapseExportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */; };
 		4530B86FCE58F3165DDB7D96 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF8E71B735CA1BCC54E753D5 /* WelcomeView.swift */; };
@@ -27,9 +30,11 @@
 		B60F744C9BA38280139C59B2 /* BlenderLinkServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06C85ED7C796A7978A25DFA0 /* BlenderLinkServer.swift */; };
 		B615EFF448BFFED6C41F6E0A /* ProjectLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A34BA98C55686516ECB57D1 /* ProjectLibrary.swift */; };
 		B9A00326904285BBBDA6C803 /* LittleSurfaceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 86455407BC6AD5E65434F015 /* LittleSurfaceCore */; };
+		BDD3DD101149612324216BEF /* Marble Bust.glb in Resources */ = {isa = PBXBuildFile; fileRef = 34FD87997FF660D11E757C43 /* Marble Bust.glb */; };
+		D092E87CBC1AF3BC84B203E6 /* ExampleModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F9E4D4EF70FA5E6C753653F /* ExampleModel.swift */; };
 		D0FEEAAA0A34FBC5FF1FADD9 /* TimelapseExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */; };
 		D37C1C98DCA6F7AAA185CFBC /* WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */; };
-		E365E75625D10F561FE679CB /* Example.glb in Resources */ = {isa = PBXBuildFile; fileRef = 2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */; };
+		E3B8D77466DAC110E36E906B /* Blub the Fish.glb in Resources */ = {isa = PBXBuildFile; fileRef = A9231A351EA93E69FEAA84E9 /* Blub the Fish.glb */; };
 		F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77C29AE9EE3901E9C42619B /* EditorView.swift */; };
 /* End PBXBuildFile section */
 
@@ -56,11 +61,13 @@
 		09603273F981C15D5AB0A93B /* MenuSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuSheets.swift; sourceTree = "<group>"; };
 		0C14F13202AB04BD5058FFD3 /* ViewportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportRenderer.swift; sourceTree = "<group>"; };
 		2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowUITests.swift; sourceTree = "<group>"; };
-		2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */ = {isa = PBXFileReference; path = Example.glb; sourceTree = "<group>"; };
+		34FD87997FF660D11E757C43 /* Marble Bust.glb */ = {isa = PBXFileReference; path = "Marble Bust.glb"; sourceTree = "<group>"; };
 		427777B204E522D62BB79495 /* LittleSurfaceUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LittleSurfaceUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A6AA6E9C3423B67DD74022A /* ViewportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportView.swift; sourceTree = "<group>"; };
+		53FBA03846583C062A5E7C90 /* Rubber Duck.glb */ = {isa = PBXFileReference; path = "Rubber Duck.glb"; sourceTree = "<group>"; };
 		64964A42BDD2F8515FB3421A /* DocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentTests.swift; sourceTree = "<group>"; };
 		698C798F81E379D1E9A20233 /* LittleSurfaceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LittleSurfaceApp.swift; sourceTree = "<group>"; };
+		6B174A350BCCA6E3C29FBBCB /* Horse Head.glb */ = {isa = PBXFileReference; path = "Horse Head.glb"; sourceTree = "<group>"; };
 		719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelapseExporter.swift; sourceTree = "<group>"; };
 		7A34BA98C55686516ECB57D1 /* ProjectLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectLibrary.swift; sourceTree = "<group>"; };
 		7DE70E72F97E8E358C2FBE33 /* little_surface_link.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = little_surface_link.py; sourceTree = "<group>"; };
@@ -70,9 +77,12 @@
 		862D894F342901E63C82BC90 /* Shaders.msl */ = {isa = PBXFileReference; path = Shaders.msl; sourceTree = "<group>"; };
 		8E0D11E108833499D459410C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkView.swift; sourceTree = "<group>"; };
+		9F9E4D4EF70FA5E6C753653F /* ExampleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExampleModel.swift; sourceTree = "<group>"; };
 		A2CB3279F8027235D92B6C16 /* BlenderLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkTests.swift; sourceTree = "<group>"; };
 		A5E2C0B3155FAFC22161E1B7 /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
+		A9231A351EA93E69FEAA84E9 /* Blub the Fish.glb */ = {isa = PBXFileReference; path = "Blub the Fish.glb"; sourceTree = "<group>"; };
 		C77C29AE9EE3901E9C42619B /* EditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorView.swift; sourceTree = "<group>"; };
+		CEF8E520DA2B129CBADBB277 /* Spot the Cow.glb */ = {isa = PBXFileReference; path = "Spot the Cow.glb"; sourceTree = "<group>"; };
 		DA242867357FBD8D7B1CD7C0 /* ProjectDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDocument.swift; sourceTree = "<group>"; };
 		DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelapseExportTests.swift; sourceTree = "<group>"; };
 		E6499438F5C0C4A697E5F4C1 /* LittleSurfaceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = LittleSurfaceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -130,7 +140,7 @@
 		2B81E29825C6B4219EFA40C1 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */,
+				C13D045AC8A1A3FE98BF3BC6 /* Examples */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -188,6 +198,18 @@
 			);
 			sourceTree = "<group>";
 		};
+		C13D045AC8A1A3FE98BF3BC6 /* Examples */ = {
+			isa = PBXGroup;
+			children = (
+				A9231A351EA93E69FEAA84E9 /* Blub the Fish.glb */,
+				6B174A350BCCA6E3C29FBBCB /* Horse Head.glb */,
+				34FD87997FF660D11E757C43 /* Marble Bust.glb */,
+				53FBA03846583C062A5E7C90 /* Rubber Duck.glb */,
+				CEF8E520DA2B129CBADBB277 /* Spot the Cow.glb */,
+			);
+			path = Examples;
+			sourceTree = "<group>";
+		};
 		C8E28EB9F56217C7746005D1 /* Renderer */ = {
 			isa = PBXGroup;
 			children = (
@@ -224,6 +246,7 @@
 			children = (
 				804563D7FDEE3D22BEDDA3E3 /* AppSettings.swift */,
 				7F59F4BAB4DCBF1FE470F3BA /* EditorModel.swift */,
+				9F9E4D4EF70FA5E6C753653F /* ExampleModel.swift */,
 				719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */,
 			);
 			path = Editor;
@@ -352,8 +375,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				64BE7548250EFFB3185C0D91 /* Assets.xcassets in Resources */,
-				E365E75625D10F561FE679CB /* Example.glb in Resources */,
+				E3B8D77466DAC110E36E906B /* Blub the Fish.glb in Resources */,
+				06EB247F472E0EF63C7E3217 /* Horse Head.glb in Resources */,
+				BDD3DD101149612324216BEF /* Marble Bust.glb in Resources */,
+				3DBB0EE2DB37AAB664CF3FCB /* Rubber Duck.glb in Resources */,
 				533EE4078DDE44E4E86FA2CA /* Shaders.msl in Resources */,
+				123F76752A583D698969253F /* Spot the Cow.glb in Resources */,
 				175F1F83129526F3D0D68010 /* little_surface_link.py in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -378,6 +405,7 @@
 				117F07A2EC61B24AB283090D /* BlenderLinkView.swift in Sources */,
 				28C67CB5770916452B11EFD8 /* EditorModel.swift in Sources */,
 				F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */,
+				D092E87CBC1AF3BC84B203E6 /* ExampleModel.swift in Sources */,
 				20BF909B8805F464B4434ACF /* LittleSurfaceApp.swift in Sources */,
 				0BFE694CDD69FD8ED8D534C2 /* MenuSheets.swift in Sources */,
 				2C6DE9CD3B751F72CA635013 /* ProjectDocument.swift in Sources */,

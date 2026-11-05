@@ -34,7 +34,7 @@ final class AppModel {
         case empty
         case model(URL)
         case mesh(URL)
-        case example
+        case example(ExampleModel)
     }
 
     func newProject(name: String = "Untitled", start: Start = .empty) {
@@ -59,7 +59,7 @@ final class AppModel {
             case .empty: break
             case .model(let modelURL): editor.importModel(from: modelURL)
             case .mesh(let meshURL): editor.openMeshForEditing(from: meshURL)
-            case .example: editor.importExample()
+            case .example(let example): editor.importExample(example)
             }
         }
     }

@@ -148,10 +148,13 @@ final class DocumentTests: XCTestCase {
         wait(for: [opened], timeout: 10)
     }
 
-    func testBundledExampleLoads() throws {
-        let url = try XCTUnwrap(Bundle.main.url(forResource: "Example", withExtension: "glb"))
-        let model = try ModelImporter.load(url: url)
-        XCTAssertGreaterThan(model.triangleCount, 50_000)
+    func testBundledExamplesLoad() throws {
+        for example in ExampleModel.allCases {
+            let url = try XCTUnwrap(example.url, example.title)
+            let model = try ModelImporter.load(url: url)
+            XCTAssertEqual(model.objects.map(\.name), [example.title])
+            XCTAssertGreaterThan(model.triangleCount, 4_000, example.title)
+        }
     }
 
     func testSafeFileNames() {
@@ -165,7 +168,7 @@ final class RendererTests: XCTestCase {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         let renderer = try XCTUnwrap(ViewportRenderer(device: device), "shaders must compile")
         let engine = RetopoEngine(name: "Render")
-        let url = try XCTUnwrap(Bundle.main.url(forResource: "Example", withExtension: "glb"))
+        let url = try XCTUnwrap(ExampleModel.bust.url)
         let model = try ModelImporter.load(url: url)
         engine.addSources(model.objects, bvhs: [:])
         engine.camera.viewSize = Vec2(480, 320)

@@ -8,7 +8,7 @@ Little Surface is built for the 2020 iPad and newer, with iPadOS 18 or later. It
 
 ## Getting started
 
-1. On the welcome screen, tap **+**, then **Example** for a model to practice on, or **Import Model** for your own OBJ, GLB or glTF file.
+1. On the welcome screen, tap **+**, then **Examples** for a model to practice on, or **Import Model** for your own OBJ, GLB or glTF file.
 2. Draw a shape on the model. It stays pencil, with a soft tint, until it has four corners.
 3. Draw lines across it to cut it up. Every shape with four corners is a quad, and it turns to ink.
 
@@ -123,6 +123,20 @@ You can include the sculpt as a separate object.
 - Part of a stroke that runs over finished quads is dropped, unless the whole stroke does, which leaves a mark.
 - If an import from the welcome screen fails, it leaves an empty project behind that you can delete.
 - Apple Pencil haptics need an Apple Pencil Pro, and hover and double-tap need a Pencil that supports them. The app works without any of these.
+
+## Example models
+
+These come with the app to practice on. All are free to use and share, with no credit required. They've been centered, resized and had their materials removed.
+
+| Model | From | License |
+| --- | --- | --- |
+| Marble Bust | [Poly Haven](https://polyhaven.com/a/marble_bust_01) | CC0 |
+| Spot the Cow | [Keenan Crane's model repository](https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/) | CC0 |
+| Blub the Fish | [Keenan Crane's model repository](https://www.cs.cmu.edu/~kmcrane/Projects/ModelRepository/) | CC0 |
+| Rubber Duck | [Poly Haven](https://polyhaven.com/a/rubber_duck_toy) | CC0 |
+| Horse Head | [Poly Haven](https://polyhaven.com/a/horse_head) | CC0 |
+
+The bust's head is slightly turned and the horse's mane falls to one side, so they aren't exactly symmetrical. Mirror will line up less closely on those two than on the others.
 
 ## Building it yourself
 

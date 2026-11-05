@@ -65,14 +65,15 @@ final class WorkflowUITests: XCTestCase {
 
     private func openExample() {
         button("Add").tap()
-        button("Open Example").tap()
+        button("Examples").tap()
+        button("Open Marble Bust").tap()
         XCTAssertTrue(viewport.waitForExistence(timeout: 20))
         // The model is ready once a stroke can land on it.
         let deadline = Date().addingTimeInterval(60)
         while Date() < deadline, stats.lines == 0 {
             settle(1)
             if !app.descendants(matching: .any)["busy"].exists {
-                draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
+                draw(CGPoint(x: 322, y: 430), CGPoint(x: 438, y: 430))
             }
         }
         XCTAssertGreaterThan(stats.lines, 0, "the surface never became ready")
@@ -83,10 +84,10 @@ final class WorkflowUITests: XCTestCase {
 
     /// Four lines that close into a quad on the model's face.
     private func drawBox() {
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
-        draw(CGPoint(x: 480, y: 480), CGPoint(x: 480, y: 570))
-        draw(CGPoint(x: 480, y: 570), CGPoint(x: 340, y: 570))
-        draw(CGPoint(x: 340, y: 570), CGPoint(x: 340, y: 480))
+        draw(CGPoint(x: 335, y: 430), CGPoint(x: 425, y: 430))
+        draw(CGPoint(x: 425, y: 430), CGPoint(x: 425, y: 530))
+        draw(CGPoint(x: 425, y: 530), CGPoint(x: 335, y: 530))
+        draw(CGPoint(x: 335, y: 530), CGPoint(x: 335, y: 430))
     }
 
     private func more(_ id: String) {
@@ -110,36 +111,36 @@ final class WorkflowUITests: XCTestCase {
             XCTAssertFalse(app.buttons[gone].exists, "\(gone) is gone")
         }
 
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 370, y: 600), CGPoint(x: 460, y: 600))
         XCTAssertEqual(stats, Stats(points: 2, lines: 1, quads: 0, shapes: 0, marks: 0), "a line has its two ends and no more")
 
-        draw(CGPoint(x: 480, y: 480), CGPoint(x: 480, y: 570))
-        draw(CGPoint(x: 480, y: 570), CGPoint(x: 340, y: 570))
+        draw(CGPoint(x: 460, y: 600), CGPoint(x: 460, y: 700))
+        draw(CGPoint(x: 460, y: 700), CGPoint(x: 370, y: 700))
         shot("three lines")
-        draw(CGPoint(x: 340, y: 570), CGPoint(x: 340, y: 480))
+        draw(CGPoint(x: 370, y: 700), CGPoint(x: 370, y: 600))
         XCTAssertEqual(stats, Stats(points: 4, lines: 4, quads: 1, shapes: 0, marks: 0))
         shot("a quad")
 
         button("Undo").tap()
         settle()
         XCTAssertEqual(stats, Stats(points: 4, lines: 3, quads: 0, shapes: 0, marks: 0), "undo takes the last line and the quad")
-        draw(CGPoint(x: 340, y: 570), CGPoint(x: 340, y: 480))
+        draw(CGPoint(x: 370, y: 700), CGPoint(x: 370, y: 600))
 
-        draw(CGPoint(x: 410, y: 460), CGPoint(x: 410, y: 590))
+        draw(CGPoint(x: 415, y: 578), CGPoint(x: 415, y: 722))
         XCTAssertEqual(stats, Stats(points: 6, lines: 7, quads: 2, shapes: 0, marks: 0), "a cut makes two")
-        draw(CGPoint(x: 320, y: 525), CGPoint(x: 500, y: 525))
+        draw(CGPoint(x: 357, y: 650), CGPoint(x: 473, y: 650))
         XCTAssertEqual(stats, Stats(points: 9, lines: 12, quads: 4, shapes: 0, marks: 0), "and a cut across both makes four")
         shot("cut into four")
     }
 
     func testThreeLinesAreAShapeUntilACutMakesAQuad() throws {
         openExample()
-        draw(CGPoint(x: 340, y: 590), CGPoint(x: 480, y: 590))
-        draw(CGPoint(x: 480, y: 590), CGPoint(x: 410, y: 470))
-        draw(CGPoint(x: 410, y: 470), CGPoint(x: 340, y: 590))
+        draw(CGPoint(x: 365, y: 722), CGPoint(x: 455, y: 722))
+        draw(CGPoint(x: 455, y: 722), CGPoint(x: 410, y: 589))
+        draw(CGPoint(x: 410, y: 589), CGPoint(x: 365, y: 722))
         XCTAssertEqual(stats, Stats(points: 3, lines: 3, quads: 0, shapes: 1, marks: 0))
         shot("a shape")
-        draw(CGPoint(x: 340, y: 540), CGPoint(x: 480, y: 540))
+        draw(CGPoint(x: 365, y: 667), CGPoint(x: 455, y: 667))
         XCTAssertEqual(stats, Stats(points: 5, lines: 6, quads: 1, shapes: 1, marks: 0), "a cut leaves a triangle and a quad")
         shot("a shape cut")
     }
@@ -148,21 +149,21 @@ final class WorkflowUITests: XCTestCase {
         openExample()
         viewport.pinch(withScale: 2, velocity: 1)
         settle()
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 335, y: 430), CGPoint(x: 425, y: 430))
         XCTAssertEqual(stats, Stats(points: 2, lines: 1, quads: 0, shapes: 0, marks: 0))
     }
 
     func testTicksSetOutTheRowsThatFillMakes() throws {
         openExample()
         drawBox()
-        draw(CGPoint(x: 410, y: 465), CGPoint(x: 410, y: 495))
+        draw(CGPoint(x: 380, y: 413), CGPoint(x: 380, y: 447))
         XCTAssertEqual(stats, Stats(points: 5, lines: 5, quads: 0, shapes: 1, marks: 0), "a tick is a point, and a fifth corner")
-        tap(410, 525)
+        tap(380, 480)
         XCTAssertFalse(app.buttons["Fill"].exists, "five corners can't become quads")
         tap(300, 900)
 
-        draw(CGPoint(x: 410, y: 555), CGPoint(x: 410, y: 585))
-        tap(410, 525)
+        draw(CGPoint(x: 380, y: 513), CGPoint(x: 380, y: 547))
+        tap(380, 480)
         shot("a shape picked")
         button("Fill").tap()
         settle()
@@ -174,8 +175,8 @@ final class WorkflowUITests: XCTestCase {
 
     func testAPickedLineCanBeDeleted() throws {
         openExample()
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
-        tap(410, 480)
+        draw(CGPoint(x: 335, y: 430), CGPoint(x: 425, y: 430))
+        tap(380, 430)
         button("Delete").tap()
         settle()
         XCTAssertEqual(stats.lines, 0)
@@ -186,10 +187,10 @@ final class WorkflowUITests: XCTestCase {
 
     func testHoldingAPointMovesItAndDrawingDoesNot() throws {
         openExample()
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 335, y: 430), CGPoint(x: 425, y: 430))
         let before = stats
 
-        point(340, 480).press(forDuration: 0.6, thenDragTo: point(330, 440), withVelocity: 200, thenHoldForDuration: 0.05)
+        point(335, 430).press(forDuration: 0.6, thenDragTo: point(329, 386), withVelocity: 200, thenHoldForDuration: 0.05)
         settle()
         XCTAssertEqual(stats, before, "a held point moves, adding nothing")
         XCTAssertFalse(app.buttons["Delete"].exists, "and doesn't stay picked")
@@ -198,10 +199,10 @@ final class WorkflowUITests: XCTestCase {
 
     func testAPickCanBeUndoneAndDraggedAndAStrokeElsewhereStillDraws() throws {
         openExample()
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 335, y: 430), CGPoint(x: 425, y: 430))
         let drawn = stats
 
-        tap(340, 480)
+        tap(335, 430)
         XCTAssertTrue(button("Delete").exists, "a tap picks the point")
         button("Undo").tap()
         settle()
@@ -211,7 +212,7 @@ final class WorkflowUITests: XCTestCase {
         settle()
         XCTAssertTrue(button("Delete").exists)
 
-        point(340, 480).press(forDuration: 0.05, thenDragTo: point(330, 440), withVelocity: 200, thenHoldForDuration: 0.05)
+        point(335, 430).press(forDuration: 0.05, thenDragTo: point(329, 386), withVelocity: 200, thenHoldForDuration: 0.05)
         settle()
         XCTAssertEqual(stats, drawn, "dragging it moves it, and draws nothing")
         XCTAssertTrue(button("Delete").exists, "and it stays picked")
@@ -219,7 +220,7 @@ final class WorkflowUITests: XCTestCase {
 
         tap(300, 900)
         XCTAssertFalse(app.buttons["Delete"].exists)
-        draw(CGPoint(x: 340, y: 560), CGPoint(x: 480, y: 560))
+        draw(CGPoint(x: 335, y: 519), CGPoint(x: 425, y: 519))
         XCTAssertEqual(stats.lines, drawn.lines + 1)
     }
 
@@ -235,12 +236,12 @@ final class WorkflowUITests: XCTestCase {
         let inked = stats
         XCTAssertTrue(app.sliders["Brush Size"].waitForExistence(timeout: 3))
         shot("smooth")
-        draw(CGPoint(x: 380, y: 500), CGPoint(x: 440, y: 550))
+        draw(CGPoint(x: 361, y: 452), CGPoint(x: 399, y: 508))
         XCTAssertEqual(stats, inked, "smoothing changes no topology")
 
         button("tool-erase").tap()
         settle()
-        draw(CGPoint(x: 410, y: 470), CGPoint(x: 410, y: 580))
+        draw(CGPoint(x: 380, y: 419), CGPoint(x: 380, y: 541))
         XCTAssertLessThan(stats.quads, inked.quads)
         shot("erased")
         button("Undo").tap()
@@ -254,7 +255,7 @@ final class WorkflowUITests: XCTestCase {
 
     func testSymmetryMirrorsAStroke() throws {
         openExample()
-        draw(CGPoint(x: 330, y: 480), CGPoint(x: 370, y: 480))
+        draw(CGPoint(x: 329, y: 430), CGPoint(x: 354, y: 430))
         let single = stats
         button("Undo").tap()
         settle()
@@ -262,7 +263,7 @@ final class WorkflowUITests: XCTestCase {
         button("Symmetry").tap()
         settle()
         XCTAssertEqual(button("Symmetry").value as? String, "On")
-        draw(CGPoint(x: 330, y: 480), CGPoint(x: 370, y: 480))
+        draw(CGPoint(x: 329, y: 430), CGPoint(x: 354, y: 430))
         XCTAssertEqual(stats.lines, single.lines * 2, "the far side has it too")
         shot("mirrored")
     }
@@ -298,7 +299,7 @@ final class WorkflowUITests: XCTestCase {
         button("tool-moveBrush").tap()
         settle()
         XCTAssertTrue(app.sliders["Brush Size"].waitForExistence(timeout: 3))
-        draw(CGPoint(x: 380, y: 500), CGPoint(x: 400, y: 520))
+        draw(CGPoint(x: 361, y: 452), CGPoint(x: 374, y: 474))
         XCTAssertEqual(stats, inked)
     }
 
@@ -324,7 +325,7 @@ final class WorkflowUITests: XCTestCase {
 
     func testBlenderLinkTakesAMeshOverTheNetwork() throws {
         openExample()
-        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 335, y: 430), CGPoint(x: 425, y: 430))
         let before = stats
         more("Blender Link")
         XCTAssertTrue(app.switches["Blender Link Toggle"].waitForExistence(timeout: 5))
