@@ -78,6 +78,7 @@ public enum StrokePlanner {
         out.isClosed = path.isClosed
         var splitCount = 0, snappedEnds = 0
         var extendsLine = false, connectedLines = 0
+        let spacing = path.points.count > 1 ? path.length / Float(path.points.count - 1) : options.snapRadius
         var flowsFromStart = false, flowsToEnd = false
 
         if let camera = options.camera { markCorners(&nodes, isClosed: path.isClosed, camera: camera) }
@@ -87,12 +88,25 @@ public enum StrokePlanner {
             return snapEnd(position: node.position, normal: node.normal, mesh: mesh, options: options)
         }
 
-        let spacing = path.points.count > 1 ? path.length / Float(path.points.count - 1) : options.snapRadius
+        // A pencil line's end that overshoots a line it crosses gets left out, so it has nothing to land
+        // on. One that starts right on the line isn't overshooting, and the snap below deals with it.
+        var startsFree = false, endsFree = false
+        let overshoots = (options.snapRadius * 0.25)...(options.snapRadius * 1.5)
+        if let camera = options.camera, !path.isClosed, !mesh.isEmpty {
+            let crossed = findScreenCrossings(path: path, nodes: nodes, mesh: mesh, options: options, camera: camera, spacing: spacing).map(\.along)
+            if let first = crossed.min(), let index = nodes.firstIndex(where: { $0.along >= first }) {
+                startsFree = overshoots.contains(screenTail(nodes, 0, index, options: options, camera: camera))
+            }
+            if let last = crossed.max(), let index = nodes.lastIndex(where: { $0.along <= last }) {
+                endsFree = overshoots.contains(screenTail(nodes, index, nodes.count - 1, options: options, camera: camera))
+            }
+        }
 
         if !path.isClosed, !mesh.isEmpty {
             let inward = min(3, nodes.count - 1)
             let startHeading = nodes[inward].position - nodes[0].position
-            if let v = lineEnd(near: nodes[0].position, heading: startHeading, normal: nodes[0].normal, mesh: mesh, options: options) {
+            if startsFree {
+            } else if let v = lineEnd(near: nodes[0].position, heading: startHeading, normal: nodes[0].normal, mesh: mesh, options: options) {
                 nodes[0].node = .existing(v)
                 nodes[0].position = mesh.position(v)
                 snappedEnds += 1
@@ -106,7 +120,8 @@ public enum StrokePlanner {
             }
             let last = nodes.count - 1
             let endHeading = nodes[last - inward].position - nodes[last].position
-            if let v = lineEnd(near: nodes[last].position, heading: endHeading, normal: nodes[last].normal, mesh: mesh, options: options) {
+            if endsFree {
+            } else if let v = lineEnd(near: nodes[last].position, heading: endHeading, normal: nodes[last].normal, mesh: mesh, options: options) {
                 nodes[last].node = .existing(v)
                 nodes[last].position = mesh.position(v)
                 snappedEnds += 1
@@ -146,14 +161,9 @@ public enum StrokePlanner {
                     let overshoot = options.snapRadius * 1.5
                     if let first = nodes.firstIndex(where: \.isCrossing), let last = nodes.lastIndex(where: \.isCrossing) {
                         var keep = 0...(nodes.count - 1)
-                        // A pencil line's overshoot is what it looks like, however the surface tilts away.
                         func tail(_ a: Int, _ b: Int) -> Float {
                             guard let camera = options.camera else { return nodes[b].along - nodes[a].along }
-                            let scale = options.snapRadius / max(options.snapRadiusPoints, 1e-6)
-                            return (a..<b).reduce(Float(0)) { total, i in
-                                guard let p = camera.project(nodes[i].position)?.screen, let q = camera.project(nodes[i + 1].position)?.screen else { return total }
-                                return total + simd_length(q - p) * scale
-                            }
+                            return screenTail(nodes, a, b, options: options, camera: camera)
                         }
                         if case .new = nodes[0].node, tail(0, first) <= overshoot { keep = first...keep.upperBound }
                         if case .new = nodes[nodes.count - 1].node, tail(last, nodes.count - 1) <= overshoot { keep = keep.lowerBound...last }
@@ -235,6 +245,9 @@ public enum StrokePlanner {
             }
         }
 
+        // A pencil tick that's all overshoot leaves just the place it crossed: a new point on that line.
+        if options.camera != nil, plan.edges.isEmpty, nodes.count == 1, nodes[0].isCrossing { _ = index(of: 0) }
+
         // Crossing nodes that ended up unused must not split anything.
         splitCount = plan.nodes.reduce(0) { total, node in
             if case .split = node { return total + 1 }
@@ -253,6 +266,16 @@ public enum StrokePlanner {
         out.extendsLine = extendsLine
         out.connectedLines = connectedLines
         return out
+    }
+
+    /// How long part of a pencil line looks, however the surface tilts away, in the world units of a snap.
+    private static func screenTail(_ nodes: [PathNode], _ a: Int, _ b: Int, options: StrokePlanOptions, camera: Camera) -> Float {
+        guard a < b else { return 0 }
+        let scale = options.snapRadius / max(options.snapRadiusPoints, 1e-6)
+        return (a..<b).reduce(Float(0)) { total, i in
+            guard let p = camera.project(nodes[i].position)?.screen, let q = camera.project(nodes[i + 1].position)?.screen else { return total }
+            return total + simd_length(q - p) * scale
+        }
     }
 
     /// Picks out the places a pencil line turns sharply. How far around to look is in stroke points,

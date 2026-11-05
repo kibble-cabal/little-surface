@@ -1192,12 +1192,12 @@ public final class RetopoEngine {
             var met: [VertexID] = []
             for path in paths {
                 let plan = StrokePlanner.plan(path: prepared(path), mesh: mesh, options: options)
-                guard !plan.plan.isEmpty else { continue }
+                guard !plan.plan.nodes.isEmpty else { continue }
                 let result = try PlanApplier.apply(plan.plan, to: &mesh, symmetry: symmetry, projector: projector)
                 total.edges += result.edges
                 met += result.nodeVertices
             }
-            guard !total.edges.isEmpty else { throw MeshError.invalid("Nothing to add.") }
+            guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
             try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector)
             selection.clear()
         }
@@ -1227,6 +1227,43 @@ public final class RetopoEngine {
             sketchRevision &+= 1
         }
         selection.clear()
+        notify()
+    }
+
+    /// Whether the picked shape can become quads using the points already on its sides, which takes an
+    /// even number of them. Four would already be a quad.
+    public var canFillPick: Bool {
+        guard selection.faces.count == 1, let face = selection.faces.first, mesh.isFaceAlive(face) else { return false }
+        let corners = mesh.cornerCount(of: face)
+        return corners >= 6 && corners.isMultiple(of: 2)
+    }
+
+    /// Fills the picked shape with quads between the points on its sides. No points are made up along
+    /// them, so the rows are the ones the drawing already set out.
+    public func fillPick() {
+        guard canFillPick, let face = selection.faces.first else { return }
+        let ok = perform("Fill") { mesh, selection in
+            var loops = [mesh.loop(face)]
+            if symmetry.isEnabled {
+                loops = Symmetry.expanded(faces: [face], in: mesh).map { mesh.loop($0) }
+                loops.sort { a, _ in a.contains(mesh.loop(face)[0]) }
+            }
+            var plan: TopologyPlan?
+            for loop in loops {
+                for v in loop where mesh.isVertexAlive(v) && mesh.isBendVertex(v) { try mesh.dissolveVertex(v) }
+                let corners = loop.filter(mesh.isVertexAlive)
+                if let f = mesh.findFace(withVertices: corners) { mesh.removeFace(f) }
+                guard plan == nil else { continue }
+                let edges = corners.indices.compactMap { mesh.edge(between: corners[$0], corners[($0 + 1) % corners.count]) }
+                let chain = BoundaryChain(vertices: corners, edges: edges, isClosed: true)
+                plan = try QuadPatchBuilder.plan(chains: [chain], parameters: tools.patch, mesh: mesh, projector: projector).plan
+            }
+            if let plan { _ = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector) }
+            selection.clear()
+        }
+        if ok { onEvent?(.facesGenerated) }
+        clearMessage()
+        rebuildOverlay()
         notify()
     }
 

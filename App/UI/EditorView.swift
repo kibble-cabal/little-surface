@@ -269,6 +269,11 @@ private struct PickChips: View {
         let engine = model.state
         if engine.hasPick {
             HStack(spacing: 8) {
+                if engine.canFillPick {
+                    Button("Fill") { model.engine.fillPick() }
+                        .pillButton()
+                        .accessibilityIdentifier("Fill")
+                }
                 Button("Delete", role: .destructive) { model.engine.deletePick() }
                     .pillButton()
                     .accessibilityIdentifier("Delete")

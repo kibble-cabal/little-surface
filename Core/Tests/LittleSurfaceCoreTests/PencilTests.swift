@@ -276,6 +276,82 @@ final class PencilTests: XCTestCase {
         checked(engine)
     }
 
+    // MARK: Ticks and Fill
+
+    private func tap(_ engine: RetopoEngine, _ p: Vec2) {
+        engine.pencilBegan(at: p)
+        engine.pencilEnded(at: p)
+    }
+
+    func testATickAcrossALinePutsAPointThere() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        Fixtures.draw(engine, from: Vec2(500, 385), to: Vec2(500, 415))
+        XCTAssertEqual(engine.statistics.vertices, 3)
+        XCTAssertEqual(engine.statistics.edges, 2)
+        XCTAssertTrue(engine.sketches.isEmpty)
+        checked(engine)
+    }
+
+    func testATickGivesAQuadACornerThatFillTurnsIntoRows() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        Fixtures.draw(engine, from: Vec2(500, 285), to: Vec2(500, 315))
+        XCTAssertEqual(engine.statistics.ngons, 1, "five corners")
+        tap(engine, Vec2(500, 400))
+        XCTAssertFalse(engine.canFillPick, "an odd number can't become quads")
+        tap(engine, Vec2(300, 200))
+
+        Fixtures.draw(engine, from: Vec2(500, 485), to: Vec2(500, 515))
+        tap(engine, Vec2(500, 400))
+        XCTAssertTrue(engine.canFillPick)
+        engine.fillPick()
+        XCTAssertEqual(engine.statistics.quads, 2)
+        XCTAssertEqual(engine.statistics.vertices, 6, "the points that were there and no others")
+        checked(engine)
+        engine.undo()
+        XCTAssertEqual(engine.statistics.quads, 0)
+        XCTAssertEqual(engine.statistics.ngons, 1)
+    }
+
+    func testFillBuildsAGridFromTicksOnAllSides() {
+        let engine = pencil()
+        drawBox(engine, Vec2(400, 300), Vec2(600, 500))
+        for x in [466, 533] as [Float] {
+            Fixtures.draw(engine, from: Vec2(x, 285), to: Vec2(x, 315))
+            Fixtures.draw(engine, from: Vec2(x, 485), to: Vec2(x, 515))
+        }
+        Fixtures.draw(engine, from: Vec2(385, 400), to: Vec2(415, 400))
+        Fixtures.draw(engine, from: Vec2(585, 400), to: Vec2(615, 400))
+        tap(engine, Vec2(500, 400))
+        XCTAssertTrue(engine.canFillPick)
+        engine.fillPick()
+        XCTAssertEqual(engine.statistics.quads, 6)
+        XCTAssertEqual(engine.statistics.faces, 6)
+        checked(engine)
+    }
+
+    func testAShapeWithTooFewPointsCanNotBeFilled() {
+        let engine = pencil()
+        drawLoop(engine, center: Vec2(500, 400), radius: 80)
+        tap(engine, Vec2(500, 400))
+        XCTAssertFalse(engine.canFillPick)
+    }
+
+    func testFillMirrorsAcrossTheModel() {
+        let engine = pencil()
+        engine.setSymmetryEnabled(true)
+        drawBox(engine, Vec2(560, 340), Vec2(660, 460))
+        Fixtures.draw(engine, from: Vec2(610, 325), to: Vec2(610, 355))
+        Fixtures.draw(engine, from: Vec2(610, 445), to: Vec2(610, 475))
+        XCTAssertEqual(engine.statistics.ngons, 2)
+        tap(engine, Vec2(610, 400))
+        engine.fillPick()
+        XCTAssertEqual(engine.statistics.quads, 4)
+        XCTAssertEqual(engine.statistics.faces, 4)
+        checked(engine)
+    }
+
     // MARK: Leaving the app
 
     func testBendsDoNotLeaveTheApp() {
