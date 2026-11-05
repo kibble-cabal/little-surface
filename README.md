@@ -48,6 +48,8 @@ Tap the mirror button and your strokes mirror across the model. While it's on, t
 
 A line stays on the side it started on. It stops when it reaches the middle and ends exactly there, and an end close to the middle reaches it, so the two sides always meet in one point.
 
+To draw a line down the middle itself, start or end it there and stay close. It goes exactly on the middle as one line, however much your hand wanders.
+
 ## The … menu
 
 ### Keeping to a poly budget

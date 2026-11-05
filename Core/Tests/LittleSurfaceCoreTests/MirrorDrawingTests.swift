@@ -31,6 +31,69 @@ final class MirrorDrawingTests: XCTestCase {
         mesh.aliveVertices.filter { mesh.mirrorPartner[Int($0)] == $0 }.count
     }
 
+    private func wobbly(_ a: Vec2, _ b: Vec2, by amount: Float, steps: Int = 24) -> [Vec2] {
+        let across = simd_normalize(Vec2(b.y - a.y, a.x - b.x))
+        return (0...steps).map {
+            let t = Float($0) / Float(steps)
+            return simd_mix(a, b, Vec2(repeating: t)) + across * sin(t * .pi * 3) * amount
+        }
+    }
+
+    func testAWobblyStrokeAlongTheMiddleIsOneLineOnIt() throws {
+        let engine = mirrored()
+        // From the middle, wandering either side of it, ending just off it.
+        var path = wobbly(Vec2(500, 400), Vec2(500, 560), by: 10)
+        path.append(Vec2(506, 566))
+        Fixtures.drawPath(engine, path)
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.aliveVertices.filter { mesh.edgesOf($0).count == 1 }.count, 2, "One line, with one loose end at each end")
+        XCTAssertEqual(mesh.aliveVertices.filter { !mesh.isBendVertex($0) }.count, 2)
+        XCTAssertEqual(mesh.faceCount, 0)
+        for v in mesh.aliveVertices {
+            XCTAssertEqual(mesh.position(v).x, 0, accuracy: 1e-5)
+            XCTAssertEqual(mesh.mirrorPartner[Int(v)], v)
+        }
+    }
+
+    func testAWobblyStrokeAlongTheMiddleDividesAShapeIntoTwoQuads() throws {
+        let engine = mirrored()
+        Fixtures.drawPath(engine, straight(Vec2(400, 420), Vec2(500, 420)))
+        Fixtures.drawPath(engine, straight(Vec2(400, 420), Vec2(400, 580)))
+        Fixtures.drawPath(engine, straight(Vec2(400, 580), Vec2(500, 580)))
+        XCTAssertEqual(engine.statistics.quads, 0)
+        let before = engine.mesh.aliveVertices.filter { !engine.mesh.isBendVertex($0) }.count
+        Fixtures.drawPath(engine, wobbly(Vec2(500, 420), Vec2(500, 580), by: 8))
+        XCTAssertEqual(engine.statistics.quads, 2)
+        XCTAssertEqual(engine.mesh.faceCount, 2)
+        XCTAssertEqual(engine.mesh.aliveVertices.filter { !engine.mesh.isBendVertex($0) }.count, before)
+        assertPairedExactly(engine.mesh)
+    }
+
+    func testALineBesideTheMiddleThatNeverTouchesItStaysAPair() {
+        let engine = mirrored()
+        Fixtures.drawPath(engine, straight(Vec2(516, 400), Vec2(516, 560)))
+        let mesh = engine.mesh
+        XCTAssertEqual(pointsOnTheMiddle(mesh), 0)
+        XCTAssertEqual(mesh.aliveVertices.filter { mesh.edgesOf($0).count == 1 }.count, 4)
+        assertPairedExactly(mesh)
+    }
+
+    func testAStrokeLeavingTheMiddleStaysOnItsSide() {
+        let engine = mirrored()
+        Fixtures.drawPath(engine, straight(Vec2(500, 400), Vec2(600, 560)))
+        let mesh = engine.mesh
+        XCTAssertEqual(pointsOnTheMiddle(mesh), 1)
+        XCTAssertEqual(mesh.aliveVertices.filter { mesh.edgesOf($0).count == 1 }.count, 2)
+        assertPairedExactly(mesh)
+    }
+
+    func testAShortStrokeAcrossTheMiddleIsNotALineAlongIt() {
+        let engine = mirrored()
+        Fixtures.drawPath(engine, straight(Vec2(485, 500), Vec2(515, 500)))
+        XCTAssertLessThanOrEqual(pointsOnTheMiddle(engine.mesh), 1)
+        XCTAssertGreaterThan(engine.mesh.aliveVertices.map { abs(engine.mesh.position($0).x) }.max() ?? 0, 0.01)
+    }
+
     func testALineStopsAtTheMiddle() {
         let engine = mirrored()
         Fixtures.drawPath(engine, straight(Vec2(380, 500), Vec2(620, 500)))

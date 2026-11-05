@@ -1565,6 +1565,7 @@ public final class RetopoEngine {
     private func keptToOneSide(_ path: ProcessedPath, plane: MirrorPlane, reach: Float) -> (path: ProcessedPath, reachedMiddle: Bool) {
         let points = path.points
         let distances = points.map { plane.signedDistance($0.position) }
+        if let along = lineAlongTheMiddle(path, distances: distances, plane: plane, reach: reach) { return (along, false) }
         guard let first = distances.first(where: { abs($0) > reach }) else { return (path, false) }
         let side: Float = first < 0 ? -1 : 1
         func onPlane(_ i: Int) -> StrokePoint {
@@ -1613,6 +1614,46 @@ public final class RetopoEngine {
         out.length = StrokeProcessor.polylineLength(kept)
         out.endGap = kept.count > 1 ? simd_length(kept[0].position - kept[kept.count - 1].position) : 0
         return (out, crossed)
+    }
+
+    /// A stroke from the middle that runs along it, staying near enough for a hand to mean it, is one
+    /// line on the middle. Taken as drawn, it and its mirror image would be two lines side by side.
+    private func lineAlongTheMiddle(_ path: ProcessedPath, distances: [Float], plane: MirrorPlane, reach: Float) -> ProcessedPath? {
+        let points = path.points
+        guard !path.isClosed, let first = points.first, let last = points.last,
+              let farthest = distances.map(abs).max(), farthest <= reach else { return nil }
+        func isOnTheMiddle(_ i: Int, _ point: StrokePoint) -> Bool {
+            if abs(distances[i]) <= reach * 0.5 { return true }
+            return mesh.aliveVertices.contains {
+                !mesh.isBendVertex($0) && abs(plane.signedDistance(mesh.position($0))) <= symmetry.centerTolerance
+                    && simd_length(mesh.position($0) - point.position) <= reach
+            }
+        }
+        guard isOnTheMiddle(0, first) || isOnTheMiddle(points.count - 1, last) else { return nil }
+        // A short stroke across the middle doesn't run along it, however close it stays.
+        guard simd_length(plane.snap(last.position) - plane.snap(first.position)) >= farthest * 2 else { return nil }
+        var kept: [StrokePoint] = []
+        let spacing = tools.stroke.edgeLength * 0.25
+        for (i, point) in points.enumerated() {
+            var on = point
+            on.position = plane.snap(point.position)
+            if let hit = projector?.closest(to: on.position, maxDistance: reach * 2) {
+                on.position = plane.snap(hit.position + hit.normal * (projector?.surfaceOffset ?? 0))
+                on.normal = hit.normal
+            }
+            if let previous = kept.last, simd_length(on.position - previous.position) < spacing {
+                if i == points.count - 1 { kept[kept.count - 1] = on }
+                continue
+            }
+            kept.append(on)
+        }
+        guard kept.count > 1 else { return nil }
+        var out = path
+        out.points = kept
+        out.canClose = false
+        out.length = StrokeProcessor.polylineLength(kept)
+        out.endGap = simd_length(kept[0].position - kept[kept.count - 1].position)
+        return out
     }
 
     /// A tap picks what's under it: a point, a whole line, or a quad, with further quads adding to the pick.
