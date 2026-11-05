@@ -37,6 +37,8 @@ struct EditorView: View {
                 BrushSizeSlider(model: model)
 
                 VStack(spacing: 8) {
+                    MirrorAxisPicker(model: model)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                     Spacer(minLength: 0)
                     MessageToast(model: model)
                     PickChips(model: model)
@@ -153,15 +155,9 @@ private struct EditorToolbar: ToolbarContent {
             Button { model.redo() } label: { Label("Redo", systemImage: "arrow.uturn.forward") }
                 .disabled(!model.state.canRedo)
                 .accessibilityIdentifier("Redo")
-            Menu {
-                Picker("Axis", selection: Binding(get: { model.state.symmetry.plane.axis }, set: { model.engine.setSymmetryPlane(axis: $0) })) {
-                    ForEach(MirrorAxis.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
-            } label: {
-                Label("Symmetry", systemImage: "square.and.line.vertical.and.square")
+            Button { model.engine.setSymmetryEnabled(!model.state.symmetry.isEnabled) } label: {
+                Label("Mirror", systemImage: model.state.symmetry.isEnabled ? "square.and.line.vertical.and.square.filled" : "square.and.line.vertical.and.square")
                     .foregroundStyle(model.state.symmetry.isEnabled ? Theme.selection : Color.primary)
-            } primaryAction: {
-                model.engine.setSymmetryEnabled(!model.state.symmetry.isEnabled)
             }
             .accessibilityIdentifier("Symmetry")
             .accessibilityValue(model.state.symmetry.isEnabled ? "On" : "Off")
@@ -257,6 +253,32 @@ private struct BrushSizeSlider: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .accessibilityLabel("Brush size")
                 .accessibilityIdentifier("Brush Size")
+        }
+    }
+}
+
+/// Which way the model mirrors, while it does.
+private struct MirrorAxisPicker: View {
+    let model: EditorModel
+
+    var body: some View {
+        if model.state.symmetry.isEnabled {
+            HStack(spacing: 2) {
+                Text("Mirror").font(.footnote).foregroundStyle(Theme.quiet).padding(.horizontal, 8)
+                ForEach(MirrorAxis.allCases, id: \.self) { axis in
+                    let isActive = model.state.symmetry.plane.axis == axis
+                    Button(axis.label) { model.engine.setSymmetryPlane(axis: axis) }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(isActive ? Color.white : Color.primary)
+                        .frame(width: 34, height: 34)
+                        .background(isActive ? Theme.selection : Color.clear, in: Circle())
+                        .contentShape(Circle())
+                        .accessibilityIdentifier("mirror-axis-\(axis.label)")
+                        .accessibilityAddTraits(isActive ? .isSelected : [])
+                }
+            }
+            .padding(4)
+            .panel(corner: 22)
         }
     }
 }
