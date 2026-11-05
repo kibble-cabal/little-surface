@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		03BAF5AF01C7C02403C86BBD /* ToolPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5DABC239222C132F83905E0 /* ToolPanels.swift */; };
+		0BFE694CDD69FD8ED8D534C2 /* MenuSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09603273F981C15D5AB0A93B /* MenuSheets.swift */; };
 		117F07A2EC61B24AB283090D /* BlenderLinkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */; };
 		175F1F83129526F3D0D68010 /* little_surface_link.py in Resources */ = {isa = PBXBuildFile; fileRef = 7DE70E72F97E8E358C2FBE33 /* little_surface_link.py */; };
 		1AEE19D627CF604BCE93E6B9 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069771140D1C2C22DE3B20A8 /* Theme.swift */; };
@@ -53,6 +53,7 @@
 /* Begin PBXFileReference section */
 		069771140D1C2C22DE3B20A8 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		06C85ED7C796A7978A25DFA0 /* BlenderLinkServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkServer.swift; sourceTree = "<group>"; };
+		09603273F981C15D5AB0A93B /* MenuSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuSheets.swift; sourceTree = "<group>"; };
 		0C14F13202AB04BD5058FFD3 /* ViewportRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportRenderer.swift; sourceTree = "<group>"; };
 		2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowUITests.swift; sourceTree = "<group>"; };
 		2D8A3730EDC0A0ACE9C2C6E7 /* Example.glb */ = {isa = PBXFileReference; path = Example.glb; sourceTree = "<group>"; };
@@ -71,7 +72,6 @@
 		9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkView.swift; sourceTree = "<group>"; };
 		A2CB3279F8027235D92B6C16 /* BlenderLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkTests.swift; sourceTree = "<group>"; };
 		A5E2C0B3155FAFC22161E1B7 /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
-		C5DABC239222C132F83905E0 /* ToolPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPanels.swift; sourceTree = "<group>"; };
 		C77C29AE9EE3901E9C42619B /* EditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorView.swift; sourceTree = "<group>"; };
 		DA242867357FBD8D7B1CD7C0 /* ProjectDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDocument.swift; sourceTree = "<group>"; };
 		DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelapseExportTests.swift; sourceTree = "<group>"; };
@@ -202,8 +202,8 @@
 			children = (
 				9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */,
 				C77C29AE9EE3901E9C42619B /* EditorView.swift */,
+				09603273F981C15D5AB0A93B /* MenuSheets.swift */,
 				069771140D1C2C22DE3B20A8 /* Theme.swift */,
-				C5DABC239222C132F83905E0 /* ToolPanels.swift */,
 				FF8E71B735CA1BCC54E753D5 /* WelcomeView.swift */,
 			);
 			path = UI;
@@ -379,11 +379,11 @@
 				28C67CB5770916452B11EFD8 /* EditorModel.swift in Sources */,
 				F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */,
 				20BF909B8805F464B4434ACF /* LittleSurfaceApp.swift in Sources */,
+				0BFE694CDD69FD8ED8D534C2 /* MenuSheets.swift in Sources */,
 				2C6DE9CD3B751F72CA635013 /* ProjectDocument.swift in Sources */,
 				B615EFF448BFFED6C41F6E0A /* ProjectLibrary.swift in Sources */,
 				1AEE19D627CF604BCE93E6B9 /* Theme.swift in Sources */,
 				D0FEEAAA0A34FBC5FF1FADD9 /* TimelapseExporter.swift in Sources */,
-				03BAF5AF01C7C02403C86BBD /* ToolPanels.swift in Sources */,
 				816CBE3FC65CBD74D4F40652 /* ViewportRenderer.swift in Sources */,
 				A0472A208CA67BA35D0F511B /* ViewportView.swift in Sources */,
 				4530B86FCE58F3165DDB7D96 /* WelcomeView.swift in Sources */,

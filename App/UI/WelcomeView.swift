@@ -80,34 +80,33 @@ struct WelcomeView: View {
 
     @ToolbarContentBuilder
     private var toolbarButtons: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { app.newProject() } label: { Label("New", systemImage: "plus") }
-                .accessibilityIdentifier("New Project")
-            Button { app.newProject(name: "Example", start: .example) } label: { Label("Example", systemImage: "cube") }
-                .accessibilityIdentifier("Open Example")
-            Button { pick(.project) } label: { Label("Open", systemImage: "folder") }
-                .accessibilityIdentifier("Open Project")
-            Button { pick(.mesh) } label: { Label("Open Mesh to Edit", systemImage: "square.and.pencil") }
-                .accessibilityIdentifier("Open Mesh")
-            Button { showsSettings = true } label: { Label("Settings", systemImage: "gearshape") }
-                .accessibilityIdentifier("Settings")
-        }
         ToolbarItem(placement: .topBarTrailing) {
-            let button = Button { pick(.model) } label: { Label("Import Model", systemImage: "square.and.arrow.down") }
-                .accessibilityIdentifier("Import Model")
-            if #available(iOS 26, *) {
-                button.buttonStyle(.glassProminent)
-            } else {
-                button.buttonStyle(.borderedProminent)
+            Menu {
+                Button("Import Model…", systemImage: "square.and.arrow.down") { pick(.model) }
+                    .accessibilityIdentifier("Import Model")
+                Button("Example", systemImage: "cube") { app.newProject(name: "Example", start: .example) }
+                    .accessibilityIdentifier("Open Example")
+                Button("Empty Project", systemImage: "doc") { app.newProject() }
+                    .accessibilityIdentifier("New Project")
+                Divider()
+                Button("Open Project…", systemImage: "folder") { pick(.project) }
+                    .accessibilityIdentifier("Open Project")
+                Button("Open Mesh…", systemImage: "square.and.pencil") { pick(.mesh) }
+                    .accessibilityIdentifier("Open Mesh")
+                Divider()
+                Button("Settings…", systemImage: "gearshape") { showsSettings = true }
+                    .accessibilityIdentifier("Settings")
+            } label: {
+                Label("New", systemImage: "plus")
             }
+            .accessibilityIdentifier("Add")
         }
     }
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No Projects Yet", systemImage: "square.grid.3x3")
-        } description: {
-            Text("Import an OBJ or GLB model to start drawing topology on it, or try the example.")
+        VStack(spacing: 10) {
+            Button("Import Model") { pick(.model) }.pillButton(prominent: true)
+            Button("Use the Example") { app.newProject(name: "Example", start: .example) }.pillButton()
         }
     }
 }
@@ -171,49 +170,16 @@ private struct ProjectCard: View {
 struct SettingsView: View {
     @State private var settings = AppSettings.shared
     @Environment(\.dismiss) private var dismiss
-    var onReplayTutorial: (() -> Void)?
 
     var body: some View {
         @Bindable var settings = settings
         NavigationStack {
             Form {
-                Section {
-                    Picker("One finger", selection: $settings.oneFingerAction) {
-                        ForEach(OneFingerAction.allCases) { Text($0.label).tag($0) }
-                    }
-                    Toggle("Two-finger tap undoes", isOn: $settings.twoFingerTapUndoes)
-                    Toggle("Orbit keeps moving after a flick", isOn: $settings.orbitInertia)
-                    Picker("Pencil double-tap", selection: $settings.pencilDoubleTap) {
-                        ForEach(PencilDoubleTapAction.allCases) { Text($0.label).tag($0) }
-                    }
-                } header: {
-                    Text("Gestures")
-                } footer: {
-                    Text("Apple Pencil always uses the active tool. Two fingers always pan and pinch. Pencil double-tap needs a second-generation Apple Pencil or newer. With no Pencil, set One finger to Draw.")
+                Picker("One finger", selection: $settings.oneFingerAction) {
+                    ForEach(OneFingerAction.allCases) { Text($0.label).tag($0) }
                 }
-                Section {
-                    Toggle("Close loops when the ends meet", isOn: $settings.closesLoopsAutomatically)
-                    Toggle("Offer to fill between lines", isOn: $settings.suggestsFills)
-                    Toggle("Switch to Select after Create Patch", isOn: $settings.selectsAfterPatch)
-                    Toggle("Pencil haptics", isOn: $settings.pencilHaptics)
-                } header: {
-                    Text("Drawing")
-                } footer: {
-                    Text("A stroke whose ends land near each other becomes a loop, or a ring with Quad Strip, and Keep Open undoes that in one tap. A line or loop drawn beside another, or beside a finished patch, offers to fill the space with quads. Haptics need an Apple Pencil Pro.")
-                }
-                Section("Interface") {
-                    Picker("Appearance", selection: $settings.appearance) {
-                        ForEach(Appearance.allCases) { Text($0.label).tag($0) }
-                    }
-                    Toggle("Status bar", isOn: $settings.showsStatusBar)
-                }
-                if let onReplayTutorial {
-                    Section {
-                        Button("Show the walkthrough again") {
-                            dismiss()
-                            onReplayTutorial()
-                        }
-                    }
+                Picker("Appearance", selection: $settings.appearance) {
+                    ForEach(Appearance.allCases) { Text($0.label).tag($0) }
                 }
             }
             .navigationTitle("Settings")

@@ -21,7 +21,7 @@ public struct MeshPicker {
         self.projector = projector
     }
 
-    private func isVisible(_ p: Vec3, normal: Vec3?) -> Bool {
+    func isVisible(_ p: Vec3, normal: Vec3?) -> Bool {
         if ignoresOcclusion { return true }
         if let normal, simd_length_squared(normal) > 0 {
             let toEye = camera.occlusionEye(for: p) - p
@@ -48,11 +48,11 @@ public struct MeshPicker {
         return best >= 0 ? best : nil
     }
 
-    public func pickEdge(at screen: Vec2, radius: Float) -> (EdgeID, t: Float)? {
+    public func pickEdge(at screen: Vec2, radius: Float, where allowed: (EdgeID) -> Bool = { _ in true }) -> (EdgeID, t: Float)? {
         var best = invalidID
         var bestScore = radius
         var bestT: Float = 0.5
-        for e in mesh.aliveEdges {
+        for e in mesh.aliveEdges where allowed(e) {
             let (a, b) = mesh.ends(e)
             let pa = mesh.position(a), pb = mesh.position(b)
             guard let sa = camera.project(pa), let sb = camera.project(pb) else { continue }

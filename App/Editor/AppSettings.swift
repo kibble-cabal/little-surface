@@ -2,26 +2,12 @@ import Foundation
 import Observation
 
 enum OneFingerAction: String, CaseIterable, Identifiable {
-    case orbit, pan, draw, none
+    case orbit, draw
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .orbit: return "Orbit"
-        case .pan: return "Pan"
-        case .draw: return "Draw, as a Pencil would"
-        case .none: return "Nothing"
-        }
-    }
-}
-
-enum PencilDoubleTapAction: String, CaseIterable, Identifiable {
-    case eraser, previousTool, none
-    var id: String { rawValue }
-    var label: String {
-        switch self {
-        case .eraser: return "Switch to eraser"
-        case .previousTool: return "Switch to previous tool"
-        case .none: return "Nothing"
+        case .orbit: return "Turns the model"
+        case .draw: return "Draws, as a Pencil would"
         }
     }
 }
@@ -43,49 +29,16 @@ final class AppSettings {
     var oneFingerAction: OneFingerAction {
         didSet { defaults.set(oneFingerAction.rawValue, forKey: "oneFingerAction") }
     }
-    var twoFingerTapUndoes: Bool {
-        didSet { defaults.set(twoFingerTapUndoes, forKey: "twoFingerTapUndoes") }
-    }
-    var pencilDoubleTap: PencilDoubleTapAction {
-        didSet { defaults.set(pencilDoubleTap.rawValue, forKey: "pencilDoubleTap") }
-    }
-    var orbitInertia: Bool {
-        didSet { defaults.set(orbitInertia, forKey: "orbitInertia") }
-    }
     var appearance: Appearance {
         didSet { defaults.set(appearance.rawValue, forKey: "appearance") }
     }
-    var showsStatusBar: Bool {
-        didSet { defaults.set(showsStatusBar, forKey: "showsStatusBar") }
-    }
-    var closesLoopsAutomatically: Bool {
-        didSet { defaults.set(closesLoopsAutomatically, forKey: "closesLoopsAutomatically") }
-    }
-    var suggestsFills: Bool {
-        didSet { defaults.set(suggestsFills, forKey: "suggestsFills") }
-    }
-    var selectsAfterPatch: Bool {
-        didSet { defaults.set(selectsAfterPatch, forKey: "selectsAfterPatch") }
-    }
-    var pencilHaptics: Bool {
-        didSet { defaults.set(pencilHaptics, forKey: "pencilHaptics") }
-    }
-    var hasSeenTutorial: Bool {
-        didSet { defaults.set(hasSeenTutorial, forKey: "hasSeenTutorial") }
-    }
+    /// Only tests turn this off, so a drag can't carry on spinning the model into the next step.
+    let orbitInertia: Bool
 
     private init() {
-        defaults.register(defaults: ["twoFingerTapUndoes": true, "orbitInertia": true, "showsStatusBar": true, "closesLoopsAutomatically": true, "suggestsFills": true, "selectsAfterPatch": true, "pencilHaptics": true])
+        defaults.register(defaults: ["orbitInertia": true])
         oneFingerAction = OneFingerAction(rawValue: defaults.string(forKey: "oneFingerAction") ?? "") ?? .orbit
-        twoFingerTapUndoes = defaults.bool(forKey: "twoFingerTapUndoes")
-        pencilDoubleTap = PencilDoubleTapAction(rawValue: defaults.string(forKey: "pencilDoubleTap") ?? "") ?? .eraser
-        orbitInertia = defaults.bool(forKey: "orbitInertia")
-        closesLoopsAutomatically = defaults.bool(forKey: "closesLoopsAutomatically")
-        suggestsFills = defaults.bool(forKey: "suggestsFills")
-        selectsAfterPatch = defaults.bool(forKey: "selectsAfterPatch")
-        pencilHaptics = defaults.bool(forKey: "pencilHaptics")
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .light
-        showsStatusBar = defaults.bool(forKey: "showsStatusBar")
-        hasSeenTutorial = defaults.bool(forKey: "hasSeenTutorial")
+        orbitInertia = defaults.bool(forKey: "orbitInertia")
     }
 }

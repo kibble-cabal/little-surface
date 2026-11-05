@@ -577,8 +577,7 @@ public final class RetopoEngine {
         gesture = .sketchErase(before: before, changed: true)
     }
 
-    private func touches(_ stroke: SketchStroke, at screen: Vec2) -> Bool {
-        let radius: Float = 18
+    private func touches(_ stroke: SketchStroke, at screen: Vec2, radius: Float = 18) -> Bool {
         let tolerance = sceneBounds.diagonal * 0.01
         var previous: Vec2?
         for p in stroke.points {
@@ -740,6 +739,7 @@ public final class RetopoEngine {
 
     private func didEdit() {
         pickedMark = nil
+        pickedLoop = nil
         pencilledFills = []
         // Here rather than at each tool, so that no edit, undo or redo can miss the timelapse.
         timelapse.record(mesh: mesh, sketches: sketches, orientation: camera.orientation)
@@ -887,7 +887,7 @@ public final class RetopoEngine {
             brushCursor = screen
             applyBrush(at: screen, pressure: pressure)
         case .erase:
-            gesture = .erase(before: EditSnapshot(mesh: mesh, selection: selection), changed: false)
+            gesture = .erase(before: currentSnapshot, changed: false)
             brushCursor = screen
             eraseAt(screen)
         case .sketch:
@@ -961,6 +961,7 @@ public final class RetopoEngine {
             finishStroke(capture, tapPoint: screen)
         case .select(let drag):
             finishSelectDrag(drag, at: screen)
+            if activeTool == .pencil { selection.clear() }
         case .lasso(let points):
             lassoPath = []
             finishLasso(points, tapPoint: screen)
@@ -1152,6 +1153,9 @@ public final class RetopoEngine {
     /// artist moves on. Drawing through one reshapes it instead.
     public private(set) var pencilledFills: [FillSuggestion] = []
 
+    /// The empty loop a tap picked, which can be filled when the drawing alone left it open.
+    public private(set) var pickedLoop: BoundaryChain?
+
     /// The pencil mark a tap picked, by its place in `sketches`.
     public private(set) var pickedMark: Int?
 
@@ -1164,6 +1168,7 @@ public final class RetopoEngine {
         guard let vertex = picker.pickVertex(at: start, radius: pickRadius) else { return }
         inkPath = []
         firmUpFills()
+        pickedLoop = nil
         selection.clear()
         selection.mode = .vertex
         selection.vertices = [vertex]
@@ -1321,6 +1326,25 @@ public final class RetopoEngine {
 
     public var hasPick: Bool { pickedMark != nil || !selection.isEmpty }
 
+    public func clearPick() {
+        pickedLoop = nil
+        if pickedMark != nil {
+            pickedMark = nil
+            sketchRevision &+= 1
+        }
+        selection.clear()
+        notify()
+    }
+
+    public func fillPick() {
+        guard let chain = pickedLoop, let fill = suggestion([chain]) else { return }
+        selection.clear()
+        pickedLoop = nil
+        firmUp([fill])
+        rebuildOverlay()
+        notify()
+    }
+
     /// Takes out the picked line, quads or pencil mark.
     public func deletePick() {
         if let index = pickedMark, sketches.indices.contains(index) {
@@ -1362,6 +1386,7 @@ public final class RetopoEngine {
 
     /// A tap picks what's under it: a whole line, or a quad, with further quads adding to the pick.
     private func pencilTap(at screen: Vec2) {
+        pickedLoop = nil
         if !pencilledFills.isEmpty {
             firmUpFills()
             return
@@ -1374,11 +1399,15 @@ public final class RetopoEngine {
             sketchRevision &+= 1
             return
         }
-        if let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius), mesh.isWire(edge),
+        if let (edge, _) = picker.pickEdge(at: screen, radius: pickRadius, where: { mesh.faceCountOf(edge: $0) < 2 }),
            let chain = ChainFinder.chain(through: edge, in: mesh) {
             selection.clear()
             selection.mode = .edge
             selection.edges = Set(chain.edges)
+            if chain.isClosed {
+                pickedLoop = EnclosedRegions.regions(bordering: chain.edges, in: mesh, projector: projector)
+                    .first { Set($0.edges) == Set(chain.edges) }
+            }
         } else if let face = picker.pickFace(at: screen) {
             if selection.mode != .face { selection.clear() }
             selection.mode = .face
@@ -2095,15 +2124,7 @@ public final class RetopoEngine {
         var changed = false
         switch selection.mode {
         case .face:
-            if let f = picker.pickFace(at: screen) {
-                let faces = symmetry.isEnabled ? Symmetry.expanded(faces: [f], in: mesh) : [f]
-                mesh.deleteFaces(faces)
-                changed = true
-            } else if let (e, _) = picker.pickEdge(at: screen, radius: radius), mesh.isWire(e) {
-                let edges = symmetry.isEnabled ? Symmetry.expanded(edges: [e], in: mesh) : [e]
-                mesh.deleteEdges(edges)
-                changed = true
-            }
+            changed = rubOut(at: screen, with: picker)
         case .edge:
             if let (e, _) = picker.pickEdge(at: screen, radius: radius) {
                 let edges = symmetry.isEnabled ? Symmetry.expanded(edges: [e], in: mesh) : [e]
@@ -2119,6 +2140,36 @@ public final class RetopoEngine {
         }
         if changed { selection.prune(in: mesh) }
         gesture = .erase(before: before, changed: changedSoFar || changed)
+    }
+
+    /// Takes out whatever is under the brush, as an eraser would: quads, lines and pencil marks.
+    private func rubOut(at screen: Vec2, with picker: MeshPicker) -> Bool {
+        let radius = tools.brush.radiusPoints
+        func isUnder(_ p: Vec3, normal: Vec3?) -> Bool {
+            guard let projected = camera.project(p), simd_length(projected.screen - screen) <= radius else { return false }
+            return picker.isVisible(p, normal: normal)
+        }
+        var changed = false
+        let kept = sketches.filter { !touches($0, at: screen, radius: radius) }
+        if kept.count != sketches.count {
+            sketches = kept
+            sketchRevision &+= 1
+            changed = true
+        }
+        let faces = mesh.aliveFaces.filter { isUnder(mesh.faceCenter($0), normal: mesh.faceNormal($0)) }
+        if !faces.isEmpty {
+            mesh.deleteFaces(symmetry.isEnabled ? Symmetry.expanded(faces: Set(faces), in: mesh) : Set(faces))
+            changed = true
+        }
+        let lines = mesh.aliveEdges.filter { e in
+            let (a, b) = mesh.ends(e)
+            return mesh.isWire(e) && isUnder((mesh.position(a) + mesh.position(b)) / 2, normal: nil)
+        }
+        if !lines.isEmpty {
+            mesh.deleteEdges(symmetry.isEnabled ? Symmetry.expanded(edges: Set(lines), in: mesh) : Set(lines))
+            changed = true
+        }
+        return changed
     }
 
     // MARK: Selection commands

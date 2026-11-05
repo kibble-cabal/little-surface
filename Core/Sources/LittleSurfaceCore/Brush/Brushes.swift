@@ -3,7 +3,7 @@ import simd
 
 public struct BrushSettings: Equatable, Codable {
     /// Screen radius in points, so a brush always feels the same size under the Pencil.
-    public var radiusPoints: Float = 60
+    public var radiusPoints: Float = 36
     public var strength: Float = 0.5
     public var usesPressure = true
     public init() {}

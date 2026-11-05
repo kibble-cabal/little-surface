@@ -259,4 +259,71 @@ final class PencilTests: XCTestCase {
         for i in 0..<count { edges.append(try! mesh.ensureEdge(vertices[i], vertices[(i + 1) % count])) }
         XCTAssertTrue(EnclosedRegions.regions(bordering: edges, in: mesh, projector: Fixtures.projector(sphere)).isEmpty)
     }
+
+    func testTappingTheHoleInARingOffersToFillItButNotTheOutside() {
+        let engine = pencil()
+        drawLoop(engine, center: Vec2(500, 400), radius: 120)
+        drawLoop(engine, center: Vec2(500, 400), radius: 60)
+        engine.firmUpFills()
+        let faces = engine.mesh.faceCount
+        XCTAssertGreaterThan(faces, 0)
+
+        Fixtures.draw(engine, from: Vec2(620, 400), to: Vec2(620.5, 400))
+        XCTAssertTrue(engine.hasPick)
+        XCTAssertNil(engine.pickedLoop, "the outside of the ring isn't an area to fill")
+
+        Fixtures.draw(engine, from: Vec2(560, 400), to: Vec2(560.5, 400))
+        XCTAssertNotNil(engine.pickedLoop)
+        engine.fillPick()
+        XCTAssertGreaterThan(engine.mesh.faceCount, faces)
+        XCTAssertFalse(engine.hasPick)
+    }
+
+    func testAMovedPointDoesNotStayPicked() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        let start = Vec2(420, 400)
+        engine.pencilBegan(at: start)
+        engine.pencilHeld()
+        engine.pencilMoved(to: start + Vec2(0, 30))
+        engine.pencilEnded(at: start + Vec2(0, 30))
+        XCTAssertFalse(engine.hasPick)
+    }
+
+    // MARK: The eraser
+
+    func testTheEraserTakesOutQuadsLinesAndMarksInOneUndo() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
+        engine.firmUpFills()
+        Fixtures.draw(engine, from: Vec2(300, 620), to: Vec2(700, 620), bend: Vec2(0, -300))
+        let faces = engine.mesh.faceCount, edges = engine.mesh.edgeCount, marks = engine.sketches.count
+        XCTAssertGreaterThan(faces, 0)
+
+        engine.setTool(.erase)
+        engine.setSelectionMode(.face)
+        Fixtures.draw(engine, from: Vec2(500, 340), to: Vec2(500, 640))
+        XCTAssertLessThan(engine.mesh.faceCount, faces)
+        XCTAssertLessThan(engine.mesh.edgeCount, edges)
+
+        engine.undo()
+        XCTAssertEqual(engine.mesh.faceCount, faces)
+        XCTAssertEqual(engine.mesh.edgeCount, edges)
+        XCTAssertEqual(engine.sketches.count, marks)
+    }
+
+    func testTheEraserRubsOutAPencilMark() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
+        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
+        engine.firmUpFills()
+        Fixtures.draw(engine, from: Vec2(440, 410), to: Vec2(560, 410))
+        XCTAssertEqual(engine.sketches.count, 1, "a stroke along the quads stays as a mark")
+
+        engine.setTool(.erase)
+        engine.setSelectionMode(.face)
+        Fixtures.draw(engine, from: Vec2(500, 400), to: Vec2(500, 420))
+        XCTAssertTrue(engine.sketches.isEmpty)
+    }
 }

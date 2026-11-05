@@ -34,9 +34,7 @@ final class EditorModel {
     @ObservationIgnored private var isWriting = false
     @ObservationIgnored private var pendingSaves: [((Bool) -> Void)?] = []
     @ObservationIgnored private var memoryObserver: NSObjectProtocol?
-    var showsValidation = false
     var showsSettings = false
-    var tutorialStep: TutorialStep?
     var exportedFile: ExportedFile?
 
     enum SaveState: Equatable { case saved, unsaved, saving, failed(String) }
@@ -55,7 +53,6 @@ final class EditorModel {
     @ObservationIgnored private var surfaceTask: Task<Void, Never>?
     @ObservationIgnored private var subdivisionTask: Task<Void, Never>?
     @ObservationIgnored private var validationTask: Task<Void, Never>?
-    @ObservationIgnored private var previousTool: Tool?
     @ObservationIgnored private var subdivisionKey: SubdivisionKey?
 
     private struct SubdivisionKey: Equatable {
@@ -67,6 +64,14 @@ final class EditorModel {
     init(document: ProjectDocument, snapshot: ProjectSnapshot) {
         self.document = document
         engine = RetopoEngine(snapshot: snapshot)
+        // There's one pencil and one way of looking now, whatever an older project was left on.
+        engine.setTool(.pencil)
+        engine.viewport = ViewportSettings()
+        engine.showsSketch = true
+        for object in engine.sources {
+            if !object.isVisible { engine.setSourceVisible(id: object.id, true) }
+            if !object.isSnapTarget { engine.setSourceSnapTarget(id: object.id, true) }
+        }
         let device = MTLCreateSystemDefaultDevice()
         renderer = device.flatMap { ViewportRenderer(device: $0) }
         renderer?.engine = engine
@@ -161,24 +166,16 @@ final class EditorModel {
     // MARK: Tools
 
     func select(tool: Tool) {
-        if tool != engine.activeTool { previousTool = engine.activeTool }
+        guard tool != engine.activeTool else { return }
+        engine.firmUpFills()
+        engine.clearPick()
         engine.setTool(tool)
-        settingChanged()
+        // The eraser goes by what's under it, not by a kind of element.
+        if tool == .erase { engine.setSelectionMode(.face) }
     }
 
     func pencilDoubleTapped() {
-        switch AppSettings.shared.pencilDoubleTap {
-        case .none:
-            break
-        case .eraser:
-            if engine.activeTool == .erase {
-                select(tool: previousTool ?? .drawEdges)
-            } else {
-                select(tool: .erase)
-            }
-        case .previousTool:
-            if let previousTool { select(tool: previousTool) }
-        }
+        select(tool: engine.activeTool == .erase ? .pencil : .erase)
     }
 
     // MARK: Background work: importing
@@ -496,6 +493,7 @@ final class EditorModel {
 
     /// Saves as the app leaves the screen, asking for enough time to finish the write.
     func saveForBackground() {
+        engine.firmUpFills()
         guard saveState != .saved || isWriting else { return }
         let application = UIApplication.shared
         var task = UIBackgroundTaskIdentifier.invalid
@@ -517,6 +515,7 @@ final class EditorModel {
             finishClosing { completion(true) }
             return
         }
+        engine.firmUpFills()
         storeThumbnail()
         save(storesThumbnail: false) { [weak self] ok in
             guard let self else { return }
@@ -552,6 +551,7 @@ final class EditorModel {
 
     func export(format: ExportFormat, options: ExportOptions, name: String) {
         guard busy == nil else { return }
+        engine.firmUpFills()
         // Encoding big models with their source takes a moment, so it stays off the main thread.
         let snapshot = engine.makeSnapshot()
         busy = BusyTask(title: "Exporting…", cancellable: false)
@@ -582,6 +582,7 @@ final class EditorModel {
 
     func exportTimelapse() {
         guard busy == nil, let device = renderer?.device else { return }
+        engine.firmUpFills()
         let snapshot = engine.makeSnapshot()
         let name = engine.name
         busy = BusyTask(title: "Making timelapse…", cancellable: true)
@@ -685,6 +686,7 @@ final class EditorModel {
             linkStatus = "Connected to Blender."
             return .json(["project": engine.name, "vertices": stats.vertices, "faces": stats.faces, "sculpts": engine.sources.map(\.name)])
         case ("GET", "/mesh"):
+            engine.firmUpFills()
             guard !engine.mesh.isEmpty else { return LinkResponse(status: 204) }
             let snapshot = engine.makeSnapshot()
             let name = engine.name
@@ -721,6 +723,7 @@ final class EditorModel {
     /// Runs the same import as a file picked here, so a mesh from Blender behaves like one from Files.
     @MainActor
     private func receiveFromBlender(_ request: LinkRequest, start: (EditorModel, URL, String) -> Void) async -> LinkResponse {
+        engine.firmUpFills()
         guard busy == nil, importTask == nil else {
             return .message("Little Surface is busy with something else. Try again in a moment.", status: 409)
         }
@@ -746,13 +749,8 @@ final class EditorModel {
         return .message("It was stopped in Little Surface.", status: 409)
     }
 
-    // MARK: Tutorial
-
     private func handle(_ event: RetopoEngine.EngineEvent) {
-        if let step = tutorialStep, step.completes(on: event) { tutorialStep = step.next }
         switch event {
-        case .patchCreated:
-            if AppSettings.shared.selectsAfterPatch { select(tool: .select) }
         case .loopClosed:
             viewport?.playPathCompleted()
         case .strokeSnapped:
@@ -760,16 +758,6 @@ final class EditorModel {
         default:
             break
         }
-    }
-
-    func startTutorial() {
-        tutorialStep = engine.sources.isEmpty ? .importModel : .drawLoop
-        engine.setTool(.drawEdges)
-    }
-
-    func endTutorial() {
-        tutorialStep = nil
-        AppSettings.shared.hasSeenTutorial = true
     }
 }
 
@@ -779,44 +767,4 @@ struct ExportedFile: Identifiable, Equatable {
     /// Nil for a timelapse video.
     let format: ExportFormat?
     let byteCount: Int
-}
-
-/// The first-use walkthrough, advanced by what the artist actually does.
-enum TutorialStep: Int, CaseIterable {
-    case importModel, drawLoop, drawAnother, generate, editVertices, export
-
-    var title: String {
-        switch self {
-        case .importModel: return "Bring in a model"
-        case .drawLoop: return "Draw a loop"
-        case .drawAnother: return "Draw another line"
-        case .generate: return "Make quads"
-        case .editVertices: return "Adjust a vertex"
-        case .export: return "Take it to Blender"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .importModel: return "Tap Import in the top bar, or load the example, to get a model to draw on."
-        case .drawLoop: return "With Draw Edges active, draw around a form with Apple Pencil. When the ends land near each other, the line closes into a loop."
-        case .drawAnother: return "Draw two lines side by side. They land on the surface as real edges."
-        case .generate: return "Tap Fill with Quads to bridge your two lines. For more control, tap each line, then tap Create Patch."
-        case .editVertices: return "Choose Select, then drag a vertex. It stays on the surface as it moves."
-        case .export: return "Tap Export and choose OBJ. Quads stay quads in Blender."
-        }
-    }
-
-    var next: TutorialStep? { TutorialStep(rawValue: rawValue + 1) }
-
-    func completes(on event: RetopoEngine.EngineEvent) -> Bool {
-        switch self {
-        case .importModel: return event == .modelImported
-        case .drawLoop: return event == .loopClosed || event == .strokeCommitted
-        case .drawAnother: return event == .strokeCommitted || event == .loopClosed
-        case .generate: return event == .facesGenerated
-        case .editVertices: return event == .vertexMoved
-        case .export: return event == .exported
-        }
-    }
 }

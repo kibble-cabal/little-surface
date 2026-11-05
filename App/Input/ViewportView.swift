@@ -51,10 +51,12 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hovered(_:))))
         isAccessibilityElement = true
         accessibilityLabel = "3D viewport"
-        accessibilityHint = "Draw with Apple Pencil. Drag one finger to orbit, two fingers to pan and pinch to zoom."
+        accessibilityHint = "Draw with Apple Pencil. Drag one finger to turn the model, two fingers to pan and pinch to zoom."
         accessibilityTraits = .allowsDirectInteraction
         accessibilityIdentifier = "viewport"
     }
+
+    private var holdTimer: Timer?
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
@@ -77,6 +79,25 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
 
     // MARK: Touches
 
+    /// Resting the tip on a point picks it up to move. Anything else is a stroke.
+    private func scheduleHold() {
+        holdTimer?.invalidate()
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+            guard let self, self.pencilTouch != nil || self.fingerStroke != nil else { return }
+            self.engine?.pencilHeld()
+            self.setNeedsDisplay()
+        }
+    }
+
+    override var accessibilityValue: String? {
+        get {
+            guard let engine else { return nil }
+            let stats = engine.statistics
+            return "\(stats.vertices) points, \(stats.edges) lines, \(stats.faces) quads, \(engine.pencilledFills.count) pencilled, \(engine.sketches.count) marks"
+        }
+        set {}
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         stopInertia()
         let now = event?.timestamp ?? CACurrentMediaTime()
@@ -91,6 +112,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 canvasFeedback.prepare()
                 model?.gestureBegan()
                 engine?.pencilBegan(at: point(touch), pressure: pressure(touch))
+                scheduleHold()
             default:
                 // Palm rejection: nothing counts while the Pencil is down or just after, or if it's palm-sized.
                 if pencilTouch != nil || now - lastPencilTime < 0.35 || touch.majorRadius > 60 {
@@ -117,6 +139,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
                 fingerStrokeStart = now
                 model?.gestureBegan()
                 engine?.pencilBegan(at: point(navTouches[0]), pressure: 1)
+                scheduleHold()
             }
         default:
             // A second finger arriving just after the first means it was a navigation gesture all along.
@@ -163,9 +186,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
             let now = event?.timestamp ?? CACurrentMediaTime()
             let a = touch.location(in: self), b = touch.previousLocation(in: self)
             let delta = Vec2(Float(a.x - b.x), Float(a.y - b.y))
-            if settings.oneFingerAction == .pan {
-                engine.camera.pan(deltaPoints: delta)
-            } else if settings.oneFingerAction == .orbit {
+            if settings.oneFingerAction == .orbit {
                 model?.gestureBegan()
                 engine.camera.orbit(deltaPoints: delta)
                 let dt = max(Float(now - lastOrbitTime), 1 / 120)
@@ -219,8 +240,8 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         guard navTouches.isEmpty else { return }
         // Multi-finger taps are decided once everything has lifted, so a gesture can't both undo and pan.
         if multiTouchPeak >= 2, !multiTouchMoved, now - multiTouchStart < 0.35 {
-            if multiTouchPeak == 2, settings.twoFingerTapUndoes { model?.undo() }
-            if multiTouchPeak == 3, settings.twoFingerTapUndoes { model?.redo() }
+            if multiTouchPeak == 2 { model?.undo() }
+            if multiTouchPeak == 3 { model?.redo() }
         }
         let wasOrbiting = !navigationLocked && settings.oneFingerAction == .orbit && multiTouchPeak == 1
         multiTouchPeak = 0
@@ -312,12 +333,12 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
 
     /// A stroke met something existing. Only an Apple Pencil Pro can feel this: iPads have no haptics of their own.
     func playAlignment() {
-        if settings.pencilHaptics { canvasFeedback.alignmentOccurred(at: lastStrokeEnd) }
+        canvasFeedback.alignmentOccurred(at: lastStrokeEnd)
     }
 
     /// A stroke closed into a loop.
     func playPathCompleted() {
-        if settings.pencilHaptics { canvasFeedback.pathCompleted(at: lastStrokeEnd) }
+        canvasFeedback.pathCompleted(at: lastStrokeEnd)
     }
 
     func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {

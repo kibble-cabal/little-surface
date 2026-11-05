@@ -1,30 +1,29 @@
 import XCTest
 
-/// The brief's end-to-end workflow, through the real interface with real touches. There's no Pencil in
-/// the simulator, so one finger is set to draw, which feeds the same input path as the Pencil.
+/// The whole way of working, through the real interface with real touches. There's no Pencil in the
+/// simulator, so one finger is set to draw, which feeds the same input path as the Pencil.
 final class WorkflowUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    private struct Stats {
-        let vertices, edges, faces, quads: Int
+    /// What the viewport reports to assistive technology.
+    private struct Stats: Equatable {
+        let points, lines, quads, pencilled, marks: Int
     }
 
     override func setUp() {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
-        app.launchArguments = ["-oneFingerAction", "draw", "-hasSeenTutorial", "YES", "-orbitInertia", "NO"]
+        app.launchArguments = ["-oneFingerAction", "draw", "-orbitInertia", "NO"]
         app.launch()
     }
 
+    private var viewport: XCUIElement { app.otherElements["viewport"] }
+
     private var stats: Stats {
-        let label = app.staticTexts["mesh-stats"].label
-        let parts = label.split(whereSeparator: \.isWhitespace).map(String.init)
-        func value(_ key: String) -> Int {
-            guard let i = parts.firstIndex(of: key), i + 1 < parts.count else { return -1 }
-            return Int(parts[i + 1]) ?? -1
-        }
-        return Stats(vertices: value("V"), edges: value("E"), faces: value("F"), quads: value("Quads"))
+        let numbers = (viewport.value as? String ?? "").split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        XCTAssertEqual(numbers.count, 5, "the viewport reports its counts")
+        return Stats(points: numbers[0], lines: numbers[1], quads: numbers[2], pencilled: numbers[3], marks: numbers[4])
     }
 
     private func point(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate {
@@ -52,20 +51,6 @@ final class WorkflowUITests: XCTestCase {
         return element
     }
 
-    private func dismissPopover() {
-        let region = app.otherElements["PopoverDismissRegion"]
-        if region.waitForExistence(timeout: 2) { region.tap() }
-        settle()
-    }
-
-    private func scrollIntoView(_ element: XCUIElement) {
-        let scroller = app.scrollViews.containing(.switch, identifier: element.identifier).firstMatch
-        for _ in 0..<4 where !element.isHittable {
-            scroller.swipeUp()
-            settle()
-        }
-    }
-
     private func flip(_ toggle: XCUIElement) {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         settle()
@@ -78,325 +63,194 @@ final class WorkflowUITests: XCTestCase {
         add(attachment)
     }
 
-    func testFullWorkflow() throws {
+    private func openExample() {
+        button("Add").tap()
         button("Open Example").tap()
-
-        // Import a detailed model, off the main thread.
-        XCTAssertTrue(app.staticTexts["mesh-stats"].waitForExistence(timeout: 20))
-        let imported = app.descendants(matching: .any)["message"]
-        XCTAssertTrue(imported.waitForExistence(timeout: 60), "the import never finished")
-        XCTAssertTrue(imported.label.contains("71,198"), imported.label)
-        let name = app.buttons["Project Name"].label.replacingOccurrences(of: "Project name, ", with: "")
-        shot("imported")
-
-        // Rotate around it, then come back to the front.
-        button("view-right").tap()
-        settle()
-        shot("right view")
-        app.otherElements["viewport"].pinch(withScale: 1.2, velocity: 1)
-        settle()
-        button("view-front").tap()
-        button("Display").tap()
-        button("Frame Model").tap()
-        dismissPopover()
-
-        // Draw two lines. Each becomes real vertices and edges on the surface.
-        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
-        let first = stats
-        XCTAssertGreaterThan(first.edges, 5)
-        XCTAssertEqual(first.faces, 0)
-        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
-        let second = stats
-        XCTAssertGreaterThan(second.edges, first.edges)
-        shot("two lines")
-
-        // Generate quads between them, previewing first.
-        button("tool-quadPatch").tap()
-        tap(410, 480)
-        tap(410, 585)
-        XCTAssertTrue(button("Create Patch").isEnabled)
-        XCTAssertEqual(stats.faces, 0, "a preview doesn't touch the mesh")
-        shot("patch preview")
-        button("Create Patch").tap()
-        settle()
-        let patched = stats
-        XCTAssertGreaterThan(patched.faces, 20)
-        XCTAssertEqual(patched.quads, patched.faces, "all quads")
-        shot("patch")
-
-        // Move a single vertex, and undo and redo it.
-        button("tool-select").tap()
+        XCTAssertTrue(viewport.waitForExistence(timeout: 20))
+        // The model is ready once a stroke can land on it.
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline, stats.lines == 0 {
+            settle(1)
+            if !app.descendants(matching: .any)["busy"].exists {
+                draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
+            }
+        }
+        XCTAssertGreaterThan(stats.lines, 0, "the surface never became ready")
         button("Undo").tap()
         settle()
-        XCTAssertEqual(stats.faces, 0, "undo removes the whole patch in one step")
-        button("Redo").tap()
-        settle()
-        XCTAssertEqual(stats.faces, patched.faces)
-        draw(CGPoint(x: 410, y: 530), CGPoint(x: 425, y: 520))
-        XCTAssertEqual(stats.faces, patched.faces, "moving doesn't change topology")
-        XCTAssertTrue(app.staticTexts["selection-status"].exists)
-        shot("moved vertex")
+        XCTAssertEqual(stats.lines, 0)
+    }
 
-        // Add a face on the chest, then delete it.
-        button("tool-face").tap()
-        tap(370, 750)
-        tap(450, 750)
-        tap(450, 800)
-        tap(370, 800)
-        XCTAssertEqual(stats.faces, patched.faces + 1, "the fourth corner makes a quad")
-        shot("added face")
-        button("tool-select").tap()
-        button("Toggle Options").tap()
+    private func more(_ id: String) {
+        button("More").tap()
         settle()
+        button(id).tap()
+        settle()
+    }
+
+    private func dismissSheet() {
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04)).tap()
+        settle(0.8)
+    }
+
+    // MARK: Drawing
+
+    func testDrawingAppearsAsAPencilledFillThatFirmsUpAndUndoes() throws {
+        openExample()
+        shot("paper and a matte model")
+        for gone in ["tool-select", "tool-quadPatch", "Display", "Save", "Check Mesh", "Toggle Options", "Fill with Quads"] {
+            XCTAssertFalse(app.buttons[gone].exists, "\(gone) is gone")
+        }
+
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        let first = stats
+        XCTAssertGreaterThan(first.lines, 0)
+        XCTAssertEqual(first.quads, 0)
+        XCTAssertEqual(first.pencilled, 0)
+
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        XCTAssertEqual(stats.pencilled, 1, "quads appear with nothing to tap")
+        XCTAssertEqual(stats.quads, 0)
+        shot("pencilled quads")
+
+        button("Undo").tap()
+        settle()
+        XCTAssertEqual(stats.pencilled, 0, "undo takes the quads and leaves the line")
+        XCTAssertEqual(stats.lines, first.lines * 2)
+        button("Undo").tap()
+        settle()
+        XCTAssertEqual(stats.lines, first.lines)
+
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        XCTAssertEqual(stats.pencilled, 1)
+        tap(300, 900)
+        XCTAssertEqual(stats.pencilled, 0, "moving on firms them up")
+        XCTAssertGreaterThan(stats.quads, 0)
+        shot("inked quads")
+    }
+
+    func testZoomSetsTheSizeOfTheQuads() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        let wide = stats.lines
+        button("Undo").tap()
+        settle()
+
+        viewport.pinch(withScale: 2, velocity: 1)
+        settle()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        // The same length on screen, whatever the zoom.
+        XCTAssertEqual(Double(stats.lines), Double(wide), accuracy: 1)
+    }
+
+    func testAMarkOverQuadsStaysAsPencilAndCanBeDeleted() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        tap(300, 900)
+        let inked = stats
+        XCTAssertGreaterThan(inked.quads, 0)
+
+        draw(CGPoint(x: 370, y: 525), CGPoint(x: 450, y: 525))
+        XCTAssertEqual(stats.marks, 1, "nothing is refused")
+        XCTAssertFalse(app.descendants(matching: .any)["message"].exists, "and nothing is said about it")
+        shot("a mark")
+
+        tap(410, 525)
         button("Delete").tap()
         settle()
-        XCTAssertEqual(stats.faces, patched.faces)
-
-        // Turn on symmetry and draw on one side. It lands on both.
-        button("Toggle Options").tap()
-        button("Symmetry").tap()
-        let symmetry = app.switches["Symmetry Toggle"]
-        XCTAssertTrue(symmetry.waitForExistence(timeout: 5))
-        flip(symmetry)
+        XCTAssertEqual(stats.marks, 0)
+        button("Undo").tap()
         settle()
-        shot("symmetry popover")
-        dismissPopover()
-        button("tool-drawEdges").tap()
-        let beforeMirror = stats
-        shot("before mirror")
-        draw(CGPoint(x: 430, y: 445), CGPoint(x: 475, y: 460))
-        let mirrored = stats
-        shot("symmetry")
-        XCTAssertGreaterThanOrEqual(mirrored.vertices - beforeMirror.vertices, 4)
-        XCTAssertEqual((mirrored.vertices - beforeMirror.vertices) % 2, 0, "every new vertex has a partner")
+        XCTAssertEqual(stats.marks, 1)
+        XCTAssertEqual(stats.quads, inked.quads)
+    }
 
-        // Preview subdivision. The real mesh doesn't change.
-        button("Display").tap()
-        let subdivision = app.switches["Subdivision Preview"]
-        XCTAssertTrue(subdivision.waitForExistence(timeout: 5))
-        scrollIntoView(subdivision)
-        flip(subdivision)
-        XCTAssertTrue(app.staticTexts["subdivision-note"].waitForExistence(timeout: 10))
-        dismissPopover()
-        XCTAssertEqual(stats.faces, mirrored.faces)
-        shot("subdivision")
-        button("Display").tap()
-        scrollIntoView(subdivision)
-        flip(subdivision)
-        dismissPopover()
+    func testHoldingAPointMovesItAndDrawingDoesNot() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        let before = stats
 
-        // Save, close, and reopen.
-        button("Save").tap()
-        settle(1.5)
-        let saved = stats
-        button("Projects").tap()
-        let card = button("project-\(name)")
-        settle(1)
-        shot("welcome")
-        card.tap()
-        XCTAssertTrue(app.staticTexts["mesh-stats"].waitForExistence(timeout: 20))
-        settle(1)
-        let reopened = stats
-        XCTAssertEqual(reopened.vertices, saved.vertices)
-        XCTAssertEqual(reopened.edges, saved.edges)
-        XCTAssertEqual(reopened.faces, saved.faces)
-        shot("reopened")
+        point(340, 480).press(forDuration: 0.6, thenDragTo: point(330, 440), withVelocity: 200, thenHoldForDuration: 0.05)
+        settle()
+        XCTAssertEqual(stats, before, "a held point moves, adding nothing")
+        XCTAssertFalse(app.buttons["Delete"].exists, "and doesn't stay picked")
+        XCTAssertTrue(button("Undo").isEnabled)
+    }
 
-        // The surface is ready again, and reopened topology stays editable.
-        draw(CGPoint(x: 340, y: 660), CGPoint(x: 360, y: 700))
+    // MARK: The brushes
+
+    func testEraserAndSmoothAreOneTapAway() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        XCTAssertFalse(app.sliders["Brush Size"].exists, "the pencil has no size")
+
+        button("tool-relaxBrush").tap()
+        settle()
+        XCTAssertEqual(stats.pencilled, 0, "changing tools moves on")
+        let inked = stats
+        XCTAssertTrue(app.sliders["Brush Size"].waitForExistence(timeout: 3))
+        shot("smooth")
+        draw(CGPoint(x: 380, y: 500), CGPoint(x: 440, y: 550))
+        XCTAssertEqual(stats, inked, "smoothing changes no topology")
+
+        button("tool-erase").tap()
+        settle()
+        draw(CGPoint(x: 410, y: 470), CGPoint(x: 410, y: 580))
+        XCTAssertLessThan(stats.quads, inked.quads)
+        shot("erased")
+        button("Undo").tap()
+        settle()
+        XCTAssertEqual(stats.quads, inked.quads)
+
+        button("tool-pencil").tap()
+        settle()
+        XCTAssertFalse(app.sliders["Brush Size"].exists)
+    }
+
+    func testSymmetryMirrorsAStroke() throws {
+        openExample()
+        draw(CGPoint(x: 330, y: 480), CGPoint(x: 370, y: 480))
+        let single = stats
         button("Undo").tap()
         settle()
 
-        // Export through the share sheet, with and without the source. tools/verify_app_exports.sh reads the results.
-        for (format, withSource) in [("OBJ", false), ("GLB", false), ("OBJ", true), ("GLB", true)] {
-            button("Export").tap()
-            let picker = app.segmentedControls["Export Format"]
-            XCTAssertTrue(picker.waitForExistence(timeout: 5))
-            picker.buttons[format].tap()
-            if withSource {
-                let field = app.textFields["Export Name"]
-                field.tap()
-                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40) + "with-source")
-                flip(app.switches["Include Source"])
-            }
-            button("Export Confirm").tap()
-            settle(1.5)
-            shot("export \(format)\(withSource ? " with source" : "")")
-            // Dismiss the share sheet.
-            let close = app.buttons["Close"]
-            if close.waitForExistence(timeout: 3) {
-                close.tap()
-            } else {
-                point(60, 600).tap()
-            }
-            settle(1)
-        }
-        button("Projects").tap()
-        XCTAssertTrue(button("project-\(name)").waitForExistence(timeout: 10))
+        button("Symmetry").tap()
+        settle()
+        XCTAssertEqual(button("Symmetry").value as? String, "On")
+        draw(CGPoint(x: 330, y: 480), CGPoint(x: 370, y: 480))
+        XCTAssertEqual(stats.lines, single.lines * 2, "the far side has it too")
+        shot("mirrored")
     }
 
-    func testDarkLandscapeLook() throws {
-        app.terminate()
-        app.launchArguments += ["-appearance", "dark"]
-        app.launch()
-        XCUIDevice.shared.orientation = .landscapeLeft
-        settle(1)
-        shot("dark welcome")
-        button("Open Example").tap()
-        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
-        shot("dark landscape editor")
-        XCUIDevice.shared.orientation = .portrait
-        settle(1)
-    }
+    // MARK: What stayed, in the menu
 
-    func testRefusedPatchExplainsAndChangesNothing() throws {
-        button("Open Example").tap()
-        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
-        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
-        let before = stats
-        button("tool-quadPatch").tap()
-        tap(410, 480)
-        XCTAssertFalse(button("Create Patch").isEnabled, "one line isn't enough to patch")
-        XCTAssertEqual(stats.edges, before.edges)
-    }
+    func testPolyBudgetShowsOnlyOnceThereIsATarget() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        tap(300, 900)
+        let inked = stats
+        XCTAssertFalse(app.buttons["budget-status"].exists)
 
-    func testClearDismissesPickedLines() throws {
-        button("Open Example").tap()
-        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
-        button("tool-quadPatch").tap()
-        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
-        XCTAssertFalse(button("Create Patch").isEnabled, "one line can't be patched yet")
-        XCTAssertTrue(app.staticTexts["decision-note"].label.contains("second line"), "and the note says what's missing")
-        shot("one line picked")
-        button("Clear Patch").tap()
-        settle()
-        XCTAssertFalse(app.buttons["Clear Patch"].exists, "Clear visibly clears")
-        XCTAssertFalse(app.buttons["Create Patch"].exists)
-    }
-
-    func testTappingLinesInDrawEdgesMakesAPatchAndMovesToSelect() throws {
-        button("Open Example").tap()
-        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
-        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
-        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
-        XCTAssertTrue(button("tool-drawEdges").isSelected)
-        tap(410, 480)
-        settle()
-        XCTAssertFalse(button("Create Patch").isEnabled, "one line isn't enough yet")
-        tap(410, 585)
-        settle()
-        XCTAssertTrue(button("Create Patch").isEnabled)
-        shot("picked in draw edges")
-        button("Create Patch").tap()
-        settle()
-        XCTAssertGreaterThan(stats.faces, 0)
-        XCTAssertTrue(button("tool-select").isSelected, "the next thing is usually adjusting it")
-    }
-
-    func testSideBySideLinesOfferToFill() throws {
-        button("Open Example").tap()
-        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
-        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
-        XCTAssertFalse(app.buttons["Fill with Quads"].exists, "one line has nothing to fill to")
-        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
-        let lines = stats
-        XCTAssertEqual(lines.faces, 0)
-        shot("fill offer")
-
-        // Declining leaves the lines alone.
-        button("Not Now").tap()
-        settle()
-        XCTAssertFalse(app.buttons["Fill with Quads"].exists)
-        XCTAssertEqual(stats.faces, 0)
-
-        // Drawing a third line beside them offers again, and accepting makes real quads.
-        draw(CGPoint(x: 320, y: 690), CGPoint(x: 500, y: 690))
-        let beforeFill = stats
-        button("Fill with Quads").tap()
-        settle()
-        XCTAssertGreaterThan(stats.faces, 10)
-        XCTAssertEqual(stats.faces, stats.quads, "the fill is all quads")
-        shot("filled")
-        assertUndoRestores(beforeFill)
-    }
-
-    /// Opens the example, draws two lines and makes a patch, which the other tests then work on.
-    func testPolyBudgetCountsLiveAndJumpsToTriangles() {
-        let patched = openPatchedExample()
-        let count = app.staticTexts["budget-count"]
-        XCTAssertEqual(count.label, "\(patched.quads * 2) tris", "quads count as two")
-
-        button("budget-status").tap()
-        settle()
+        more("Poly Budget")
+        XCTAssertTrue(app.staticTexts["budget-summary"].waitForExistence(timeout: 5))
         button("budget-preset-1000").tap()
         settle()
-        dismissPopover()
-        XCTAssertEqual(count.label, "\(patched.quads * 2) / 1,000 tris")
-        XCTAssertEqual(stats.quads, patched.quads, "the budget changes nothing about the mesh")
+        XCTAssertTrue(button("jump-poles").waitForExistence(timeout: 5))
+        shot("the budget sheet")
+        dismissSheet()
 
-        // A three-cornered face, away from the patch.
-        button("tool-face").tap()
-        tap(370, 750)
-        tap(450, 750)
-        tap(410, 800)
-        button("Create Face").tap()
-        settle()
-        XCTAssertEqual(count.label, "\(patched.quads * 2 + 1) / 1,000 tris", "the count follows edits as they happen")
-
-        button("budget-status").tap()
-        settle()
-        XCTAssertTrue(button("jump-badGeometry").waitForExistence(timeout: 5))
-        button("jump-triangles").tap()
-        settle()
-        shot("jumped to a triangle")
-        dismissPopover()
-        XCTAssertEqual(app.staticTexts["selection-status"].label, "1 selected")
-        XCTAssertEqual(stats.faces, patched.faces + 1, "looking doesn't edit")
-        assertUndoRestores(patched)
-    }
-
-    func testSketchDrawsInColorStaysOutOfTheMeshAndUndoes() {
-        let patched = openPatchedExample()
-        button("tool-sketch").tap()
-        settle()
-        XCTAssertFalse(button("sketch-clear").isEnabled, "nothing to clear yet")
-        button("sketch-color-2").tap()
-        settle()
-        XCTAssertTrue(button("sketch-color-2").isSelected)
-
-        draw(CGPoint(x: 290, y: 760), CGPoint(x: 440, y: 790))
-        XCTAssertTrue(button("sketch-clear").isEnabled, "the line landed")
-        XCTAssertEqual(stats.vertices, patched.vertices, "a sketch isn't topology")
-        XCTAssertEqual(stats.faces, patched.faces)
-        shot("a blue planning line")
-
-        button("Undo").tap()
-        settle(0.3)
-        XCTAssertFalse(button("sketch-clear").isEnabled, "undo took the line back")
-        button("Redo").tap()
-        settle(0.3)
-        XCTAssertTrue(button("sketch-clear").isEnabled)
-        button("sketch-clear").tap()
-        settle(0.3)
-        XCTAssertFalse(button("sketch-clear").isEnabled)
-        button("Undo").tap()
-        settle(0.3)
-        XCTAssertTrue(button("sketch-clear").isEnabled, "clearing is one undo")
-
-        // Tracing over it makes real topology, and the sketch stays.
-        button("tool-drawEdges").tap()
-        draw(CGPoint(x: 290, y: 760), CGPoint(x: 440, y: 790))
-        XCTAssertGreaterThan(stats.vertices, patched.vertices)
-        button("tool-sketch").tap()
-        settle()
-        XCTAssertTrue(button("sketch-clear").isEnabled)
+        XCTAssertEqual(button("budget-status").label, "\(inked.quads * 2) / 1,000 tris", "quads count as two")
+        XCTAssertEqual(stats, inked, "a budget changes nothing about the mesh")
     }
 
     func testBlenderLinkTakesAMeshOverTheNetwork() throws {
-        let patched = openPatchedExample()
-        button("Import").tap()
-        settle()
-        button("Blender Link").tap()
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        let before = stats
+        more("Blender Link")
         XCTAssertTrue(app.switches["Blender Link Toggle"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Blender Link Code"].exists, "the code stays hidden until the link is on")
         flip(app.switches["Blender Link Toggle"])
@@ -423,177 +277,74 @@ final class WorkflowUITests: XCTestCase {
 
         button("Blender Link Done").tap()
         settle()
-        XCTAssertEqual(stats.vertices, patched.vertices + 4, "the mesh arrived beside what was there")
-        XCTAssertEqual(stats.faces, patched.faces + 1)
+        XCTAssertEqual(stats.points, before.points + 4, "the mesh arrived beside what was there")
+        XCTAssertEqual(stats.quads, before.quads + 1)
         button("Undo").tap()
         settle()
-        XCTAssertEqual(stats.faces, patched.faces, "undo here takes it back")
+        XCTAssertEqual(stats.quads, before.quads, "undo here takes it back")
     }
 
-    private func openPatchedExample() -> Stats {
-        button("Open Example").tap()
-        XCTAssertTrue(app.descendants(matching: .any)["message"].waitForExistence(timeout: 60))
-        draw(CGPoint(x: 320, y: 480), CGPoint(x: 500, y: 480))
-        draw(CGPoint(x: 320, y: 585), CGPoint(x: 500, y: 585))
-        button("tool-quadPatch").tap()
-        tap(410, 480)
-        tap(410, 585)
-        button("Create Patch").tap()
-        settle()
-        return stats
-    }
+    func testSavesReopensAndExports() throws {
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        tap(300, 900)
+        let inked = stats
+        XCTAssertGreaterThan(inked.quads, 0)
 
-    private func press(_ id: String) {
-        let element = button(id)
-        if !element.isHittable { app.swipeUp() }
-        element.tap()
-        settle(0.3)
-    }
+        more("Rename")
+        let name = "Reopened \(Int(Date().timeIntervalSince1970))"
+        let field = app.alerts.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40) + name)
+        app.alerts.buttons["Rename"].tap()
+        settle(1)
 
-    private func pickSelectionMode(_ title: String) {
-        app.segmentedControls["Selection Mode"].buttons[title].tap()
-        settle(0.2)
-    }
+        button("Projects").tap()
+        let card = button("project-\(name)")
+        settle(1)
+        shot("welcome")
+        card.tap()
+        XCTAssertTrue(viewport.waitForExistence(timeout: 20))
+        settle(2)
+        XCTAssertEqual(stats.lines, inked.lines, "autosave kept it all")
+        XCTAssertEqual(stats.quads, inked.quads)
 
-    private func assertUndoRestores(_ expected: Stats, file: StaticString = #filePath, line: UInt = #line) {
-        button("Undo").tap()
-        settle(0.3)
-        XCTAssertEqual(stats.vertices, expected.vertices, file: file, line: line)
-        XCTAssertEqual(stats.edges, expected.edges, file: file, line: line)
-        XCTAssertEqual(stats.faces, expected.faces, file: file, line: line)
-    }
-
-    func testEveryEditKeepsItsPromiseAndUndoes() throws {
-        let start = openPatchedExample()
-        XCTAssertGreaterThan(start.faces, 20)
-        button("tool-select").tap()
-        button("Toggle Options").tap()
-        settle()
-        shot("select panel")
-
-        // Whole-mesh operations.
-        press("All")
-        press("Subdivide")
-        XCTAssertEqual(stats.faces, start.faces * 4, "subdividing every quad makes four")
-        assertUndoRestores(start)
-        press("Relax")
-        XCTAssertEqual(stats.faces, start.faces)
-        assertUndoRestores(start)
-        press("Reverse")
-        press("Fix Normals")
-        XCTAssertEqual(stats.faces, start.faces)
-        press("None")
-
-        // The boundary, extruded.
-        pickSelectionMode("Edge")
-        tap(410, 530)
-        XCTAssertTrue(app.staticTexts["selection-status"].exists, "a tap selects an edge")
-        press("Loop")
-        press("Ring")
-        press("Connected")
-        press("Boundary")
-        press("Extrude")
-        XCTAssertGreaterThan(stats.faces, start.faces)
-        shot("extruded")
-        assertUndoRestores(start)
-        press("Split")
-        XCTAssertGreaterThan(stats.vertices, start.vertices)
-        assertUndoRestores(start)
-        press("None")
-
-        // A face deleted, then filled back.
-        pickSelectionMode("Face")
-        tap(410, 530)
-        press("Delete")
-        XCTAssertEqual(stats.faces, start.faces - 1)
-        press("Fill")
-        XCTAssertEqual(stats.faces, start.faces)
-        assertUndoRestores(Stats(vertices: start.vertices, edges: start.edges, faces: start.faces - 1, quads: start.faces - 1))
-        assertUndoRestores(start)
-        press("None")
-
-        // A vertex dissolved.
-        pickSelectionMode("Vertex")
-        tap(410, 530)
-        press("Dissolve")
-        XCTAssertLessThan(stats.vertices, start.vertices)
-        assertUndoRestores(start)
-
-        // Nothing selected is never a crash, only a note.
-        press("None")
-        for id in ["Weld", "Connect", "Flip", "Make Face", "Dissolve", "Delete"] { press(id) }
-        XCTAssertEqual(stats.faces, start.faces)
-        button("Toggle Options").tap()
-
-        // The report reads the same mesh.
-        button("Check Mesh").tap()
-        XCTAssertTrue(app.staticTexts["Connected parts"].waitForExistence(timeout: 10))
-        shot("report")
-        app.buttons["Done"].firstMatch.tap()
-        settle()
-    }
-
-    func testStripAndBrushes() throws {
-        let start = openPatchedExample()
-
-        // A strip from one stroke, previewed before it's real.
-        button("tool-quadStrip").tap()
-        draw(CGPoint(x: 340, y: 770), CGPoint(x: 480, y: 770))
-        XCTAssertEqual(stats.faces, start.faces, "still a preview")
-        shot("strip preview")
-        button("Create Strip").tap()
-        settle()
-        XCTAssertGreaterThan(stats.faces, start.faces)
-        let stripped = stats
-        shot("strip")
-
-        // Undo takes the strip back in one step. The two-finger tap has to be checked by hand: under
-        // a NavigationStack, XCTest aims a viewport's twoFingerTap at the toolbar and refuses the window.
-        button("Undo").tap()
-        settle()
-        XCTAssertEqual(stats.faces, start.faces)
-        button("Redo").tap()
-        settle()
-        XCTAssertEqual(stats.faces, stripped.faces)
-        assertUndoRestores(start)
-
-        // Brushes.
-        button("tool-moveBrush").tap()
-        draw(CGPoint(x: 400, y: 530), CGPoint(x: 420, y: 530))
-        XCTAssertEqual(stats.faces, start.faces)
-        assertUndoRestores(start)
-        button("tool-relaxBrush").tap()
-        draw(CGPoint(x: 340, y: 530), CGPoint(x: 480, y: 530))
-        XCTAssertEqual(stats.faces, start.faces)
-        assertUndoRestores(start)
-        button("tool-erase").tap()
-        draw(CGPoint(x: 380, y: 530), CGPoint(x: 440, y: 530))
-        XCTAssertLessThan(stats.faces, start.faces)
-        shot("erased")
-        assertUndoRestores(start)
-    }
-
-    func testDisplayModes() throws {
-        _ = openPatchedExample()
-        button("Display").tap()
-        let modes = app.segmentedControls["Display Mode"]
-        XCTAssertTrue(modes.waitForExistence(timeout: 5))
-        for mode in ["Wireframe", "X-ray", "Solid"] {
-            modes.buttons[mode].tap()
-            settle()
-            dismissPopover()
-            shot("display \(mode)")
-            button("Display").tap()
-            XCTAssertTrue(modes.waitForExistence(timeout: 5))
+        // Export through the share sheet, with and without the source. tools/verify_app_exports.sh reads the results.
+        for (format, withSource) in [("OBJ", false), ("GLB", false), ("OBJ", true), ("GLB", true)] {
+            more("Export")
+            let picker = app.segmentedControls["Export Format"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            picker.buttons[format].tap()
+            if withSource {
+                let exportName = app.textFields["Export Name"]
+                exportName.tap()
+                exportName.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 40) + "with-source")
+                flip(app.switches["Include Source"])
+            }
+            button("Export Confirm").tap()
+            settle(1.5)
+            shot("export \(format)\(withSource ? " with source" : "")")
+            let close = app.buttons["Close"]
+            if close.waitForExistence(timeout: 3) {
+                close.tap()
+            } else {
+                point(60, 600).tap()
+            }
+            settle(1)
         }
-        for toggle in ["Show Source", "Show Topology"] {
-            flip(app.switches[toggle])
-            dismissPopover()
-            shot("hidden \(toggle)")
-            button("Display").tap()
-            XCTAssertTrue(app.switches[toggle].waitForExistence(timeout: 5))
-            flip(app.switches[toggle])
-        }
-        dismissPopover()
+        button("Projects").tap()
+        XCTAssertTrue(button("project-\(name)").waitForExistence(timeout: 10))
+    }
+
+    func testDarkLook() throws {
+        app.terminate()
+        app.launchArguments += ["-appearance", "dark"]
+        app.launch()
+        openExample()
+        draw(CGPoint(x: 340, y: 480), CGPoint(x: 480, y: 480))
+        draw(CGPoint(x: 340, y: 570), CGPoint(x: 480, y: 570))
+        shot("dark")
     }
 }

@@ -61,10 +61,6 @@ final class AppModel {
             case .mesh(let meshURL): editor.openMeshForEditing(from: meshURL)
             case .example: editor.importExample()
             }
-            if !AppSettings.shared.hasSeenTutorial {
-                editor.startTutorial()
-                if case .empty = start {} else { editor.tutorialStep = .importModel }
-            }
         }
     }
 

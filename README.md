@@ -8,47 +8,58 @@ Little Surface is built for the 2020 iPad and newer, with iPadOS 18 or later. It
 
 ## Getting started
 
-1. On the welcome screen, tap **Example** for a model to practice on, or **Import Model** for your own OBJ, GLB or glTF file.
-2. Pick **Draw Edges** and draw two lines side by side on the model.
-3. Tap **Fill with Quads** when it's offered.
+1. On the welcome screen, tap **+**, then **Example** for a model to practice on, or **Import Model** for your own OBJ, GLB or glTF file.
+2. Draw two lines side by side on the model.
+3. Quads appear between them in pencil. Draw somewhere else and they turn to ink.
 
-An optional tutorial appears the first time you open the app.
+No Pencil? One finger turns the model by default. Under **… > Settings**, set **One finger** to **Draws, as a Pencil would**.
 
-No Pencil? One finger orbits the view by default. In Settings (the gear icon), set **One finger** to **Draw, as a Pencil would**.
+## Drawing
 
-## Drawing topology
+There's one pencil, and the mark says what you mean:
 
-- **Lines:** draw with **Draw Edges**. A stroke that starts near the end of a line carries that line on, and a stroke across two or more lines joins them.
-- **Loops:** draw a stroke whose ends land near each other and it closes. **Keep Open** undoes that in one tap.
-- **Fills:** a fill is offered for two lines side by side, a line beside a finished patch, or a loop inside or around another loop. To choose the sides yourself, tap two lines, or use **Quad Patch** to draw a closed shape.
-- **Strips:** **Quad Strip** lays a band of quads along a stroke, or a ring if the stroke closes.
-- **Symmetry:** turn it on and your strokes mirror across the model.
+- **Lines:** draw a line and it becomes edges. Start from the end of another line to carry it on, or draw across lines to connect them.
+- **Loops:** bring a stroke back to its start and it closes.
+- **Quad size:** zoom sets it. Zoom in for smaller quads and out for bigger ones. A stroke that starts or ends on existing topology matches it instead.
+- **Fills:** when your lines enclose an area, it fills with quads in pencil. Draw through them and they reshape. They turn to ink when you move on, and undo takes them away while leaving your line.
+- **Marks:** a stroke that can't become topology stays as a pencil line. Trace over it, or leave it. Marks don't export.
+- **Moving a point:** rest the Pencil on a point for a moment, then drag. Points show up as you zoom in.
+- **Picking:** tap a line, a quad or a mark, and **Delete** appears. If you tap an empty loop, **Fill** appears too.
 
-## Editing
+Fingers always move the view: two fingers pan and pinch to zoom. Tap with two fingers to undo, or three to redo.
 
-Use **Select** to tap or lasso points, edges and faces, and drag them to move them. The panel on the right holds operations such as Extrude, Split, Fill, Dissolve, Weld, Relax and Subdivide. The **Move**, **Relax** and **Erase** brushes work directly on the mesh.
+## Brushes
 
-Two-finger tap undoes. Your work saves itself a couple of seconds after each change. Undo history lasts until you close the project, so it won't be there when you reopen it.
+The three buttons at the top are **Draw**, **Smooth** and **Erase**. Double-tap a Pencil that supports it to switch between drawing and erasing.
 
-## Planning with a sketch
+- **Smooth** evens out the points under it.
+- **Erase** rubs out the quads, lines and marks under it.
 
-Pick the **Sketch** tool to doodle loose lines on the model in color, as you might on paper, then trace over them with real topology. Sketches never become part of the mesh and don't export. You can hide, erase or clear them from the sketch bar.
+Both have a size slider on the left. Your work saves itself a couple of seconds after each change. Undo history lasts until you close the project.
 
-## Keeping to a poly budget
+## Symmetry
 
-Tap the triangle count in the status bar to set a target, like 5,000 tris, and watch the count against it as you work. A quad counts as two triangles.
+Tap the symmetry button and your strokes mirror across the model. Touch and hold it to pick the axis.
 
-The same panel finds triangles, n-gons, odd poles and bad geometry. Tap one to jump to it, and tap again to go to the next.
+## The … menu
 
-**Check Mesh** gives the full list of structural problems. It reports facts, but whether a mesh will deform well is still your call.
+### Keeping to a poly budget
 
-## When your sculpt changes
+Open **Poly Budget** to see your triangle count and set a target, like 5,000 tris. The count then stays on screen as you work. A quad counts as two triangles.
 
-You don't need to redo your topology. Open **Objects**, tap the update button beside your sculpt, and choose the new version. Your quads snap onto the new surface.
+The same sheet finds triangles, n-gons, odd poles and bad geometry. Tap one to jump to it, and tap again to go to the next.
 
-## Editing a mesh you already have
+### When your sculpt changes
 
-Choose **Import > Mesh to Keep Editing…** to open a low-poly mesh from Blender, Maya or anywhere else that writes OBJ, GLB or glTF, and carry on working on it.
+You don't need to redo your topology. Open **Sculpts**, tap **Update** beside your sculpt, and choose the new version. Your quads snap onto the new surface.
+
+### Editing a mesh you already have
+
+Choose **Open Mesh** to open a low-poly mesh from Blender, Maya or anywhere else that writes OBJ, GLB or glTF, and carry on working on it.
+
+### Seeing your topology alone
+
+**Hide Model** takes the sculpt out of view so you can check the flow of your lines.
 
 ## Linking with Blender
 
@@ -56,7 +67,7 @@ Send meshes straight between Blender and your iPad, with no files to move around
 
 **Set it up once:**
 
-1. In Little Surface, open **Import > Blender Link…**, tap **Get the Add-on…**, and save the file to your computer.
+1. In Little Surface, open **… > Blender Link**, tap **Get the Add-on…**, and save the file to your computer.
 2. In Blender, go to **Edit > Preferences > Add-ons**, choose **Install from Disk**, and pick the file. It needs Blender 4.2 or later.
 
 **Each time:**
@@ -77,7 +88,7 @@ Your iPad and computer need to be on the same Wi-Fi, and the app has to be on sc
 
 ## Making a timelapse
 
-Tap **Export**, then **Make Timelapse…** to get a short square video of your mesh growing step by step. The camera turns on its own to follow what you were working on and finishes with a slow spin. The video carries the Little Surface name and logo.
+Open **… > Export**, then **Make Timelapse** to get a short square video of your mesh growing step by step. The camera turns on its own to follow what you were working on and finishes with a slow spin. The video carries the Little Surface name and logo.
 
 - Keep the app on screen while it's made.
 - It replays on your current sculpt, not earlier versions of it.
@@ -85,12 +96,12 @@ Tap **Export**, then **Make Timelapse…** to get a short square video of your m
 
 ## Exporting
 
-Tap **Export** and pick a format:
+Open **… > Export** and pick a format:
 
 - **OBJ** keeps quads as quads and is the best choice for Blender.
 - **GLB** is triangulated, and leaves out edges that have no face.
 
-You can include the source model as a separate object.
+You can include the sculpt as a separate object.
 
 ## Good to know
 
@@ -98,6 +109,7 @@ You can include the source model as a separate object.
 - Materials and textures are ignored on import.
 - A `.gltf` file that keeps its data in separate files may not open. Use GLB if you can.
 - A stroke that runs off the model breaks into pieces.
+- Part of a stroke that runs over finished quads is dropped, unless the whole stroke does, which leaves a mark.
 - If an import from the welcome screen fails, it leaves an empty project behind that you can delete.
 - Apple Pencil haptics need an Apple Pencil Pro, and hover and double-tap need a Pencil that supports them. The app works without any of these.
 

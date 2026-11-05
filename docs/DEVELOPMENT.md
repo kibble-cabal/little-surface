@@ -59,7 +59,7 @@ Tools describe what they want as a `TopologyPlan`, which a previewer can draw an
 | `Editor` | `EditorModel` connects the engine to SwiftUI and runs imports and previews off the main thread. `TimelapseExporter` renders the video |
 | `Link` | `BlenderLinkServer`, the listener for the add-on |
 | `Document` | `ProjectDocument` (a `UIDocument`, for autosave and safe writing) and `ProjectLibrary` (recents and thumbnails) |
-| `UI` | SwiftUI views: welcome, editor, tool panels and theme. System navigation, inspector and forms with an emerald accent, using Liquid Glass on iPadOS 26 and materials on iPadOS 18 |
+| `UI` | SwiftUI views: welcome, editor, the sheets behind the … menu, and theme. System navigation and forms, using Liquid Glass on iPadOS 26 and materials on iPadOS 18 |
 
 **`blender/little_surface_link.py`** is the Blender add-on. It uses only Blender and Python's standard library, and the app bundles it so people can save it from the Blender Link sheet.
 
@@ -107,50 +107,42 @@ All of this ran on an M1 Max Mac using an iPad (A16) simulator on iOS 26.3. A fr
 
 | Suite | Result |
 | --- | --- |
-| Core tests (`swift test`, with third-party samples) | 311 run: 310 passed, 0 failed, and the timing test skipped by default |
+| Core tests (`swift test`, with third-party samples) | 333 run: 332 passed, 0 failed, and the timing test skipped by default |
 | App tests (document save and reopen, damaged file, bundled example, shaders compile, timelapse video, Blender link) | 26 of 26 passed |
-| UI tests in the running app | 12 of 12 passed |
+| UI tests in the running app | 10 of 10 passed |
 
 The timing test was run separately, with the results under [Large models](#large-models).
 
-### The full workflow, run by a UI test
+### The workflow, run by UI tests
 
-`testFullWorkflow` runs this in the app with synthesized touches:
+`WorkflowUITests` runs these in the app with synthesized touches:
 
-1. Import the example (71,198 triangles), change view with the gizmo, pinch to zoom, and frame the model.
-2. Draw two strokes, preview the patch, and create 128 quads.
-3. Undo and redo.
-4. Move a vertex, then add and delete a face.
-5. Turn on symmetry and check that a stroke mirrors.
-6. Preview subdivision and confirm the mesh itself doesn't change.
-7. Save, go back, reopen with the same vertex, edge and face counts, and edit again.
-8. Export OBJ and GLB through the share sheet, with and without the source.
+1. Open the example, draw two lines, and watch pencilled quads appear with nothing to tap. Undo takes the quads and leaves the line, and moving on firms them up.
+2. Zoom in and check that the same stroke on screen gives the same count.
+3. Draw over quads and check it stays as a mark, with no message. Tap it, delete it, undo.
+4. Hold a point and drag it, adding nothing and leaving nothing picked.
+5. Smooth, erase and undo, with the size slider showing only for those two.
+6. Turn on symmetry and check that a stroke mirrors.
+7. Set a poly budget, which then shows on screen.
+8. Rename, go back, reopen with the same counts, then export OBJ and GLB through the share sheet, with and without the source.
 
 ### Exports checked outside the app
 
-These files came from that UI test and were checked by `tools/verify_app_exports.sh`:
+The exports from that UI test go through `tools/verify_app_exports.sh`, which reads OBJ files in Blender and checks GLB files with the Khronos glTF validator.
 
-| File | Checked with | Result |
-| --- | --- | --- |
-| OBJ | Blender 5.2 | 163 vertices, 288 edges, 128 faces, all quads; no non-manifold edges, inconsistent normals or degenerate faces; 8 loose wire edges, kept as OBJ `l` lines; counts match the app |
-| GLB | Khronos glTF validator | 0 errors, 0 warnings; 153 vertices, 256 triangles |
-| GLB with source | Khronos glTF validator, Blender | 0 errors, 0 warnings; 2 objects, and the source has its full 71,198 triangles |
+### The one pencil
 
-### Other features exercised in the running app
+The interface offers three tools: `.pencil`, `.relaxBrush` and `.erase`. `RetopoEngine` still holds the older tools (`drawEdges`, `quadPatch`, `quadStrip`, `select`, `sketch` and so on) and their tests, and nothing in the app reaches them now. Selection edits like Extrude and Slide are in the same position. They can be offered again or removed.
 
-- **Editing:** Subdivide, Relax, Reverse, Fix Normals, Loop, Ring, Connected, Boundary, Extrude, Split, Delete, Fill, Dissolve, and each one's undo. Operations with nothing selected do nothing.
-- **Mesh checks:** the Check Mesh report.
-- **Tools:** Quad Strip with preview; Move, Relax and Erase brushes; lasso selection; a one-line patch that explains what's missing and leaves the mesh unchanged; Clear; filling between side-by-side lines (16 × 8 quads). Tapping two lines in Draw Edges, creating the patch and landing in Select. By hand, with touch: an oval drawn with Quad Patch, which made a 9 × 9 grid of 81 quads; a nearly closed stroke made into a Quad Strip ring; a line beside a finished patch filled up to its edge (12 × 4 quads); a loop inside a loop offering a 35 × 5 ring; a line carried on from another's end; and a stroke joining two lines. A stroke between a line's two ends closing it is covered by core tests only.
-- **Viewing:** Wireframe, X-ray and Solid; hiding the source and the topology; dark mode in landscape; by hand, two-finger tap to undo.
-- **Files:** the system file picker; a damaged GLB giving a clear error; a second model added to a project; a project killed as soon as its import was saved reopened with the model; a project killed after editing reopened with its mesh and selection.
+Pencilled fills are `pencilledFills` on the engine, kept out of the mesh and drawn as an overlay until `firmUpFills()`. `EnclosedRegions` finds the areas lines fence in.
 
 ### Newer features
 
 - **Sculpt updates:** core tests, and in the running app through the Blender link.
 - **Existing meshes:** core tests, and in the running app through the Blender link.
-- **Poly budget and jumps:** a UI test.
+- **Poly budget:** a UI test. Jumping to a spot has core tests only now.
 - **Autosave and undo:** core and app tests, plus the undo checks in the UI tests.
-- **Sketch:** a UI test, and by hand: red and blue lines drawn, then the red traced with Draw Edges (22 vertices, 21 edges) with the sketch left in place.
+- **Pencil marks:** core tests and a UI test.
 - **Timelapse:** app and core tests, and by hand: a 9.1 s, 273-frame, 1080 × 1080 H.264 video, also exported from a reopened project. Contact sheets and full-size frames were checked for framing, the eased turn, the badge and hidden far-side lines.
 - **Blender link:** core and app tests over real sockets, a UI test that posts a mesh into the running app, and a script run in Blender 5.2.2 against the simulator app, over both `127.0.0.1` and the Mac's network address. All 33 checks passed: a wrong code, an empty address and an unreachable one are refused; send as sculpt and as mesh, adding and replacing; a 56-vertex, 54-face quad mesh came back with every vertex in place to 0.001, including after its transforms were applied in Blender; getting it again updates one object; a changed sculpt moved the mesh onto it; names with spaces and pluses; several objects at once; modifiers applied; sending and getting from Edit and Sculpt mode without leaving them. A 1,310,720-triangle sculpt took 2.4 s over the Mac's own network stack. Blender's window was also run: the panel draws, and Watch for Meshes collected a mesh sent with the app's button.
 
@@ -175,7 +167,7 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 
 **Not tested on hardware**
 
-- Nothing has run on a physical iPad. Apple Pencil pressure, hover, double-tap, palm rejection and drawing latency have never been exercised with real input. The UI tests draw with a finger, which goes through the same engine calls but not the app's Pencil branch.
+- This way of drawing hasn't run on a physical iPad, and `quadSizePoints` and the point fade are guesses until it does. Apple Pencil pressure, hover, double-tap, palm rejection and drawing latency have never been exercised with real input. The UI tests draw with a finger, which goes through the same engine calls but not the app's Pencil branch.
 - Frame rate, memory limits and heat on the 2020 iPad are unknown. Simulator rendering uses the Mac's GPU.
 - The 2020 iPad uses the first-generation Pencil, which has no double-tap or hover, so those features only help on newer hardware.
 - Haptics have never been felt. iPads have no haptic motor, so they only reach an Apple Pencil Pro, which the 2020 iPad can't use. The simulator can't play them either, so the code is only known to compile and be called.
@@ -187,9 +179,8 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 
 - iCloud Drive, and Save to Files from the share sheet. Export was tested up to the share sheet, and the files were read from the app's temporary folder.
 - Nearly all of the testing was in portrait, the simulator's default. Only the dark mode UI test ran in landscape, even though the layout is designed landscape first.
-- Slide, Weld, Connect, Flip, and merging or applying symmetry at the centerline are covered by core tests only, not UI tests.
 - Two-finger undo has no UI test, because XCTest can't aim a two-finger tap at the viewport under a navigation stack. It was checked by hand with simulated touches.
-- Closing a stroke into a loop, the fill offers, carrying a line on and joining lines have only been drawn with touch, so how forgiving they feel with a Pencil is unknown.
+- Closing a stroke into a loop, pencilled fills, carrying a line on and joining lines have only been drawn with touch, so how forgiving they feel with a Pencil is unknown.
 - The app has only run on iPadOS 26.3. The iPadOS 18 fallback for Liquid Glass compiles but has never been run.
 
 **Files**
