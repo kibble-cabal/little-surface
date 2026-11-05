@@ -145,7 +145,8 @@ private struct EditorToolbar: ToolbarContent {
             }
         }
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 18) {
+            // Side by side with no gap, or a tap between them lands on the drawing underneath.
+            HStack(spacing: 0) {
                 toolButton(.pencil, label: "Draw", symbol: "pencil.tip")
                 toolButton(.relaxBrush, label: "Smooth", symbol: "wind")
                 toolButton(.moveBrush, label: "Move", symbol: "hand.point.up.left")
@@ -174,7 +175,10 @@ private struct EditorToolbar: ToolbarContent {
     private func toolButton(_ tool: Tool, label: String, symbol: String) -> some View {
         let isActive = model.state.activeTool == tool
         return Button { model.select(tool: tool) } label: {
-            Label(label, systemImage: symbol).foregroundStyle(isActive ? Theme.selection : Color.primary)
+            Label(label, systemImage: symbol)
+                .foregroundStyle(isActive ? Theme.selection : Color.primary)
+                .frame(width: Theme.touchTarget, height: Theme.touchTarget)
+                .contentShape(Rectangle())
         }
         .accessibilityIdentifier("tool-\(tool.rawValue)")
         .accessibilityAddTraits(isActive ? .isSelected : [])
@@ -335,14 +339,18 @@ private struct MirrorAxisPicker: View {
                 Text("Mirror").font(.footnote).foregroundStyle(Theme.quiet).padding(.horizontal, 8)
                 ForEach(MirrorAxis.allCases, id: \.self) { axis in
                     let isActive = model.state.symmetry.plane.axis == axis
-                    Button(axis.label) { model.engine.setSymmetryPlane(axis: axis) }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(isActive ? Color.white : Color.primary)
-                        .frame(width: 34, height: 34)
-                        .background(isActive ? Theme.selection : Color.clear, in: Circle())
-                        .contentShape(Circle())
-                        .accessibilityIdentifier("mirror-axis-\(axis.label)")
-                        .accessibilityAddTraits(isActive ? .isSelected : [])
+                    Button { model.engine.setSymmetryPlane(axis: axis) } label: {
+                        Text(axis.label)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(isActive ? Color.white : Color.primary)
+                            .frame(width: 34, height: 34)
+                            .background(isActive ? Theme.selection : Color.clear, in: Circle())
+                            .frame(width: 40, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("mirror-axis-\(axis.label)")
+                    .accessibilityAddTraits(isActive ? .isSelected : [])
                 }
             }
             .padding(4)
