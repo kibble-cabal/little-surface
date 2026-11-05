@@ -240,6 +240,41 @@ final class WorkflowUITests: XCTestCase {
         shot("mirrored")
     }
 
+    func testMirrorShowsItsAxisWhileOn() throws {
+        openExample()
+        XCTAssertFalse(app.buttons["mirror-axis-X"].exists)
+        button("Symmetry").tap()
+        settle()
+        XCTAssertTrue(button("mirror-axis-X").isSelected)
+        button("mirror-axis-Y").tap()
+        settle()
+        XCTAssertTrue(button("mirror-axis-Y").isSelected)
+        XCTAssertFalse(button("mirror-axis-X").isSelected)
+        shot("mirror across y")
+        button("Symmetry").tap()
+        settle()
+        XCTAssertFalse(app.buttons["mirror-axis-X"].exists)
+    }
+
+    func testTheCompassLooksAlongAnAxis() throws {
+        openExample()
+        XCTAssertTrue(button("view-right").exists)
+        button("view-right").tap()
+        settle()
+        shot("looking from the right")
+    }
+
+    func testMoveNudgesWithoutChangingTheDrawing() throws {
+        openExample()
+        drawBox()
+        let inked = stats
+        button("tool-moveBrush").tap()
+        settle()
+        XCTAssertTrue(app.sliders["Brush Size"].waitForExistence(timeout: 3))
+        draw(CGPoint(x: 380, y: 500), CGPoint(x: 400, y: 520))
+        XCTAssertEqual(stats, inked)
+    }
+
     // MARK: What stayed, in the menu
 
     func testPolyBudgetShowsOnlyOnceThereIsATarget() throws {

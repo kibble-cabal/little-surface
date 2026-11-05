@@ -18,31 +18,34 @@ No Pencil? One finger turns the model by default. Under **… > Settings**, set 
 
 There's one pencil, and everything you get comes from the lines you draw. Nothing fills itself in, and there's no number to set.
 
-- **Lines:** a line keeps the curve you drew until it's part of a quad. Start from the end of another line to carry it on.
-- **Points:** a line only has points at its ends, at its sharp corners and wherever another line meets it. A short tick across a line puts a point there.
+- **Lines:** a line keeps the curve you drew until it's part of a quad, so nothing you've drawn goes missing before it's used. Start from the end of another line to carry it on. Your hand is steadied as you draw, and **… > Settings > Steady lines** sets how much.
+- **Points:** a line only has points at its ends, at its sharp corners and wherever another line meets it. A short tick across a line puts a point there. A dot shows each point as your stroke makes it.
 - **Shapes:** when lines enclose an area, it becomes one shape, however many corners it has. It's tinted until it's a quad.
 - **Cutting:** draw across a shape to divide it. One stroke can go through as many shapes as it likes. A stroke that stops inside a shape doesn't divide it until another one meets it.
-- **Quads:** a shape with exactly four corners is a quad. Its sides go straight and turn to ink. If a line ends on the side of a quad, the quad gains a corner and goes back to being a shape, so you can see where the rows don't line up.
-- **Fill:** tap a shape with an even number of points on its sides, and **Fill** makes quads between them. It adds no points along the sides, so tick where you want the rows first.
+- **Quads:** a shape with exactly four corners is a quad, as long as no side wraps too far around, about a third of a circle. Its sides go straight and turn to ink. Two cuts across a ring make a quad between them, and the long way around stays curved until you cut it more. If a line ends on the side of a quad, the quad gains a corner and goes back to being a shape, so you can see where the rows don't line up.
+- **Fill:** tap a shape with six or more points on its sides, an even number of them, and **Fill** makes quads between them. It adds no points along the sides, so tick where you want the rows first.
 - **Moving a point:** rest the Pencil on a point for a moment, then drag.
-- **Picking:** tap a line, a shape or a mark, and **Delete** appears.
+- **Picking:** tap a line, a shape or a mark, and **Delete** appears. Tapping a tinted shape also shows its points and how many there are.
 
-A smooth loop has no points of its own, so it stays a tinted shape until lines cross it. Shapes that aren't quads yet still export: as n-gons with straight sides, or with their curve if they have fewer than three points.
+A smooth loop has no points of its own, so it stays a tinted shape until lines cross it.
 
-Fingers always move the view: two fingers pan and pinch to zoom. Tap with two fingers to undo, or three to redo.
+Fingers always move the view: one turns the model and keeps it upright, two pan, pinch to zoom and twist to rotate. Tap X, Y or Z on the compass to look along that axis, level. Tap with two fingers to undo, or three to redo.
 
 ## Brushes
 
-The three buttons at the top are **Draw**, **Smooth** and **Erase**. Double-tap a Pencil that supports it to switch between drawing and erasing.
+The buttons at the top are **Draw**, **Smooth**, **Move** and **Erase**. Double-tap a Pencil that supports it to switch between drawing and erasing.
 
 - **Smooth** evens out the points under it.
-- **Erase** rubs out the quads, lines and marks under it.
+- **Move** nudges whatever is under it, following the Pencil.
+- **Erase** goes by what's under it. Right on a point, it erases the point: the line carries on through, or at a crossing, the lines meeting there go too. Otherwise it erases the lines and marks it touches, and the shapes either side join up. Rubbing inside a shape with no line in reach opens a hole and leaves the lines.
 
-Both have a size slider on the left. Your work saves itself a couple of seconds after each change. Undo history lasts until you close the project.
+They have a size slider on the left. Your work saves itself a couple of seconds after each change. Undo history lasts until you close the project.
 
-## Symmetry
+## Mirror
 
-Tap the symmetry button and your strokes mirror across the model. Touch and hold it to pick the axis.
+Tap the mirror button and your strokes mirror across the model. While it's on, the button is filled in and X, Y and Z appear under the compass to pick the axis.
+
+A line stays on the side it started on. It stops when it reaches the middle and ends exactly there, and an end close to the middle reaches it, so the two sides always meet in one point.
 
 ## The … menu
 
@@ -102,7 +105,9 @@ Open **… > Export**, then **Make Timelapse** to get a short square video of yo
 Open **… > Export** and pick a format:
 
 - **OBJ** keeps quads as quads and is the best choice for Blender.
-- **GLB** is triangulated, and leaves out edges that have no face.
+- **GLB** is triangulated.
+
+Only shapes are exported. Lines that aren't part of a shape yet stay in your project, but not in the file, and Blender Link works the same way. Shapes that aren't quads yet export as n-gons with straight sides, or keep their curve if they have fewer than three points or a side wrapping too far around.
 
 You can include the sculpt as a separate object.
 

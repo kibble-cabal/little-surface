@@ -121,8 +121,8 @@ The timing test was run separately, with the results under [Large models](#large
 2. Close three lines into a shape and cut it into a triangle and a quad. Check that zoom doesn't change the points on a line.
 3. Tick two sides of a quad, tap it, and Fill makes the rows those ticks set out. Delete a picked line and undo.
 4. Hold a point and drag it, adding nothing and leaving nothing picked.
-5. Smooth, erase and undo, with the size slider showing only for those two.
-6. Turn on symmetry and check that a stroke mirrors.
+5. Smooth, move, erase and undo, with the size slider showing only for those three.
+6. Turn on mirror, check that a stroke mirrors, and pick an axis. Look along an axis with the compass.
 7. Set a poly budget, which then shows on screen.
 8. Rename, go back, reopen with the same counts, then export OBJ and GLB through the share sheet, with and without the source.
 
@@ -132,7 +132,7 @@ The exports from that UI test go through `tools/verify_app_exports.sh`, which re
 
 ### The one pencil
 
-The interface offers three tools: `.pencil`, `.relaxBrush` and `.erase`. `RetopoEngine` still holds the older tools (`drawEdges`, `quadPatch`, `quadStrip`, `select`, `sketch` and so on) and their tests, and nothing in the app reaches them now. Selection edits like Extrude and Slide are in the same position. They can be offered again or removed.
+The interface offers four tools: `.pencil`, `.relaxBrush`, `.moveBrush` and `.erase`. `RetopoEngine` still holds the older tools (`drawEdges`, `quadPatch`, `quadStrip`, `select`, `sketch` and so on) and their tests, and nothing in the app reaches them now. Selection edits like Extrude and Slide are in the same position. They can be offered again or removed.
 
 Pencil lines are wire edges in the mesh, but only some of their vertices count. `Mesh.isBend` marks the ones that only shape the stroke, spaced every `bendSpacingPoints` on screen. The rest are real points: ends, sharp corners (`StrokePlanner.cornerAngle`, 60° over about 16 points on screen) and places lines meet. Statistics, picking and the renderer's dots all ignore bends, `Mesh.withoutBends()` removes them on export, and a bend with anything other than two edges is settled back into a real point.
 
@@ -205,6 +205,8 @@ Expect an A12 iPad to be several times slower. How much slower hasn't been measu
 - Fill needs an even number of points on a shape's sides and chooses which four are the corners itself, favouring the sharpest turns, so a shape with very uneven sides can come out with its rows slanted.
 - A shape inside another shape removes the outer one's face until lines join them, since a face can't have a hole.
 - Moving a real point on a line that's still curved only moves that point, so the curve kinks there.
-- Long lines that overshoot a shape by more than about 33 points leave a whisker, which has to be erased. It exports as a loose edge in OBJ.
+- Long lines that overshoot a shape by more than about 33 points leave a whisker, which stays until it's erased. It isn't exported.
+- A side of a quad goes straight only if it's no more than 1.25 times the length of the straight line between its ends. That number, the corner angle, the steadying strength and the 14 points the eraser treats as "on a point" are all first guesses.
+- With mirror on, a shape drawn across the middle isn't possible: each side draws up to it. A smooth loop drawn around the middle becomes an arc from where it started.
 - The Blender link is plain HTTP on the local network, protected only by its six-digit code, and it's off by default.
 - The mesh checks report facts and never declare a mesh animation-ready. That judgement stays with you.

@@ -164,6 +164,7 @@ private struct EditorToolbar: ToolbarContent {
                 Label("Mirror", systemImage: model.state.symmetry.isEnabled ? "square.and.line.vertical.and.square.filled" : "square.and.line.vertical.and.square")
                     .foregroundStyle(model.state.symmetry.isEnabled ? Theme.selection : Color.primary)
             }
+            .tint(model.state.symmetry.isEnabled ? Theme.selection : Color.primary)
             .accessibilityIdentifier("Symmetry")
             .accessibilityValue(model.state.symmetry.isEnabled ? "On" : "Off")
             menu
