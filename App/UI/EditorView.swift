@@ -358,6 +358,13 @@ private struct PickChips: View {
         let engine = model.state
         if engine.hasPick {
             HStack(spacing: 8) {
+                if let note = engine.pickNote {
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.quiet)
+                        .padding(.leading, 10)
+                        .accessibilityIdentifier("Pick Note")
+                }
                 if engine.canFillPick {
                     Button("Fill") { model.engine.fillPick() }
                         .pillButton()

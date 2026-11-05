@@ -1277,7 +1277,16 @@ public final class RetopoEngine {
             sketchRevision &+= 1
         }
         selection.clear()
+        rebuildOverlay()
         notify()
+    }
+
+    /// What's stopping a picked shape from being a quad.
+    public var pickNote: String? {
+        guard selection.faces.count == 1, let face = selection.faces.first, mesh.isFaceAlive(face), !mesh.isQuad(face) else { return nil }
+        let corners = mesh.cornerCount(of: face)
+        if corners == 4 { return "4 points, but a side curves too far to go straight" }
+        return corners == 1 ? "1 point" : "\(corners) points"
     }
 
     /// Whether the picked shape can become quads using the points already on its sides, which takes an
@@ -2839,6 +2848,10 @@ public final class RetopoEngine {
                 lines.append(mesh.position(b))
             }
             out.chains.append(lines)
+        }
+        // A picked shape shows the points it's counting.
+        if pickNote != nil, let face = selection.faces.first {
+            out.previewPoints.append(contentsOf: mesh.loop(face).filter { !mesh.isBendVertex($0) }.map { mesh.position($0) })
         }
         if !faceCorners.isEmpty {
             let points = faceCorners.compactMap(cornerPosition)

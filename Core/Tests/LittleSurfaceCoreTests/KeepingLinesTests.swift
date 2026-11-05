@@ -265,4 +265,42 @@ final class KeepingLinesTests: XCTestCase {
         XCTAssertEqual(engine.overlay.previewPoints.count, 0)
         engine.pencilCancelled()
     }
+
+    // MARK: Why a shape isn't finished
+
+    private func tapShape(_ engine: RetopoEngine, at: Vec2) {
+        engine.pencilBegan(at: at)
+        engine.pencilEnded(at: at)
+    }
+
+    func testPickingAShapeSaysHowManyPointsItHasAndShowsThem() {
+        let engine = pencil()
+        for y: Float in [420, 580] { Fixtures.drawPath(engine, straight(Vec2(390, y), Vec2(610, y))) }
+        for x: Float in [400, 600] { Fixtures.drawPath(engine, straight(Vec2(x, 410), Vec2(x, 590))) }
+        Fixtures.drawPath(engine, straight(Vec2(500, 400), Vec2(500, 440)))
+        tapShape(engine, at: Vec2(500, 500))
+        XCTAssertEqual(engine.pickNote, "5 points")
+        XCTAssertEqual(engine.overlay.previewPoints.count, 5)
+        engine.clearPick()
+        XCTAssertNil(engine.pickNote)
+        XCTAssertEqual(engine.overlay.previewPoints.count, 0)
+    }
+
+    func testPickingAQuadSaysNothing() {
+        let engine = pencil()
+        for y: Float in [420, 580] { Fixtures.drawPath(engine, straight(Vec2(390, y), Vec2(610, y))) }
+        for x: Float in [400, 600] { Fixtures.drawPath(engine, straight(Vec2(x, 410), Vec2(x, 590))) }
+        tapShape(engine, at: Vec2(500, 500))
+        XCTAssertEqual(engine.selection.faces.count, 1)
+        XCTAssertNil(engine.pickNote)
+    }
+
+    func testPickingFourPointsWithALongCurveSaysSo() {
+        let engine = pencil()
+        for radius: Float in [50, 100] { drawLoop(engine, center: Vec2(500, 500), radius: radius) }
+        Fixtures.drawPath(engine, straight(Vec2(485, 390), Vec2(485, 460)))
+        Fixtures.drawPath(engine, straight(Vec2(515, 390), Vec2(515, 460)))
+        tapShape(engine, at: Vec2(500, 575))
+        XCTAssertEqual(engine.pickNote, "4 points, but a side curves too far to go straight")
+    }
 }
