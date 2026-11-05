@@ -46,7 +46,72 @@ public enum DrawnFaces {
         for loop in taken where mesh.findFace(withVertices: loop) == nil && mesh.canAddFace(loop) && !added.contains(where: { encloses(loop, $0, in: mesh) }) {
             try mesh.addFace(loop, autoOrient: false)
         }
+        mergeRetracedLines(in: &mesh)
         mesh.straightenQuads(mirrored: mirrored)
+    }
+
+    /// How far apart two lines between the same two points can be, against how far apart those points
+    /// are, and still be one line drawn twice rather than a narrow shape.
+    private static let retracedLineLimit: Float = 0.15
+
+    /// Going back over a line is how a line gets drawn on paper. It would otherwise leave a sliver of a
+    /// shape between the two, so the longer of them stands for both.
+    private static func mergeRetracedLines(in mesh: inout Mesh) {
+        for f in mesh.aliveFaces where mesh.isFaceAlive(f) && mesh.cornerCount(of: f) == 2 {
+            var loop = mesh.loop(f)
+            guard let first = loop.firstIndex(where: { !mesh.isBendVertex($0) }) else { continue }
+            loop = Array(loop[first...] + loop[..<first])
+            guard let second = loop.dropFirst().firstIndex(where: { !mesh.isBendVertex($0) }) else { continue }
+            let sideA = Array(loop[...second])
+            let sideB = Array(loop[second...]) + [loop[0]]
+            guard isThin(sideA, sideB, in: mesh) else { continue }
+            let (kept, gone) = length(of: sideA, in: mesh) >= length(of: sideB, in: mesh) ? (sideA, sideB) : (sideB, sideA)
+            var work = mesh
+            if merge(gone, into: kept, removing: f, in: &work) { mesh = work }
+        }
+    }
+
+    private static func length(of side: [VertexID], in mesh: Mesh) -> Float {
+        zip(side, side.dropFirst()).reduce(0) { $0 + simd_length(mesh.position($1.1) - mesh.position($1.0)) }
+    }
+
+    private static func isThin(_ a: [VertexID], _ b: [VertexID], in mesh: Mesh) -> Bool {
+        let limit = simd_length(mesh.position(a[0]) - mesh.position(a[a.count - 1])) * retracedLineLimit
+        func reach(from points: [VertexID], to line: [VertexID]) -> Float {
+            points.reduce(0) { farthest, v in
+                let p = mesh.position(v)
+                let nearest = zip(line, line.dropFirst()).reduce(Float.infinity) { closest, segment in
+                    let s = mesh.position(segment.0), span = mesh.position(segment.1) - s
+                    let t = simd_clamp(simd_dot(p - s, span) / max(simd_length_squared(span), 1e-12), 0, 1)
+                    return min(closest, simd_length(s + span * t - p))
+                }
+                return max(farthest, nearest)
+            }
+        }
+        return reach(from: a, to: b) <= limit && reach(from: b, to: a) <= limit
+    }
+
+    /// `kept` runs one way round the sliver and `gone` carries on from its end back to its start, so
+    /// whatever was on the far side of `gone` takes `kept` in the direction it already runs.
+    private static func merge(_ gone: [VertexID], into kept: [VertexID], removing sliver: FaceID, in mesh: inout Mesh) -> Bool {
+        let goneEdges = zip(gone, gone.dropFirst()).compactMap { mesh.edge(between: $0, $1) }
+        guard goneEdges.count == gone.count - 1 else { return false }
+        let beside = mesh.facesOf(edge: goneEdges[0]).first { $0 != sliver }
+        var outline: [VertexID]?
+        if let beside {
+            var loop = mesh.loop(beside)
+            // Running the same way as `kept`, which is the opposite way to the sliver along `gone`.
+            guard let start = loop.firstIndex(of: kept[0]) else { return false }
+            loop = Array(loop[start...] + loop[..<start])
+            guard let end = loop.firstIndex(of: kept[kept.count - 1]), Array(loop[...end]) == Array(gone.reversed()) else { return false }
+            outline = kept + Array(loop[(end + 1)...])
+        }
+        mesh.removeFace(sliver)
+        if let beside { mesh.removeFace(beside) }
+        mesh.deleteEdges(Set(goneEdges))
+        guard let outline else { return true }
+        guard mesh.canAddFace(outline) else { return false }
+        return (try? mesh.addFace(outline, autoOrient: false)) != nil
     }
 
     private static func encloses(_ loop: [VertexID], _ face: FaceID, in mesh: Mesh) -> Bool {

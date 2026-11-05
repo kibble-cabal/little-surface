@@ -334,3 +334,43 @@ final class KeepingLinesTests: XCTestCase {
         XCTAssertEqual(out.edgeCount, 0)
     }
 }
+
+/// Going back over a line is part of drawing it.
+final class RetracedLineTests: XCTestCase {
+    private func straight(_ a: Vec2, _ b: Vec2, bow: Float = 0, steps: Int = 24) -> [Vec2] {
+        let across = simd_normalize(Vec2(b.y - a.y, a.x - b.x))
+        return (0...steps).map { i in
+            let t = Float(i) / Float(steps)
+            return simd_mix(a, b, Vec2(repeating: t)) + across * bow * sin(t * .pi)
+        }
+    }
+
+    private func triangle() -> RetopoEngine {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        Fixtures.drawPath(engine, straight(Vec2(400, 420), Vec2(600, 420), bow: 20))
+        Fixtures.drawPath(engine, straight(Vec2(600, 420), Vec2(500, 600)))
+        Fixtures.drawPath(engine, straight(Vec2(500, 600), Vec2(400, 420)))
+        return engine
+    }
+
+    func testGoingBackOverALineLeavesNoSliver() throws {
+        let engine = triangle()
+        XCTAssertEqual(engine.mesh.faceCount, 1)
+        Fixtures.drawPath(engine, straight(Vec2(400, 420), Vec2(600, 420), bow: 24))
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.faceCount, 1, "no sliver between the two")
+        XCTAssertEqual(mesh.aliveFaces.first.map(mesh.cornerCount(of:)), 3)
+        XCTAssertTrue(mesh.aliveEdges.allSatisfy { !mesh.isWire($0) }, "nothing left over")
+    }
+
+    func testTwoLinesWellApartAreStillAShape() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        Fixtures.drawPath(engine, straight(Vec2(400, 500), Vec2(600, 500), bow: 40))
+        Fixtures.drawPath(engine, straight(Vec2(600, 500), Vec2(400, 500), bow: 40))
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.faceCount, 1, "an eye drawn in two strokes")
+        XCTAssertEqual(mesh.aliveFaces.first.map(mesh.cornerCount(of:)), 2)
+    }
+}
