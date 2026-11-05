@@ -16,6 +16,9 @@ public struct StrokePlanOptions {
     /// aren't ends, sharp corners or places it meets another line are only bends.
     public var camera: Camera?
     public var snapRadiusPoints: Float = 22
+    /// With mirror on, a pencil line that meets a line close to the middle meets it on the middle,
+    /// where there's one point for both sides rather than one each, side by side.
+    public var mirror: MirrorPlane?
 
     public init(snapRadius: Float, crossingTolerance: Float, projector: SurfaceProjector? = nil) {
         self.snapRadius = snapRadius
@@ -339,6 +342,14 @@ public enum StrokePlanner {
         for v in [a, b] {
             if let end = camera.project(mesh.position(v))?.screen, simd_length(end - here) <= 3 { return (.existing(v), mesh.position(v)) }
         }
+        if let plane = options.mirror, abs(plane.signedDistance(point)) <= options.snapRadius {
+            let da = plane.signedDistance(mesh.position(a)), db = plane.signedDistance(mesh.position(b))
+            if da * db < 0 {
+                let middle = da / (da - db)
+                let position = plane.snap(simd_mix(mesh.position(a), mesh.position(b), Vec3(repeating: middle)))
+                return (.split(edge: e, t: middle, position: position), position)
+            }
+        }
         var position = point
         if let hit = options.projector?.closest(to: point, maxDistance: .greatestFiniteMagnitude) {
             position = hit.position + hit.normal * options.surfaceOffset
@@ -350,7 +361,7 @@ public enum StrokePlanner {
     private static func realPoint(near here: Vec2, radius: Float, normal: Vec3, position: Vec3, mesh: Mesh, options: StrokePlanOptions, camera: Camera) -> VertexID? {
         var best: VertexID?
         var bestDistance = radius
-        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
+        for v in mesh.aliveVertices where !mesh.isBendVertex(v) || (options.mirror != nil && mesh.mirrorPartner[Int(v)] == v) {
             let p = mesh.position(v)
             guard let there = camera.project(p)?.screen else { continue }
             let d = simd_length(there - here)

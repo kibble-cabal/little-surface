@@ -841,6 +841,8 @@ public final class RetopoEngine {
     // MARK: Pencil input
 
     public var minimumStrokeLength: Float { 8 }
+    private var strokeSide: Float = 0
+    private var strokeReachedMiddle = false
 
     public func pencilBegan(at screen: Vec2, pressure: Float = 1) {
         hoverElement = nil
@@ -854,6 +856,9 @@ public final class RetopoEngine {
             capture.add(screen: screen, pressure: pressure)
             gesture = .stroke(capture)
             inkPath = [screen]
+            strokeSide = 0
+            strokeReachedMiddle = false
+            noteSide(of: capture)
         case .drawEdges, .edgeLoop, .quadStrip, .quadPatch:
             guard let projector else {
                 if sources.isEmpty {
@@ -909,10 +914,12 @@ public final class RetopoEngine {
         case .idle, .tapOnly:
             break
         case .stroke(var capture):
+            if activeTool == .pencil, strokeReachedMiddle { break }
             capture.add(screen: screen, pressure: pressure)
+            noteSide(of: capture)
             gesture = .stroke(capture)
             inkPath = capture.screenPath
-            inkPrediction = predicted
+            inkPrediction = strokeReachedMiddle ? [] : predicted
             updateLiveMirrorOverlay(capture)
         case .select(var drag):
             updateSelectDrag(&drag, to: screen)
@@ -949,7 +956,7 @@ public final class RetopoEngine {
         case .tapOnly(let start):
             if activeTool == .face { faceToolTap(at: start) }
         case .stroke(var capture):
-            capture.add(screen: screen, pressure: pressure)
+            if activeTool != .pencil || !strokeReachedMiddle { capture.add(screen: screen, pressure: pressure) }
             inkPath = []
             finishStroke(capture, tapPoint: screen)
         case .select(let drag):
@@ -1174,6 +1181,15 @@ public final class RetopoEngine {
         let closeRadius = tools.stroke.closeRadiusPoints * scale
         tools.stroke.edgeLength = Self.bendSpacingPoints * scale
         var paths = runs.compactMap { StrokeProcessor.process(run: $0, settings: tools.stroke, projector: projector, closeRadius: closeRadius) }
+        if let plane = symmetry.activePlane {
+            var kept: [ProcessedPath] = []
+            for path in paths {
+                let (path, reachedMiddle) = keptToOneSide(path, plane: plane, reach: tools.stroke.snapRadiusPoints * scale)
+                kept.append(path)
+                if reachedMiddle { break }
+            }
+            paths = kept
+        }
         if paths.count == 1, paths[0].canClose, closesLoopsAutomatically {
             paths = [StrokeProcessor.closed(paths[0], spacing: tools.stroke.edgeLength, projector: projector)]
         }
@@ -1184,6 +1200,7 @@ public final class RetopoEngine {
         var options = strokeOptions(scale: scale)
         options.camera = camera
         options.snapRadiusPoints = tools.stroke.snapRadiusPoints
+        options.mirror = symmetry.activePlane
 
         let quadsBefore = mesh.aliveFaces.filter(mesh.isQuad).count
         let isLoop = paths.contains(where: \.isClosed)
@@ -1198,7 +1215,7 @@ public final class RetopoEngine {
                 met += result.nodeVertices
             }
             guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
-            try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector)
+            try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector, mirrored: symmetry.isEnabled)
             selection.clear()
         }
         clearMessage()
@@ -1284,6 +1301,72 @@ public final class RetopoEngine {
     }
 
     /// A tap picks what's under it: a whole line, or a quad, with further quads adding to the pick.
+    /// With mirror on, a pencil line belongs to the side it starts on, so it stops once it gets past the middle.
+    private func noteSide(of capture: StrokeCapture) {
+        guard let plane = symmetry.activePlane, let point = capture.runs.last?.last else { return }
+        let d = plane.signedDistance(point.position)
+        if strokeSide == 0 {
+            if abs(d) > tools.stroke.snapRadiusPoints * camera.worldPerPoint(at: point.position) { strokeSide = d < 0 ? -1 : 1 }
+        } else if d * strokeSide < 0 {
+            strokeReachedMiddle = true
+        }
+    }
+
+    /// Keeps a line to one side of the mirror, up to the middle and no further. An end that stops short
+    /// of the middle reaches it, unless it's already beside a point of its own to land on.
+    private func keptToOneSide(_ path: ProcessedPath, plane: MirrorPlane, reach: Float) -> (path: ProcessedPath, reachedMiddle: Bool) {
+        let points = path.points
+        let distances = points.map { plane.signedDistance($0.position) }
+        guard let first = distances.first(where: { abs($0) > reach }) else { return (path, false) }
+        let side: Float = first < 0 ? -1 : 1
+        func onPlane(_ i: Int) -> StrokePoint {
+            let t = distances[i - 1] / (distances[i - 1] - distances[i])
+            var crossing = points[i - 1]
+            crossing.position = plane.snap(simd_mix(points[i - 1].position, points[i].position, Vec3(repeating: t)))
+            crossing.normal = GeometryMath.safeNormalize(simd_mix(points[i - 1].normal, points[i].normal, Vec3(repeating: t)), fallback: points[i].normal)
+            return crossing
+        }
+        var kept: [StrokePoint] = []
+        var crossed = false
+        for i in points.indices {
+            if distances[i] * side >= 0 {
+                if kept.isEmpty, i > 0 { kept.append(onPlane(i)) }
+                kept.append(points[i])
+            } else if !kept.isEmpty {
+                kept.append(onPlane(i))
+                crossed = true
+                break
+            }
+        }
+        var out = path
+        if crossed || kept.count != points.count {
+            out.canClose = false
+            out.isClosed = false
+        }
+        guard !out.canClose else { return (out, crossed) }
+        func reaches(_ p: StrokePoint) -> Bool {
+            let d = abs(plane.signedDistance(p.position))
+            guard d > 0, d <= reach else { return false }
+            return !mesh.aliveVertices.contains { !mesh.isBendVertex($0) && simd_length(mesh.position($0) - p.position) <= reach }
+        }
+        func extended(_ p: StrokePoint) -> StrokePoint {
+            var end = p
+            end.position = plane.snap(p.position)
+            return end
+        }
+        if let start = kept.first, reaches(start) { kept.insert(extended(start), at: 0) }
+        if !crossed, let end = kept.last, reaches(end) { kept.append(extended(end)) }
+        // Points right beside the one on the middle would count as on it too, and make two.
+        let beside = symmetry.centerTolerance * 2
+        func isBeside(_ p: StrokePoint) -> Bool { abs(plane.signedDistance(p.position)) <= beside }
+        if plane.signedDistance(kept[0].position) == 0 { while kept.count > 2, isBeside(kept[1]) { kept.remove(at: 1) } }
+        if plane.signedDistance(kept[kept.count - 1].position) == 0 { while kept.count > 2, isBeside(kept[kept.count - 2]) { kept.remove(at: kept.count - 2) } }
+        out.points = kept
+        out.length = StrokeProcessor.polylineLength(kept)
+        out.endGap = kept.count > 1 ? simd_length(kept[0].position - kept[kept.count - 1].position) : 0
+        return (out, crossed)
+    }
+
     private func pencilTap(at screen: Vec2) {
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
         picker.ignoresOcclusion = ignoresOcclusionForPicking

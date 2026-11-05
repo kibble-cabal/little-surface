@@ -5,7 +5,7 @@ import simd
 /// corners it has, until more lines divide it.
 public enum DrawnFaces {
     /// After a stroke: `result` is what it added, and `met` holds the points it used that were already there.
-    static func update(after result: PlanResult, met: [VertexID], in mesh: inout Mesh, projector: SurfaceProjector?) throws {
+    static func update(after result: PlanResult, met: [VertexID], in mesh: inout Mesh, projector: SurfaceProjector?, mirrored: Bool) throws {
         mesh.settleBends()
 
         // A line reaches as far as the lines it joins, so two strokes can cut a face between them.
@@ -45,7 +45,7 @@ public enum DrawnFaces {
         for loop in taken where mesh.findFace(withVertices: loop) == nil && mesh.canAddFace(loop) && !added.contains(where: { encloses(loop, $0, in: mesh) }) {
             try mesh.addFace(loop, autoOrient: false)
         }
-        mesh.straightenQuads()
+        mesh.straightenQuads(mirrored: mirrored)
     }
 
     private static func encloses(_ loop: [VertexID], _ face: FaceID, in mesh: Mesh) -> Bool {

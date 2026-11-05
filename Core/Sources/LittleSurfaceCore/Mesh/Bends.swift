@@ -60,8 +60,21 @@ public extension Mesh {
     }
 
     /// Quads have straight sides. The curve they were drawn with has done its job.
-    mutating func straightenQuads() {
-        let bends = Set(aliveFaces.filter(isQuad).flatMap { loop($0).filter { isBend[Int($0)] } })
+    /// Under a mirror the two sides go straight together or not at all, so they can't drift apart.
+    mutating func straightenQuads(mirrored: Bool) {
+        var quads = aliveFaces.filter(isQuad)
+        var bends = Set(quads.flatMap { loop($0).filter { isBend[Int($0)] } })
+        while mirrored {
+            let waiting = quads.filter { f in
+                loop(f).contains { v in
+                    let partner = mirrorPartner[Int(v)]
+                    return isBend[Int(v)] && partner >= 0 && partner != v && !bends.contains(VertexID(partner))
+                }
+            }
+            guard !waiting.isEmpty else { break }
+            quads.removeAll(where: waiting.contains)
+            bends = Set(quads.flatMap { loop($0).filter { isBend[Int($0)] } })
+        }
         for v in bends where isVertexAlive(v) { try? dissolveVertex(v) }
     }
 
