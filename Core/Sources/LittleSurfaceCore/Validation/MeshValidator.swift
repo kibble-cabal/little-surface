@@ -23,10 +23,12 @@ public struct MeshStatistics: Equatable {
         for f in mesh.aliveFaces {
             let corners = mesh.cornerCount(of: f)
             triangleEquivalent += max(corners, 3) - 2
-            switch corners {
-            case 3: triangles += 1
-            case 4: quads += 1
-            default: ngons += 1
+            if mesh.isQuad(f) {
+                quads += 1
+            } else if corners == 3 {
+                triangles += 1
+            } else {
+                ngons += 1
             }
         }
         components = MeshValidator.connectedComponents(mesh).count
