@@ -74,6 +74,19 @@ final class PickingTests: XCTestCase {
         XCTAssertEqual(engine.history.undoStack.count, steps)
     }
 
+    func testAPickLetGoSomeOtherWayTakesNoExtraUndo() {
+        let engine = pencil()
+        drawQuad(engine)
+        let drawnLines = engine.mesh.edgeCount
+        Fixtures.drawPath(engine, straight(Vec2(420, 300), Vec2(580, 300)))
+        tap(engine, at: Vec2(500, 500))
+        engine.clearPick()
+        engine.undo()
+        XCTAssertEqual(engine.mesh.edgeCount, drawnLines, "the pick had nothing to take back, so this undoes the line")
+        engine.redo()
+        XCTAssertGreaterThan(engine.mesh.edgeCount, drawnLines)
+    }
+
     func testPickingDoesNotReachTheTimelapse() {
         let engine = pencil()
         drawQuad(engine)

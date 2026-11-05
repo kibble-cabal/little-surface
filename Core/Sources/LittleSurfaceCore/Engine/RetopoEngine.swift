@@ -737,8 +737,13 @@ public final class RetopoEngine {
     /// Picking is a step of its own, so undo can go back through it. Nothing about the drawing changes,
     /// so it isn't an edit and doesn't reach the timelapse.
     private func recordPick(from before: EditSnapshot) {
-        guard selection != before.selection || pickedMark != before.pickedMark else { return }
+        guard !showsSamePick(as: before) else { return }
         history.record(before: before, label: Self.pickLabel)
+    }
+
+    private func showsSamePick(as snapshot: EditSnapshot) -> Bool {
+        selection.vertices == snapshot.selection.vertices && selection.edges == snapshot.selection.edges
+            && selection.faces == snapshot.selection.faces && pickedMark == snapshot.pickedMark
     }
 
     private func restorePick(_ snapshot: EditSnapshot) {
@@ -783,7 +788,13 @@ public final class RetopoEngine {
         cancelTransientState()
         let isPick = history.undoLabel == Self.pickLabel
         guard let snapshot = history.undo(current: currentSnapshot) else { return }
-        if isPick { return restorePick(snapshot) }
+        if isPick {
+            // A pick already let go some other way has nothing to show, so it shouldn't take a press.
+            let showsNothing = showsSamePick(as: snapshot)
+            restorePick(snapshot)
+            if showsNothing { undo() }
+            return
+        }
         restore(snapshot)
         pickAgain(from: snapshot)
         say("Undid \(history.redoLabel ?? "edit")")
@@ -794,7 +805,12 @@ public final class RetopoEngine {
         cancelTransientState()
         let isPick = history.redoLabel == Self.pickLabel
         guard let snapshot = history.redo(current: currentSnapshot) else { return }
-        if isPick { return restorePick(snapshot) }
+        if isPick {
+            let showsNothing = showsSamePick(as: snapshot)
+            restorePick(snapshot)
+            if showsNothing { redo() }
+            return
+        }
         restore(snapshot)
         pickAgain(from: snapshot)
         say("Redid \(history.undoLabel ?? "edit")")
