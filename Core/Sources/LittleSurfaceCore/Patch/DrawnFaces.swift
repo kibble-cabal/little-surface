@@ -5,9 +5,10 @@ import simd
 /// corners it has, until more lines divide it.
 public enum DrawnFaces {
     /// After a stroke: `result` is what it added, and `met` holds the points it used that were already
-    /// there. `around` is the edges of any faces already taken out. Returns the sides that went straight.
+    /// there. `around` is the edges of any faces already taken out. `sliverWidth` is how far apart two
+    /// lines can be and still read as one line drawn twice. Returns the sides that went straight.
     @discardableResult
-    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws -> [StraightenedSide] {
+    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], sliverWidth: Float = 0, in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws -> [StraightenedSide] {
         mesh.settleBends()
         absorbRetracedLines(along: result.edges, in: &mesh, symmetry: symmetry)
 
@@ -39,6 +40,9 @@ public enum DrawnFaces {
         for outline in EnclosedRegions.regions(bordering: border, in: mesh, projector: projector) where mesh.canAddFace(outline.vertices) {
             added.append(try mesh.addFace(outline.vertices, autoOrient: false))
         }
+        // Before anything else is judged by them, since a sliver isn't really a shape of its own.
+        mergeRetracedLines(in: &mesh, stroke: Set(result.edges), width: sliverWidth, symmetry: symmetry)
+        added.removeAll { !mesh.isFaceAlive($0) }
         // A shape drawn entirely inside another leaves a hole that one face can't have, so the outer
         // one waits for lines that join them.
         for f in mesh.aliveFaces where !added.contains(f) && added.contains(where: { encloses(mesh.loop(f), $0, in: mesh) }) {
@@ -48,7 +52,6 @@ public enum DrawnFaces {
         for loop in taken where mesh.findFace(withVertices: loop) == nil && mesh.canAddFace(loop) && !added.contains(where: { encloses(loop, $0, in: mesh) }) {
             try mesh.addFace(loop, autoOrient: false)
         }
-        mergeRetracedLines(in: &mesh)
         let straightened = mesh.straightenQuads(mirrored: symmetry.isEnabled)
         try layLinesOnModel(in: &mesh, projector: projector, symmetry: symmetry)
         return straightened
@@ -154,28 +157,64 @@ public enum DrawnFaces {
     }
 
     /// Going back over a line is how a line gets drawn on paper. It would otherwise leave a sliver of a
-    /// shape between the two, so the longer of them stands for both.
-    private static func mergeRetracedLines(in mesh: inout Mesh) {
-        for f in mesh.aliveFaces where mesh.isFaceAlive(f) && mesh.cornerCount(of: f) == 2 {
-            var loop = mesh.loop(f)
-            guard let first = loop.firstIndex(where: { !mesh.isBendVertex($0) }) else { continue }
+    /// shape between the two, so one of them stands for both: the new stroke if only one of them is, or
+    /// else the longer. A stroke out and back along itself closes on a single point, and is one line too.
+    static func mergeRetracedLines(in mesh: inout Mesh, stroke: Set<EdgeID> = [], width: Float = 0, symmetry: SymmetrySettings = SymmetrySettings()) {
+        let drawn = symmetry.activePlane != nil ? Symmetry.expanded(edges: stroke.filter(mesh.isEdgeAlive), in: mesh) : stroke
+        func merged(_ f: FaceID, in work: inout Mesh) -> Bool {
+            func isNew(_ side: [VertexID]) -> Bool {
+                zip(side, side.dropFirst()).contains { work.edge(between: $0, $1).map(drawn.contains) ?? false }
+            }
+            var loop = work.loop(f)
+            guard (1...2).contains(work.cornerCount(of: f)), let first = loop.firstIndex(where: { !work.isBendVertex($0) }) else { return false }
             loop = Array(loop[first...] + loop[..<first])
-            guard let second = loop.dropFirst().firstIndex(where: { !mesh.isBendVertex($0) }) else { continue }
+            guard let second = loop.dropFirst().firstIndex(where: { !work.isBendVertex($0) }) ?? farthestAround(loop, in: work) else { return false }
             let sideA = Array(loop[...second])
             let sideB = Array(loop[second...]) + [loop[0]]
-            guard isThin(sideA, sideB, in: mesh) else { continue }
-            let (kept, gone) = length(of: sideA, in: mesh) >= length(of: sideB, in: mesh) ? (sideA, sideB) : (sideB, sideA)
-            var work = mesh
-            if merge(gone, into: kept, removing: f, in: &work) { mesh = work }
+            guard isThin(sideA, sideB, width: width, in: work) else { return false }
+            let newA = isNew(sideA), newB = isNew(sideB)
+            let keepsA = newA != newB ? newA : length(of: sideA, in: work) >= length(of: sideB, in: work)
+            let (kept, gone) = keepsA ? (sideA, sideB) : (sideB, sideA)
+            return merge(gone, into: kept, removing: f, in: &work)
         }
+        // Merging one sliver into the shape beside it can leave that shape a sliver too.
+        var changed = true
+        while changed {
+            changed = false
+            for f in mesh.aliveFaces where mesh.isFaceAlive(f) {
+                var work = mesh
+                guard (1...2).contains(mesh.cornerCount(of: f)) else { continue }
+                // The two sides go together or not at all, so they can't drift apart.
+                let image = symmetry.activePlane == nil ? nil : mirrorImage(of: f, in: mesh)
+                guard merged(f, in: &work) else { continue }
+                if let image, image != f, !work.isFaceAlive(image) || !merged(image, in: &work) { continue }
+                mesh = work
+                changed = true
+            }
+        }
+        mesh.settleBends()
+    }
+
+    private static func mirrorImage(of f: FaceID, in mesh: Mesh) -> FaceID? {
+        let image = mesh.loop(f).map { mesh.mirrorPartner[Int($0)] }
+        guard image.allSatisfy({ $0 >= 0 }) else { return nil }
+        return mesh.findFace(withVertices: image.map { VertexID($0) })
+    }
+
+    /// The point farthest from a loop's only real point, to divide it at. It's the same point whichever
+    /// way the loop runs, so a mirrored loop divides the same way.
+    private static func farthestAround(_ loop: [VertexID], in mesh: Mesh) -> Int? {
+        guard loop.count >= 3 else { return nil }
+        let start = mesh.position(loop[0])
+        return (1..<loop.count).max { simd_length(mesh.position(loop[$0]) - start) < simd_length(mesh.position(loop[$1]) - start) }
     }
 
     private static func length(of side: [VertexID], in mesh: Mesh) -> Float {
         zip(side, side.dropFirst()).reduce(0) { $0 + simd_length(mesh.position($1.1) - mesh.position($1.0)) }
     }
 
-    private static func isThin(_ a: [VertexID], _ b: [VertexID], in mesh: Mesh) -> Bool {
-        let limit = simd_length(mesh.position(a[0]) - mesh.position(a[a.count - 1])) * retracedLineLimit
+    private static func isThin(_ a: [VertexID], _ b: [VertexID], width: Float, in mesh: Mesh) -> Bool {
+        let limit = max(simd_length(mesh.position(a[0]) - mesh.position(a[a.count - 1])) * retracedLineLimit, width)
         func reach(from points: [VertexID], to line: [VertexID]) -> Float {
             points.reduce(0) { farthest, v in
                 let p = mesh.position(v)

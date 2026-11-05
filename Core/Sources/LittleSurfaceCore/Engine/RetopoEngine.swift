@@ -1259,6 +1259,9 @@ public final class RetopoEngine {
 
     /// How finely a pencil line follows the stroke, on screen. Only its real points are topology.
     static let bendSpacingPoints: Float = 8
+    /// How far apart a stroke and a line can be and still read as going over that line, about what a
+    /// hand wanders by.
+    static let sliverWidthPoints: Float = 20
 
     /// The pencil mark a tap picked, by its place in `sketches`.
     public private(set) var pickedMark: Int?
@@ -1382,7 +1385,7 @@ public final class RetopoEngine {
                 met += result.nodeVertices
             }
             guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
-            straightened = try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, in: &mesh, projector: projector, symmetry: symmetry)
+            straightened = try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, sliverWidth: Self.sliverWidthPoints * scale, in: &mesh, projector: projector, symmetry: symmetry)
             selection.clear()
         }
         clearMessage()

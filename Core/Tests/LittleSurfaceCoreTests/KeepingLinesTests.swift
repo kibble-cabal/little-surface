@@ -401,6 +401,71 @@ final class RetracedLineTests: XCTestCase {
         XCTAssertTrue(mesh.aliveEdges.allSatisfy { !mesh.isWire($0) }, "nothing left over")
     }
 
+    func testGoingOverPartOfALineRedrawsThatPart() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        Fixtures.drawPath(engine, straight(Vec2(380, 500), Vec2(620, 500), bow: 0))
+        Fixtures.drawPath(engine, straight(Vec2(450, 500), Vec2(550, 500), bow: 9))
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.faceCount, 0, "no sliver between the stroke and the line")
+        XCTAssertEqual(mesh.aliveVertices.filter { mesh.edgesOf($0).count == 1 }.count, 2, "still one line")
+        XCTAssertTrue(mesh.aliveVertices.allSatisfy { mesh.edgesOf($0).count <= 2 })
+        // The new stroke is what stayed, so the line now bows out where it was drawn.
+        let screens = mesh.aliveVertices.compactMap { engine.camera.project(mesh.position($0))?.screen }
+        let highest = screens.map { abs($0.y - 500) }.max() ?? 0
+        XCTAssertEqual(highest, 9, accuracy: 3)
+    }
+
+    func testAStrokeOutAndBackAlongItselfIsOneLine() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        var path = straight(Vec2(450, 500), Vec2(560, 500))
+        path += straight(Vec2(560, 504), Vec2(452, 508))
+        Fixtures.drawPath(engine, path)
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.faceCount, 0, "not a closed shape")
+        XCTAssertGreaterThan(mesh.edgeCount, 0)
+    }
+
+    func testGoingOverPartOfALineWithMirrorOnStaysMatched() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        engine.setSymmetryEnabled(true)
+        Fixtures.drawPath(engine, straight(Vec2(260, 500), Vec2(440, 500), bow: 0))
+        Fixtures.drawPath(engine, straight(Vec2(330, 500), Vec2(410, 500), bow: 9))
+        let mesh = engine.mesh
+        XCTAssertEqual(mesh.faceCount, 0)
+        XCTAssertEqual(mesh.aliveVertices.filter { mesh.edgesOf($0).count == 1 }.count, 4, "one line each side")
+        let plane = MirrorPlane(axis: .x, offset: 0)
+        for v in mesh.aliveVertices {
+            let partner = mesh.mirrorPartner[Int(v)]
+            XCTAssertGreaterThanOrEqual(partner, 0)
+            guard partner >= 0 else { continue }
+            XCTAssertTrue(mesh.isVertexAlive(VertexID(partner)))
+            XCTAssertLessThan(simd_length(plane.reflect(mesh.position(v)) - mesh.position(VertexID(partner))), 0.005)
+        }
+    }
+
+    func testAStrokeFromNearALinesEndWithMirrorOnStaysMatched() throws {
+        let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
+        engine.setTool(.pencil)
+        engine.setSymmetryEnabled(true)
+        Fixtures.drawPath(engine, straight(Vec2(300, 500), Vec2(440, 500), bow: 0))
+        Fixtures.drawPath(engine, straight(Vec2(330, 500), Vec2(410, 500), bow: 9))
+        let mesh = engine.mesh
+        let plane = MirrorPlane(axis: .x, offset: 0)
+        XCTAssertEqual(mesh.faceCount % 2, 0, "whatever it makes, it makes on both sides")
+        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
+            let partner = mesh.mirrorPartner[Int(v)]
+            XCTAssertGreaterThanOrEqual(partner, 0)
+            guard partner >= 0, mesh.isVertexAlive(VertexID(partner)) else {
+                XCTFail("A point whose mirror image has gone")
+                continue
+            }
+            XCTAssertLessThan(simd_length(plane.reflect(mesh.position(v)) - mesh.position(VertexID(partner))), 0.005)
+        }
+    }
+
     func testANarrowShapeDrawnOnPurposeStays() throws {
         let engine = Fixtures.engine(with: Fixtures.sphere(), camera: Fixtures.frontCamera())
         engine.setTool(.pencil)
