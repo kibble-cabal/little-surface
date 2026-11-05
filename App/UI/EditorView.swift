@@ -60,6 +60,8 @@ struct EditorView: View {
             .toolbar { EditorToolbar(model: model, importsModel: $importsModel, importsAsMesh: $importsAsMesh) }
             .navigationBarTitleDisplayMode(.inline)
         }
+        // On top of the bar, which swallows taps along its bottom edge rather than passing them down.
+        .overlay { ToolButtonReach(model: model) }
         .tint(.primary)
         .background(Theme.page)
         .fileImporter(isPresented: $importsModel, allowedContentTypes: [.objModel, .glbModel, .gltfModel, .data]) { result in
@@ -121,6 +123,34 @@ private struct BusyBanner: View {
 }
 
 // MARK: Navigation bar
+
+/// The bar stops taking taps just under its icons, which is easy to miss with a Pencil. This carries on
+/// below each tool button, invisibly, so a tap that lands a little low still counts.
+private struct ToolButtonReach: View {
+    var model: EditorModel
+
+    var body: some View {
+        VStack {
+            HStack(spacing: 0) {
+                ForEach([Tool.pencil, .relaxBrush, .moveBrush, .erase], id: \.self) { tool in
+                    Button { model.select(tool: tool) } label: {
+                        Color.clear
+                            .frame(width: Theme.touchTarget, height: Self.depth)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, Self.top)
+            Spacer(minLength: 0)
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// Starts level with the icons, above where the bar stops taking taps, and ends 30pt or so below them.
+    private static let top: CGFloat = 30
+    private static let depth: CGFloat = 42
+}
 
 private struct EditorToolbar: ToolbarContent {
     let model: EditorModel
