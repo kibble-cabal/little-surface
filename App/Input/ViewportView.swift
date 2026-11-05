@@ -28,6 +28,12 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
     private var navigationLocked = false
     private var lastCentroid = CGPoint.zero
     private var lastSpread: CGFloat = 0
+    private var lastFingerAngle: CGFloat = 0
+    /// How far two fingers have turned so far, and whether that's enough to count as meaning it.
+    private var fingerTurn: CGFloat = 0
+    private var isTwisting = false
+    /// A pinch or pan always wanders a bit, so the view stays level until the fingers turn this far.
+    private let twistThreshold: CGFloat = 12 * .pi / 180
 
     private var inertia: CADisplayLink?
     private var orbitVelocity = Vec2(repeating: 0)
@@ -51,7 +57,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hovered(_:))))
         isAccessibilityElement = true
         accessibilityLabel = "3D viewport"
-        accessibilityHint = "Draw with Apple Pencil. Drag one finger to turn the model, two fingers to pan and pinch to zoom."
+        accessibilityHint = "Draw with Apple Pencil. Drag one finger to turn the model, two fingers to pan, pinch to zoom and twist to rotate."
         accessibilityTraits = .allowsDirectInteraction
         accessibilityIdentifier = "viewport"
     }
@@ -154,6 +160,9 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
             navigationLocked = true
             lastCentroid = centroid()
             lastSpread = spread()
+            lastFingerAngle = fingerAngle()
+            fingerTurn = 0
+            isTwisting = false
             model?.gestureBegan()
         }
     }
@@ -206,6 +215,16 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         if lastSpread > 1, s > 1 {
             engine.camera.zoom(factor: Float(s / lastSpread), focus: Vec2(Float(c.x), Float(c.y)))
         }
+        var turn = fingerAngle() - lastFingerAngle
+        if turn > .pi { turn -= 2 * .pi }
+        if turn < -.pi { turn += 2 * .pi }
+        lastFingerAngle += turn
+        fingerTurn += turn
+        if abs(fingerTurn) > twistThreshold, s > 1 {
+            isTwisting = true
+            multiTouchMoved = true
+        }
+        if isTwisting { engine.camera.twist(by: Float(turn)) }
         lastCentroid = c
         lastSpread = s
         engine.cameraChanged()
@@ -305,6 +324,12 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         guard navTouches.count >= 2 else { return 0 }
         let a = navTouches[0].location(in: self), b = navTouches[1].location(in: self)
         return hypot(a.x - b.x, a.y - b.y)
+    }
+
+    private func fingerAngle() -> CGFloat {
+        guard navTouches.count >= 2 else { return 0 }
+        let a = navTouches[0].location(in: self), b = navTouches[1].location(in: self)
+        return atan2(b.y - a.y, b.x - a.x)
     }
 
     // MARK: Orbit inertia

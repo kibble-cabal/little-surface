@@ -137,7 +137,7 @@ public struct Camera: Equatable {
 
     // MARK: Navigation
 
-    /// Rotates about the camera's own axes: drag right turns the model right, drag down tips it toward you.
+    /// Keeps the model upright: drag right turns it about its own up, drag down tips it toward you.
     /// Turns to look straight at a surface with this normal, keeping the model's up the right way.
     public mutating func look(along normal: Vec3) {
         guard simd_length_squared(normal) > 0 else { return }
@@ -156,9 +156,15 @@ public struct Camera: Equatable {
 
     public mutating func orbit(deltaPoints: Vec2) {
         let speed: Float = 2 * .pi / max(viewSize.y, 1) * 0.6
-        let yaw = simd_quatf(angle: -deltaPoints.x * speed, axis: up)
+        // Upside down, turning the other way still follows the finger.
+        let yaw = simd_quatf(angle: -deltaPoints.x * speed * (up.y < 0 ? -1 : 1), axis: Vec3(0, 1, 0))
         let pitch = simd_quatf(angle: -deltaPoints.y * speed, axis: right)
         orientation = simd_normalize(yaw * pitch * orientation)
+    }
+
+    /// Turns the picture on screen: positive is clockwise.
+    public mutating func twist(by angle: Float) {
+        orientation = simd_normalize(orientation * simd_quatf(angle: angle, axis: Vec3(0, 0, 1)))
     }
 
     public mutating func pan(deltaPoints: Vec2) {
