@@ -202,20 +202,37 @@ final class BrushTests: XCTestCase {
         XCTAssertEqual(engine.mesh.faceCount, faces)
     }
 
-    func testPressureScalesEffect() throws {
+    func testPressureScalesSmoothing() throws {
         func moved(pressure: Float) -> Float {
+            let engine = gridEngine()
+            engine.tools.brush.radiusPoints = 40
+            let center = engine.mesh.aliveVertices.first { simd_length(engine.mesh.position($0)) < 0.01 }!
+            engine.setTool(.moveBrush)
+            Fixtures.draw(engine, from: Vec2(500, 500), to: Vec2(530, 500), steps: 10)
+            let before = engine.mesh.position(center)
+            engine.setTool(.relaxBrush)
+            engine.tools.brush.usesPressure = true
+            let there = engine.camera.project(before)!.screen
+            engine.pencilBegan(at: there, pressure: pressure)
+            engine.pencilEnded(at: there, pressure: pressure)
+            return simd_length(engine.mesh.position(center) - before)
+        }
+        XCTAssertGreaterThan(moved(pressure: 1), moved(pressure: 0.2))
+    }
+
+    func testTheMoveBrushKeepsUpWithThePencil() throws {
+        for pressure: Float in [1, 0.2] {
             let engine = gridEngine()
             engine.setTool(.moveBrush)
             engine.tools.brush.radiusPoints = 40
-            engine.tools.brush.usesPressure = true
             let center = engine.mesh.aliveVertices.first { simd_length(engine.mesh.position($0)) < 0.01 }!
             let before = engine.mesh.position(center)
             engine.pencilBegan(at: Vec2(500, 500), pressure: pressure)
             for i in 1...10 { engine.pencilMoved(to: Vec2(500 + Float(i) * 4, 500), pressure: pressure) }
             engine.pencilEnded(at: Vec2(540, 500), pressure: pressure)
-            return simd_length(engine.mesh.position(center) - before)
+            let drag = 40 * engine.camera.worldPerPoint(at: before)
+            XCTAssertEqual(simd_length(engine.mesh.position(center) - before), drag, accuracy: drag * 0.2)
         }
-        XCTAssertGreaterThan(moved(pressure: 1), moved(pressure: 0.2))
     }
 }
 

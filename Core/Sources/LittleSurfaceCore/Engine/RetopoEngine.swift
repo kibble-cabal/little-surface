@@ -2100,7 +2100,8 @@ public final class RetopoEngine {
         }
         let settings = tools.brush
         let worldRadius = settings.radiusPoints * camera.worldPerPoint(at: hit.position)
-        let strength = settings.strength * (settings.usesPressure ? simd_clamp(pressure, 0.1, 1) : 1)
+        // Moving keeps up with the Pencil, so whatever's under it goes where it's put.
+        let strength = activeTool == .moveBrush ? 1 : settings.strength * (settings.usesPressure ? simd_clamp(pressure, 0.1, 1) : 1)
         let stamp = BrushStamp(center: hit.position, worldRadius: worldRadius, strength: strength, normal: hit.normal)
         if activeTool == .relaxBrush {
             Brushes.relax(&mesh, stamp: stamp, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)

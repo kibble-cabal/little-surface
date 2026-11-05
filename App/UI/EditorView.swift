@@ -144,6 +144,7 @@ private struct EditorToolbar: ToolbarContent {
             HStack(spacing: 18) {
                 toolButton(.pencil, label: "Draw", symbol: "pencil.tip")
                 toolButton(.relaxBrush, label: "Smooth", symbol: "wind")
+                toolButton(.moveBrush, label: "Move", symbol: "hand.point.up.left")
                 toolButton(.erase, label: "Erase", symbol: "eraser")
             }
             .labelStyle(.iconOnly)
