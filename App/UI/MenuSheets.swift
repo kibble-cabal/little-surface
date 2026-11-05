@@ -70,7 +70,7 @@ struct ExportSheet: View {
                 model.export(format: format, options: options, name: name.isEmpty ? model.engine.name : name)
                 isPresented = false
             }
-            .disabled(stats.faces == 0 && stats.edges == 0 && !includesSource)
+            .disabled(stats.faces == 0 && !includesSource)
             .accessibilityIdentifier("Export Confirm")
             Button("Make Timelapse…") {
                 model.exportTimelapse()

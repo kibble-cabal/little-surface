@@ -554,8 +554,8 @@ final class EditorModel {
         Task.detached(priority: .userInitiated) { [weak self] in
             let data: Data
             switch format {
-            case .obj: data = OBJExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: snapshot.sources, options: options)
-            case .glb: data = GLBExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: snapshot.sources, options: options)
+            case .obj: data = OBJExporter.export(mesh: snapshot.mesh.forExport(), name: name, sources: snapshot.sources, options: options)
+            case .glb: data = GLBExporter.export(mesh: snapshot.mesh.forExport(), name: name, sources: snapshot.sources, options: options)
             }
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Exports", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -665,7 +665,7 @@ final class EditorModel {
         let name = engine.name
         linkStatus = "Getting the mesh ready…"
         Task.detached(priority: .userInitiated) { [weak self] in
-            let data = OBJExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: [], options: ExportOptions())
+            let data = OBJExporter.export(mesh: snapshot.mesh.forExport(), name: name, sources: [], options: ExportOptions())
             await MainActor.run {
                 self?.outgoingMesh = (name, data, snapshot.mesh.faceCount)
                 self?.linkStatus = "Waiting for Blender to collect it. Check Watch for Meshes is on there."
@@ -681,10 +681,10 @@ final class EditorModel {
             linkStatus = "Connected to Blender."
             return .json(["project": engine.name, "vertices": stats.vertices, "faces": stats.faces, "sculpts": engine.sources.map(\.name)])
         case ("GET", "/mesh"):
-            guard !engine.mesh.isEmpty else { return LinkResponse(status: 204) }
+            guard engine.mesh.faceCount > 0 else { return LinkResponse(status: 204) }
             let snapshot = engine.makeSnapshot()
             let name = engine.name
-            let data = await Task.detached { OBJExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: [], options: ExportOptions()) }.value
+            let data = await Task.detached { OBJExporter.export(mesh: snapshot.mesh.forExport(), name: name, sources: [], options: ExportOptions()) }.value
             linkStatus = "Sent \(snapshot.mesh.faceCount.formatted()) faces to Blender."
             return Self.objResponse(data, name: name)
         case ("GET", "/outbox"):

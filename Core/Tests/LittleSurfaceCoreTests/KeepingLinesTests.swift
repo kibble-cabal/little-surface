@@ -303,4 +303,34 @@ final class KeepingLinesTests: XCTestCase {
         tapShape(engine, at: Vec2(500, 575))
         XCTAssertEqual(engine.pickNote, "4 points, but a side curves too far to go straight")
     }
+
+    // MARK: What's exported
+
+    func testUnusedLinesAreLeftOutOfExportsAndKeptInTheFile() throws {
+        let engine = pencil()
+        for y: Float in [420, 580] { Fixtures.drawPath(engine, straight(Vec2(390, y), Vec2(610, y))) }
+        for x: Float in [400, 600] { Fixtures.drawPath(engine, straight(Vec2(x, 410), Vec2(x, 590))) }
+        Fixtures.drawPath(engine, straight(Vec2(420, 300), Vec2(580, 300)))
+        XCTAssertGreaterThan(engine.mesh.bendCount, 0)
+
+        let out = engine.mesh.forExport()
+        XCTAssertEqual(out.faceCount, 1)
+        XCTAssertEqual(out.vertexCount, 4)
+        XCTAssertEqual(out.edgeCount, 4)
+        assertValid(out)
+        let obj = String(decoding: OBJExporter.export(mesh: out, name: "t", sources: [], options: ExportOptions()), as: UTF8.self)
+        XCTAssertFalse(obj.contains("\nl "))
+        XCTAssertEqual(obj.components(separatedBy: "\nf ").count - 1, 1)
+
+        let saved = try ProjectCodec.decode(try ProjectCodec.encode(engine.makeSnapshot()))
+        XCTAssertEqual(saved.mesh.edgeCount, engine.mesh.edgeCount, "Still in the project")
+    }
+
+    func testLinesWithNoFacesExportNothing() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(420, 300), Vec2(580, 300)))
+        let out = engine.mesh.forExport()
+        XCTAssertEqual(out.vertexCount, 0)
+        XCTAssertEqual(out.edgeCount, 0)
+    }
 }

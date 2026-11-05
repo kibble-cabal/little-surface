@@ -106,4 +106,13 @@ public extension Mesh {
         for v in aliveVertices where isBend[Int(v)] && !keep.contains(v) { try? out.dissolveVertex(v) }
         return out
     }
+
+    /// What goes in an exported file. Lines that aren't part of a face yet stay in the project, but
+    /// aren't part of the model until they are.
+    func forExport() -> Mesh {
+        var out = withoutBends()
+        out.deleteEdges(Set(out.aliveEdges.filter(out.isWire)))
+        out.deleteVertices(Set(out.aliveVertices.filter { out.edgesOf($0).isEmpty }))
+        return out
+    }
 }
