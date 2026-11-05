@@ -18,6 +18,8 @@ public struct TopologyPlan {
     public var faces: [[Int32]] = []
     /// Wire edges that this plan replaces. Vertices they leave with no edges go with them.
     public var removeEdges: [EdgeID] = []
+    /// Nodes that only shape a drawn line. Every other node this plan touches is a real point.
+    public var bends: Set<Int32> = []
     /// Plain-language notes for the artist, such as "stopped at existing faces".
     public var notes: [String] = []
 
@@ -173,6 +175,16 @@ public enum PlanApplier {
                     throw MeshError.invalid("The mirrored side of this would make the mesh non-manifold, so nothing was changed. Try turning symmetry off for this part.")
                 }
             }
+        }
+
+        for (i, node) in plan.nodes.enumerated() {
+            if plan.bends.contains(Int32(i)) {
+                work.setBend(nodeVertices[i], true)
+            } else if case .existing(let v) = node {
+                work.setBend(v, false)
+            }
+            let partner = work.mirrorPartner[Int(nodeVertices[i])]
+            if partner >= 0, partner != nodeVertices[i] { work.setBend(partner, work.isBend[Int(nodeVertices[i])]) }
         }
 
         let stranded = leftBehind.filter { work.isVertexAlive($0) && work.edgesOf($0).isEmpty && !nodeVertices.contains($0) }

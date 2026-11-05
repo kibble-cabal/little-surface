@@ -11,65 +11,209 @@ final class PencilTests: XCTestCase {
 
     /// A hand-drawn ring around a point, with its ends meeting.
     private func drawLoop(_ engine: RetopoEngine, center: Vec2, radius: Float) {
-        let points = (0...48).map { i -> Vec2 in
-            let a = Float(i) / 48 * 2 * .pi
-            return center + Vec2(cos(a), sin(a)) * radius
-        }
-        engine.pencilBegan(at: points[0])
-        for p in points.dropFirst() { engine.pencilMoved(to: p) }
-        engine.pencilEnded(at: points[points.count - 1])
+        Fixtures.drawPath(engine, Fixtures.circle(center: center, radius: radius, steps: 48))
     }
 
-    private func screenLength(_ engine: RetopoEngine, _ e: EdgeID) -> Float {
-        let (a, b) = engine.mesh.ends(e)
-        let pa = engine.mesh.position(a), pb = engine.mesh.position(b)
-        return simd_length(pa - pb) / engine.camera.worldPerPoint(at: (pa + pb) / 2)
+    private func straight(_ a: Vec2, _ b: Vec2, steps: Int = 24) -> [Vec2] {
+        (0...steps).map { simd_mix(a, b, Vec2(repeating: Float($0) / Float(steps))) }
     }
 
-    private func meanScreenLength(_ engine: RetopoEngine) -> Float {
-        let edges = engine.mesh.aliveEdges
-        return edges.reduce(0) { $0 + screenLength(engine, $1) } / Float(edges.count)
+    /// A box drawn in one stroke, starting partway along a side.
+    private func drawBox(_ engine: RetopoEngine, _ low: Vec2, _ high: Vec2) {
+        let corners = [Vec2(high.x, low.y), high, Vec2(low.x, high.y), low]
+        var path = straight(Vec2((low.x + high.x) / 2, low.y), corners[0], steps: 12)
+        for i in 0..<3 { path += straight(corners[i], corners[i + 1]).dropFirst() }
+        path += straight(corners[3], Vec2((low.x + high.x) / 2, low.y), steps: 12).dropFirst()
+        Fixtures.drawPath(engine, path)
     }
 
-    func testAQuadIsTheSameSizeOnScreenAtAnyZoom() {
+    private func drawFourLines(_ engine: RetopoEngine) {
+        Fixtures.draw(engine, from: Vec2(440, 340), to: Vec2(560, 340))
+        Fixtures.draw(engine, from: Vec2(560, 340), to: Vec2(560, 460))
+        Fixtures.draw(engine, from: Vec2(560, 460), to: Vec2(440, 460))
+        Fixtures.draw(engine, from: Vec2(440, 460), to: Vec2(440, 340))
+    }
+
+    private func checked(_ engine: RetopoEngine, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertNil(engine.mesh.firstInvariantViolation(), file: file, line: line)
+    }
+
+    // MARK: Points
+
+    func testALineHasAPointAtEachEndAndKeepsItsCurve() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400), bend: Vec2(0, 40))
+        XCTAssertEqual(engine.statistics.vertices, 2)
+        XCTAssertEqual(engine.statistics.edges, 1)
+        XCTAssertGreaterThan(engine.mesh.bendCount, 5, "the curve is still there")
+        checked(engine)
+    }
+
+    func testBendsAreTheSameOnScreenAtAnyZoom() {
         let far = pencil()
         Fixtures.draw(far, from: Vec2(420, 400), to: Vec2(580, 400))
-        XCTAssertEqual(meanScreenLength(far), RetopoEngine.quadSizePoints, accuracy: 5)
-
         let near = pencil()
         near.camera.distance *= 0.6
         Fixtures.draw(near, from: Vec2(420, 400), to: Vec2(580, 400))
-        XCTAssertEqual(meanScreenLength(near), RetopoEngine.quadSizePoints, accuracy: 5)
-        XCTAssertLessThan(near.mesh.edgeLength(near.mesh.aliveEdges[0]), far.mesh.edgeLength(far.mesh.aliveEdges[0]), "closer means finer")
+        XCTAssertEqual(near.mesh.edgeCount, far.mesh.edgeCount, accuracy: 3)
+        XCTAssertEqual(near.statistics.vertices, far.statistics.vertices)
     }
 
-    func testALineThatMeetsTopologyMatchesItsSize() {
+    func testACrossingAddsAPointToBothLines() {
         let engine = pencil()
         Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
-        let first = engine.mesh.averageEdgeLength
-        engine.camera.distance *= 0.6
-        guard let end = engine.camera.project(engine.mesh.position(engine.mesh.aliveVertices[0]))?.screen else { return XCTFail("off screen") }
-        Fixtures.draw(engine, from: end, to: end + Vec2(0, 120))
-        XCTAssertEqual(engine.mesh.averageEdgeLength, first, accuracy: first * 0.25)
+        Fixtures.draw(engine, from: Vec2(500, 320), to: Vec2(500, 480))
+        XCTAssertEqual(engine.statistics.vertices, 5)
+        XCTAssertEqual(engine.statistics.edges, 4)
+        checked(engine)
     }
 
-    func testEndsThatMeetCloseIntoALoopWithAnEvenCount() {
+    func testASharpTurnIsAPointAndACurveIsNot() {
+        let engine = pencil()
+        Fixtures.drawPath(engine, straight(Vec2(420, 340), Vec2(420, 460)) + straight(Vec2(420, 460), Vec2(560, 460)).dropFirst())
+        XCTAssertEqual(engine.statistics.vertices, 3)
+        XCTAssertEqual(engine.statistics.edges, 2)
+
+        let curved = pencil()
+        Fixtures.draw(curved, from: Vec2(420, 340), to: Vec2(560, 460), bend: Vec2(-50, 50))
+        XCTAssertEqual(curved.statistics.vertices, 2)
+    }
+
+    func testAShortOvershootPastALineIsLeftOut() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        Fixtures.draw(engine, from: Vec2(500, 390), to: Vec2(500, 500))
+        XCTAssertEqual(engine.statistics.vertices, 4, "it starts on the line")
+    }
+
+    func testAnEndNearALinePutsAPointOnIt() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        Fixtures.draw(engine, from: Vec2(500, 500), to: Vec2(500, 408))
+        XCTAssertEqual(engine.statistics.vertices, 4)
+        XCTAssertEqual(engine.statistics.edges, 3)
+    }
+
+    func testAnEndNearARealPointLandsOnIt() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        Fixtures.draw(engine, from: Vec2(430, 500), to: Vec2(430, 410))
+        XCTAssertEqual(engine.statistics.vertices, 3)
+    }
+
+    func testCarryingALineOnLeavesNoPointWhereTheyJoin() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(480, 400))
+        Fixtures.draw(engine, from: Vec2(490, 400), to: Vec2(580, 400))
+        XCTAssertEqual(engine.statistics.vertices, 2)
+    }
+
+    // MARK: Shapes
+
+    func testASmoothLoopIsOneShapeWithNoPointsOfItsOwn() {
         let engine = pencil()
         drawLoop(engine, center: Vec2(500, 400), radius: 80)
-        XCTAssertEqual(engine.mesh.vertexCount, engine.mesh.edgeCount, "a closed loop")
-        XCTAssertTrue(engine.mesh.edgeCount.isMultiple(of: 2))
+        XCTAssertEqual(engine.statistics.faces, 1)
+        XCTAssertEqual(engine.statistics.quads, 0)
+        XCTAssertEqual(engine.statistics.vertices, 0)
+        checked(engine)
     }
 
-    func testAStrokeAcrossTwoLinesConnectsThem() {
+    func testABoxInOneStrokeIsAQuadWithStraightSides() {
         let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        let before = engine.mesh.vertexCount
-        Fixtures.draw(engine, from: Vec2(500, 330), to: Vec2(500, 490))
-        let branches = engine.mesh.aliveVertices.filter { engine.mesh.edgesOf($0).count >= 3 }
-        XCTAssertGreaterThanOrEqual(branches.count, 2, "joined at both lines")
-        XCTAssertGreaterThan(engine.mesh.vertexCount, before)
+        drawBox(engine, Vec2(440, 340), Vec2(560, 460))
+        XCTAssertEqual(engine.statistics.quads, 1)
+        XCTAssertEqual(engine.mesh.vertexCount, 4, "nothing left of the curve")
+        XCTAssertEqual(engine.mesh.bendCount, 0)
+        checked(engine)
     }
+
+    func testFourLinesAreAQuad() {
+        let engine = pencil()
+        drawFourLines(engine)
+        XCTAssertEqual(engine.statistics.quads, 1)
+        XCTAssertEqual(engine.mesh.vertexCount, 4)
+        checked(engine)
+    }
+
+    func testThreeLinesAreAShapeThatKeepsItsCurve() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(440, 460), to: Vec2(560, 460))
+        Fixtures.draw(engine, from: Vec2(560, 460), to: Vec2(500, 340))
+        Fixtures.draw(engine, from: Vec2(500, 340), to: Vec2(440, 460))
+        XCTAssertEqual(engine.statistics.faces, 1)
+        XCTAssertEqual(engine.statistics.triangles, 1)
+        XCTAssertEqual(engine.statistics.quads, 0)
+        XCTAssertGreaterThan(engine.mesh.bendCount, 0)
+    }
+
+    func testALineTrailingOffDoesNotStopAShapeClosing() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(500, 400), to: Vec2(560, 340))
+        Fixtures.draw(engine, from: Vec2(440, 340), to: Vec2(560, 340))
+        Fixtures.draw(engine, from: Vec2(560, 340), to: Vec2(560, 460))
+        Fixtures.draw(engine, from: Vec2(560, 460), to: Vec2(440, 460))
+        Fixtures.draw(engine, from: Vec2(440, 460), to: Vec2(440, 340))
+        XCTAssertEqual(engine.statistics.faces, 1)
+        checked(engine)
+    }
+
+    func testALoopAroundTheWholeModelEnclosesNothing() {
+        let engine = pencil()
+        drawLoop(engine, center: Vec2(500, 500), radius: 900)
+        XCTAssertEqual(engine.statistics.faces, 0)
+    }
+
+    func testUndoTakesBackAWholeStrokeAndItsShape() {
+        let engine = pencil()
+        drawFourLines(engine)
+        engine.undo()
+        XCTAssertEqual(engine.statistics.faces, 0)
+        XCTAssertEqual(engine.statistics.vertices, 4, "the three lines before it")
+        XCTAssertGreaterThan(engine.mesh.bendCount, 0, "and their curves")
+    }
+
+    // MARK: Leaving the app
+
+    func testBendsDoNotLeaveTheApp() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400), bend: Vec2(0, 40))
+        let line = engine.mesh.withoutBends()
+        XCTAssertEqual(line.vertexCount, 2)
+        XCTAssertEqual(line.edgeCount, 1)
+        XCTAssertNil(line.firstInvariantViolation())
+    }
+
+    func testAShapeWithTooFewCornersKeepsItsCurveOnTheWayOut() {
+        let engine = pencil()
+        drawLoop(engine, center: Vec2(500, 400), radius: 80)
+        let out = engine.mesh.withoutBends()
+        XCTAssertEqual(out.faceCount, 1)
+        XCTAssertEqual(out.vertexCount, engine.mesh.vertexCount)
+    }
+
+    func testAShapeWithEnoughCornersLosesItsCurveOnTheWayOut() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(440, 460), to: Vec2(560, 460))
+        Fixtures.draw(engine, from: Vec2(560, 460), to: Vec2(500, 340))
+        Fixtures.draw(engine, from: Vec2(500, 340), to: Vec2(440, 460))
+        let out = engine.mesh.withoutBends()
+        XCTAssertEqual(out.vertexCount, 3)
+        XCTAssertEqual(out.faceCount, 1)
+        XCTAssertNil(out.firstInvariantViolation())
+    }
+
+    func testBendsSurviveSavingAndOpening() throws {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        let bends = engine.mesh.bendCount
+        XCTAssertGreaterThan(bends, 0)
+        let opened = try ProjectCodec.decode(ProjectCodec.encode(engine.makeSnapshot()))
+        XCTAssertEqual(opened.mesh.bendCount, bends)
+        XCTAssertEqual(MeshStatistics(opened.mesh).vertices, 2)
+    }
+
+    // MARK: Picking
 
     func testATapPicksAWholeLineAndAnEmptyTapLetsGo() {
         let engine = pencil()
@@ -100,6 +244,15 @@ final class PencilTests: XCTestCase {
         XCTAssertEqual(simd_length(engine.mesh.position(v) - start), 0, accuracy: 1e-5)
     }
 
+    func testHoldingABendDoesNotPickItUp() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        engine.pencilBegan(at: Vec2(500, 400))
+        engine.pencilHeld()
+        engine.pencilEnded(at: Vec2(500, 400))
+        XCTAssertTrue(engine.selection.vertices.isEmpty)
+    }
+
     func testDrawingFromAPointWithoutHoldingStartsALine() throws {
         let engine = pencil()
         Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
@@ -110,173 +263,6 @@ final class PencilTests: XCTestCase {
         Fixtures.draw(engine, from: screen, to: screen + Vec2(0, 90))
         XCTAssertEqual(simd_length(engine.mesh.position(v) - start), 0, accuracy: 1e-5)
         XCTAssertGreaterThan(engine.mesh.edgeCount, edges)
-    }
-
-    // MARK: Nothing is refused
-
-    func testAMarkOverFinishedQuadsStaysAsAPencilLine() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        let chains = NeighborChains.openChains(in: engine.mesh)
-        XCTAssertEqual(chains.count, 2)
-        _ = engine.perform("Fill") { mesh, _ in
-            let plan = try QuadPatchBuilder.plan(chains: chains, parameters: QuadPatchParameters(), mesh: mesh, projector: engine.projector).plan
-            _ = try PlanApplier.apply(plan, to: &mesh, symmetry: engine.symmetry, projector: engine.projector)
-        }
-        let faces = engine.mesh.faceCount
-        XCTAssertGreaterThan(faces, 0)
-        Fixtures.draw(engine, from: Vec2(450, 400), to: Vec2(550, 420))
-        XCTAssertEqual(engine.sketches.count, 1)
-        XCTAssertEqual(engine.sketches[0].colorIndex, SketchPalette.graphite)
-        XCTAssertEqual(engine.mesh.faceCount, faces)
-        XCTAssertNil(engine.message, "and nothing was said about it")
-    }
-
-    func testTappingAMarkPicksItAndDeletingTakesItOutAndUndoes() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        let chains = NeighborChains.openChains(in: engine.mesh)
-        _ = engine.perform("Fill") { mesh, _ in
-            let plan = try QuadPatchBuilder.plan(chains: chains, parameters: QuadPatchParameters(), mesh: mesh, projector: engine.projector).plan
-            _ = try PlanApplier.apply(plan, to: &mesh, symmetry: engine.symmetry, projector: engine.projector)
-        }
-        Fixtures.draw(engine, from: Vec2(450, 400), to: Vec2(550, 400))
-        engine.pencilBegan(at: Vec2(500, 400))
-        engine.pencilEnded(at: Vec2(500, 400))
-        XCTAssertEqual(engine.pickedMark, 0)
-        XCTAssertTrue(engine.hasPick)
-        engine.deletePick()
-        XCTAssertTrue(engine.sketches.isEmpty)
-        XCTAssertFalse(engine.hasPick)
-        engine.undo()
-        XCTAssertEqual(engine.sketches.count, 1)
-    }
-
-    func testDeletingAPickedLineRemovesIt() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
-        engine.pencilBegan(at: Vec2(500, 400))
-        engine.pencilEnded(at: Vec2(500, 400))
-        engine.deletePick()
-        XCTAssertEqual(engine.mesh.edgeCount, 0)
-    }
-
-    // MARK: Fills
-
-    func testTwoLinesPencilInQuadsThatFirmUpOnMovingOn() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        XCTAssertTrue(engine.pencilledFills.isEmpty)
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        XCTAssertEqual(engine.pencilledFills.count, 1, "appeared with no button")
-        XCTAssertEqual(engine.mesh.faceCount, 0, "still pencilled")
-        XCTAssertFalse(engine.overlay.previewTriangles.isEmpty, "and showing")
-
-        Fixtures.draw(engine, from: Vec2(420, 620), to: Vec2(580, 620))
-        XCTAssertGreaterThan(engine.mesh.faceCount, 0, "moving on firmed it up")
-        XCTAssertTrue(engine.mesh.aliveFaces.allSatisfy { engine.mesh.loop($0).count == 4 })
-    }
-
-    func testUndoTakesThePencilledQuadsAndLeavesTheLine() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        let edges = engine.mesh.edgeCount
-        engine.undo()
-        XCTAssertTrue(engine.pencilledFills.isEmpty)
-        XCTAssertEqual(engine.mesh.edgeCount, edges)
-        engine.undo()
-        XCTAssertLessThan(engine.mesh.edgeCount, edges)
-    }
-
-    func testBesideALineAStrokeTakesItsCount() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        let first = engine.mesh.edgeCount
-        Fixtures.draw(engine, from: Vec2(410, 460), to: Vec2(600, 460))
-        XCTAssertEqual(engine.mesh.edgeCount, first * 2, "both lines have the same count")
-    }
-
-    func testDrawingThroughABandMakesABandOnEachSide() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(400, 340), to: Vec2(600, 340))
-        Fixtures.draw(engine, from: Vec2(400, 460), to: Vec2(600, 460))
-        XCTAssertEqual(engine.pencilledFills.count, 1)
-        XCTAssertEqual(engine.mesh.faceCount, 0)
-        Fixtures.draw(engine, from: Vec2(400, 400), to: Vec2(600, 400))
-        XCTAssertEqual(engine.pencilledFills.count, 2, "reflowed")
-        XCTAssertEqual(engine.mesh.faceCount, 0, "and it's all still pencilled")
-        engine.firmUpFills()
-        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
-        XCTAssertTrue(engine.mesh.aliveFaces.allSatisfy { engine.mesh.loop($0).count == 4 })
-    }
-
-    func testALoopFillsAndALoopInsideItBecomesARing() {
-        let engine = pencil()
-        drawLoop(engine, center: Vec2(500, 400), radius: 120)
-        XCTAssertEqual(engine.pencilledFills.count, 1, "the enclosed area fills in")
-        XCTAssertEqual(engine.pencilledFills[0].chains.count, 1)
-
-        drawLoop(engine, center: Vec2(500, 400), radius: 60)
-        XCTAssertEqual(engine.pencilledFills.count, 1)
-        XCTAssertEqual(engine.pencilledFills[0].preview.kind, .ring)
-        XCTAssertEqual(engine.mesh.faceCount, 0, "the first fill never firmed up")
-    }
-
-    func testALoopAroundAPencilledLoopMakesARingInstead() {
-        let engine = pencil()
-        drawLoop(engine, center: Vec2(500, 400), radius: 60)
-        drawLoop(engine, center: Vec2(500, 400), radius: 120)
-        XCTAssertEqual(engine.pencilledFills.count, 1)
-        XCTAssertEqual(engine.pencilledFills[0].preview.kind, .ring)
-        XCTAssertEqual(engine.mesh.faceCount, 0)
-    }
-
-    func testFourLinesFenceInAnAreaEvenWithoutCorners() {
-        let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(400, 320), to: Vec2(600, 320))
-        Fixtures.draw(engine, from: Vec2(400, 480), to: Vec2(600, 480))
-        engine.undo()
-        XCTAssertTrue(engine.pencilledFills.isEmpty)
-        Fixtures.draw(engine, from: Vec2(440, 300), to: Vec2(440, 500))
-        Fixtures.draw(engine, from: Vec2(560, 300), to: Vec2(560, 500))
-        XCTAssertFalse(engine.pencilledFills.isEmpty, "the middle is fenced in")
-        engine.firmUpFills()
-        XCTAssertGreaterThan(engine.mesh.faceCount, 0)
-    }
-
-    func testALoopAroundTheWholeModelEnclosesNothing() {
-        let sphere = Fixtures.sphere()
-        var mesh = Mesh()
-        let count = 24
-        let vertices = (0..<count).map { i -> VertexID in
-            let a = Float(i) / Float(count) * 2 * .pi
-            return mesh.addVertex(Vec3(cos(a), 0, sin(a)))
-        }
-        var edges: [EdgeID] = []
-        for i in 0..<count { edges.append(try! mesh.ensureEdge(vertices[i], vertices[(i + 1) % count])) }
-        XCTAssertTrue(EnclosedRegions.regions(bordering: edges, in: mesh, projector: Fixtures.projector(sphere)).isEmpty)
-    }
-
-    func testTappingTheHoleInARingOffersToFillItButNotTheOutside() {
-        let engine = pencil()
-        drawLoop(engine, center: Vec2(500, 400), radius: 120)
-        drawLoop(engine, center: Vec2(500, 400), radius: 60)
-        engine.firmUpFills()
-        let faces = engine.mesh.faceCount
-        XCTAssertGreaterThan(faces, 0)
-
-        Fixtures.draw(engine, from: Vec2(620, 400), to: Vec2(620.5, 400))
-        XCTAssertTrue(engine.hasPick)
-        XCTAssertNil(engine.pickedLoop, "the outside of the ring isn't an area to fill")
-
-        Fixtures.draw(engine, from: Vec2(560, 400), to: Vec2(560.5, 400))
-        XCTAssertNotNil(engine.pickedLoop)
-        engine.fillPick()
-        XCTAssertGreaterThan(engine.mesh.faceCount, faces)
-        XCTAssertFalse(engine.hasPick)
     }
 
     func testAMovedPointDoesNotStayPicked() {
@@ -290,22 +276,54 @@ final class PencilTests: XCTestCase {
         XCTAssertFalse(engine.hasPick)
     }
 
+    func testDeletingAPickedLineRemovesIt() {
+        let engine = pencil()
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
+        engine.pencilBegan(at: Vec2(500, 400))
+        engine.pencilEnded(at: Vec2(500, 400))
+        engine.deletePick()
+        XCTAssertEqual(engine.mesh.edgeCount, 0)
+    }
+
+    // MARK: Marks
+
+    private func drawMark(_ engine: RetopoEngine, from a: Vec2, to b: Vec2) {
+        engine.setTool(.sketch)
+        Fixtures.draw(engine, from: a, to: b)
+        engine.setTool(.pencil)
+    }
+
+    func testTappingAMarkPicksItAndDeletingTakesItOutAndUndoes() {
+        let engine = pencil()
+        drawMark(engine, from: Vec2(450, 400), to: Vec2(550, 400))
+        engine.pencilBegan(at: Vec2(500, 400))
+        engine.pencilEnded(at: Vec2(500, 400))
+        XCTAssertEqual(engine.pickedMark, 0)
+        XCTAssertTrue(engine.hasPick)
+        engine.deletePick()
+        XCTAssertTrue(engine.sketches.isEmpty)
+        XCTAssertFalse(engine.hasPick)
+        engine.undo()
+        XCTAssertEqual(engine.sketches.count, 1)
+    }
+
     // MARK: The eraser
 
     func testTheEraserTakesOutQuadsLinesAndMarksInOneUndo() {
         let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        engine.firmUpFills()
-        Fixtures.draw(engine, from: Vec2(300, 620), to: Vec2(700, 620), bend: Vec2(0, -300))
+        drawFourLines(engine)
+        Fixtures.draw(engine, from: Vec2(440, 560), to: Vec2(560, 560))
+        drawMark(engine, from: Vec2(440, 610), to: Vec2(560, 610))
         let faces = engine.mesh.faceCount, edges = engine.mesh.edgeCount, marks = engine.sketches.count
         XCTAssertGreaterThan(faces, 0)
 
         engine.setTool(.erase)
         engine.setSelectionMode(.face)
-        Fixtures.draw(engine, from: Vec2(500, 340), to: Vec2(500, 640))
+        Fixtures.draw(engine, from: Vec2(500, 380), to: Vec2(500, 640))
         XCTAssertLessThan(engine.mesh.faceCount, faces)
         XCTAssertLessThan(engine.mesh.edgeCount, edges)
+        XCTAssertLessThan(engine.sketches.count, marks)
+        checked(engine)
 
         engine.undo()
         XCTAssertEqual(engine.mesh.faceCount, faces)
@@ -313,17 +331,14 @@ final class PencilTests: XCTestCase {
         XCTAssertEqual(engine.sketches.count, marks)
     }
 
-    func testTheEraserRubsOutAPencilMark() {
+    func testTheEraserLeavesNoBendAtTheEndOfALine() {
         let engine = pencil()
-        Fixtures.draw(engine, from: Vec2(420, 360), to: Vec2(580, 360))
-        Fixtures.draw(engine, from: Vec2(420, 460), to: Vec2(580, 460))
-        engine.firmUpFills()
-        Fixtures.draw(engine, from: Vec2(440, 410), to: Vec2(560, 410))
-        XCTAssertEqual(engine.sketches.count, 1, "a stroke along the quads stays as a mark")
-
+        Fixtures.draw(engine, from: Vec2(420, 400), to: Vec2(580, 400))
         engine.setTool(.erase)
         engine.setSelectionMode(.face)
-        Fixtures.draw(engine, from: Vec2(500, 400), to: Vec2(500, 420))
-        XCTAssertTrue(engine.sketches.isEmpty)
+        Fixtures.draw(engine, from: Vec2(500, 380), to: Vec2(500, 420))
+        XCTAssertGreaterThan(engine.mesh.edgeCount, 0, "the two sides are left")
+        XCTAssertEqual(engine.statistics.vertices, 4, "each with a point at its new end")
+        XCTAssertEqual(engine.statistics.edges, 2)
     }
 }

@@ -25,6 +25,8 @@ public struct Mesh {
     public internal(set) var vertexEdges: [[EdgeID]] = []
     /// Symmetry partner of each vertex: -1 when unpaired, itself when on the centerline.
     public internal(set) var mirrorPartner: [VertexID] = []
+    /// Whether each vertex only shapes a drawn line. See `Bends.swift`.
+    public internal(set) var isBend: [Bool] = []
 
     public internal(set) var edgeEnds: [SIMD2<Int32>] = []
     /// Up to two incident faces, -1 for an empty side. A wire edge has none.
@@ -250,12 +252,14 @@ public struct Mesh {
             vertexAlive[Int(id)] = true
             vertexEdges[Int(id)] = []
             mirrorPartner[Int(id)] = invalidID
+            isBend[Int(id)] = false
         } else {
             id = VertexID(positions.count)
             positions.append(p)
             vertexAlive.append(true)
             vertexEdges.append([])
             mirrorPartner.append(invalidID)
+            isBend.append(false)
         }
         vertexCount += 1
         positionVersion &+= 1
@@ -488,6 +492,7 @@ public struct Mesh {
         var vertexMap = [VertexID](repeating: invalidID, count: positions.count)
         for i in 0..<positions.count where vertexAlive[i] {
             vertexMap[i] = out.addVertex(positions[i])
+            out.isBend[Int(vertexMap[i])] = isBend[i]
         }
         for i in 0..<positions.count where vertexAlive[i] {
             let partner = mirrorPartner[i]

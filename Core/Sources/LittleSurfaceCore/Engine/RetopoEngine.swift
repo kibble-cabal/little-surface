@@ -197,7 +197,7 @@ public final class RetopoEngine {
         return stats
     }
 
-    public var canUndo: Bool { history.canUndo || !pencilledFills.isEmpty || pendingStroke != nil || pendingStrip != nil || !faceCorners.isEmpty }
+    public var canUndo: Bool { history.canUndo || pendingStroke != nil || pendingStrip != nil || !faceCorners.isEmpty }
     public var canRedo: Bool { history.canRedo }
     public var hasSurface: Bool { !(projector?.isEmpty ?? true) }
     private var activeProjector: SurfaceProjector? { tools.surfaceSnapping ? projector : nil }
@@ -620,7 +620,7 @@ public final class RetopoEngine {
     public func spots(of check: TopologyCheck, report: ValidationReport?) -> [TopologySpot] {
         switch check {
         case .triangles: return mesh.aliveFaces.filter { mesh.loop($0).count == 3 }.map(TopologySpot.face)
-        case .ngons: return mesh.aliveFaces.filter { mesh.loop($0).count > 4 }.map(TopologySpot.face)
+        case .ngons: return mesh.aliveFaces.filter { mesh.cornerCount(of: $0) > 4 }.map(TopologySpot.face)
         case .poles: return MeshValidator.poles(mesh).map(TopologySpot.vertex)
         case .badGeometry:
             var out: [TopologySpot] = []
@@ -717,6 +717,7 @@ public final class RetopoEngine {
         let before = currentSnapshot
         var finalMesh = nextMesh
         if let plane = symmetry.activePlane { repairPairs(&finalMesh, plane: plane) }
+        finalMesh.settleBends()
         mesh = finalMesh
         selection = nextSelection
         selection.prune(in: mesh)
@@ -739,8 +740,6 @@ public final class RetopoEngine {
 
     private func didEdit() {
         pickedMark = nil
-        pickedLoop = nil
-        pencilledFills = []
         // Here rather than at each tool, so that no edit, undo or redo can miss the timelapse.
         timelapse.record(mesh: mesh, sketches: sketches, orientation: camera.orientation)
         editGeneration &+= 1
@@ -772,12 +771,6 @@ public final class RetopoEngine {
 
     /// Throws away one piece of unfinished work. Returns false when there was none.
     private func undoUncommittedWork() -> Bool {
-        if !pencilledFills.isEmpty {
-            pencilledFills = []
-            rebuildOverlay()
-            notify()
-            return true
-        }
         if isMidGesture {
             pencilCancelled()
             say("Cancelled that stroke")
@@ -1145,16 +1138,8 @@ public final class RetopoEngine {
 
     // MARK: The pencil
 
-    /// How long a quad's side comes out on screen when nothing nearby says otherwise. Quad size follows
-    /// the zoom, as line weight does on paper: come in close to draw finer.
-    public static let quadSizePoints: Float = 28
-
-    /// Quads that have appeared where lines enclose an area, and aren't part of the mesh until the
-    /// artist moves on. Drawing through one reshapes it instead.
-    public private(set) var pencilledFills: [FillSuggestion] = []
-
-    /// The empty loop a tap picked, which can be filled when the drawing alone left it open.
-    public private(set) var pickedLoop: BoundaryChain?
+    /// How finely a pencil line follows the stroke, on screen. Only its real points are topology.
+    static let bendSpacingPoints: Float = 8
 
     /// The pencil mark a tap picked, by its place in `sketches`.
     public private(set) var pickedMark: Int?
@@ -1167,8 +1152,6 @@ public final class RetopoEngine {
         picker.ignoresOcclusion = ignoresOcclusionForPicking
         guard let vertex = picker.pickVertex(at: start, radius: pickRadius) else { return }
         inkPath = []
-        firmUpFills()
-        pickedLoop = nil
         selection.clear()
         selection.mode = .vertex
         selection.vertices = [vertex]
@@ -1189,133 +1172,43 @@ public final class RetopoEngine {
         guard !runs.isEmpty else { return }
         let scale = camera.worldPerPoint(at: runs[0][runs[0].count / 2].position)
         let closeRadius = tools.stroke.closeRadiusPoints * scale
-
-        func paths(spacing: Float) -> [ProcessedPath] {
-            tools.stroke.edgeLength = spacing
-            return runs.compactMap { StrokeProcessor.process(run: $0, settings: tools.stroke, projector: projector, closeRadius: closeRadius) }
+        tools.stroke.edgeLength = Self.bendSpacingPoints * scale
+        var paths = runs.compactMap { StrokeProcessor.process(run: $0, settings: tools.stroke, projector: projector, closeRadius: closeRadius) }
+        if paths.count == 1, paths[0].canClose, closesLoopsAutomatically {
+            paths = [StrokeProcessor.closed(paths[0], spacing: tools.stroke.edgeLength, projector: projector)]
         }
-        var spacing = pencilSpacing(capture, scale: scale)
-        var drawn = paths(spacing: spacing)
-        guard !drawn.isEmpty else {
+        guard !paths.isEmpty else {
             keepAsMark(capture)
             return
         }
-        // A closed loop with an even count can always be filled with quads.
-        if drawn.count == 1, drawn[0].canClose, closesLoopsAutomatically {
-            let count = max(2, Int((drawn[0].length / spacing).rounded()))
-            if !count.isMultiple(of: 2) {
-                spacing = drawn[0].length / Float(count + 1)
-                drawn = paths(spacing: spacing)
+        var options = strokeOptions(scale: scale)
+        options.camera = camera
+        options.snapRadiusPoints = tools.stroke.snapRadiusPoints
+
+        let quadsBefore = mesh.aliveFaces.filter(mesh.isQuad).count
+        let isLoop = paths.contains(where: \.isClosed)
+        let ok = perform(isLoop ? "Draw loop" : "Draw line") { mesh, selection in
+            var total = PlanResult()
+            for path in paths {
+                let plan = StrokePlanner.plan(path: prepared(path), mesh: mesh, options: options)
+                guard !plan.plan.isEmpty else { continue }
+                let result = try PlanApplier.apply(plan.plan, to: &mesh, symmetry: symmetry, projector: projector)
+                total.edges += result.edges
             }
+            guard !total.edges.isEmpty else { throw MeshError.invalid("Nothing to add.") }
+            try DrawnFaces.update(after: total, in: &mesh, projector: projector)
+            selection.clear()
         }
-        let options = strokeOptions(scale: scale)
-
-        // Drawing through pencilled quads reshapes them. Drawing anywhere else moves on from them.
-        let early = pencilPlans(drawn, options: options)
-        let reshaped = pencilledFills.filter { fill in
-            drawn.contains { runsThrough($0, fill) } || early.contains { isRingAroundCap(fill, $0) }
-        }
-        let settled = pencilledFills.filter { fill in !reshaped.contains { $0.chains == fill.chains } }
-        firmUp(settled)
-        pencilledFills = []
-
-        var plans = pencilPlans(drawn, options: options)
-        // Beside another line, a stroke takes that line's count, so rows run straight across.
-        if drawn.count == 1, let plan = plans.first, !plan.extendsLine, let count = neighborCount(for: plan),
-           count != Int((drawn[0].length / spacing).rounded()) {
-            drawn = paths(spacing: drawn[0].length / Float(count))
-            if !drawn.isEmpty { plans = pencilPlans(drawn, options: options) }
-        }
-        guard !plans.isEmpty else {
+        clearMessage()
+        guard ok else {
             keepAsMark(capture)
-            pencilledFills = reshaped
             return
         }
-        let result = apply(plans: plans, label: plans.contains(where: \.isClosed) ? "Draw loop" : "Draw line", event: plans.contains(where: \.isClosed) ? .loopClosed : .strokeCommitted)
-        clearMessage()
-        guard let result else {
-            keepAsMark(capture)
-            pencilledFills = reshaped
-            return
+        if mesh.aliveFaces.filter(mesh.isQuad).count > quadsBefore {
+            onEvent?(.facesGenerated)
+        } else {
+            onEvent?(isLoop ? .loopClosed : .strokeCommitted)
         }
-        report(plans, result: result)
-        clearMessage()
-        pencilledFills = fills(after: result, reshaping: reshaped)
-    }
-
-    private func neighborCount(for plan: StrokePlan) -> Int? {
-        var scratch = mesh
-        guard let result = try? PlanApplier.apply(plan.plan, to: &scratch, symmetry: symmetry, projector: projector),
-              let chain = drawnChain(result, in: scratch) else { return nil }
-        return NeighborChains.neighbor(of: chain, in: scratch, projector: projector, mirror: symmetry.activePlane)?.segmentCount
-    }
-
-    /// Most of the stroke lies among the quads.
-    private func runsThrough(_ path: ProcessedPath, _ fill: FillSuggestion) -> Bool {
-        let nodes = fill.preview.plan.positions(in: mesh)
-        guard !nodes.isEmpty, !path.points.isEmpty else { return false }
-        let plan = fill.preview.plan
-        let lengths = plan.faces.flatMap { face in face.indices.map { simd_length(nodes[Int(face[$0])] - nodes[Int(face[($0 + 1) % face.count])]) } }
-        guard !lengths.isEmpty else { return false }
-        let reach = lengths.reduce(0, +) / Float(lengths.count)
-        let near = path.points.filter { point in nodes.contains { simd_length($0 - point.position) <= reach } }
-        return near.count * 2 >= path.points.count
-    }
-
-    /// A second loop around one that's pencilled in shut means a ring, not a filled-in middle.
-    private func isRingAroundCap(_ fill: FillSuggestion, _ plan: StrokePlan) -> Bool {
-        guard fill.chains.count == 1, plan.isClosed else { return false }
-        var scratch = mesh
-        guard let result = try? PlanApplier.apply(plan.plan, to: &scratch, symmetry: symmetry, projector: projector),
-              let chain = drawnChain(result, in: scratch),
-              let other = NeighborChains.neighbor(of: chain, in: scratch, projector: projector, mirror: symmetry.activePlane) else { return false }
-        return Set(other.edges) == Set(fill.chains[0].edges)
-    }
-
-    private func suggestion(_ chains: [BoundaryChain]) -> FillSuggestion? {
-        guard let preview = try? QuadPatchBuilder.plan(chains: chains, parameters: tools.patch, mesh: mesh, projector: projector, linesYieldToFaces: true) else { return nil }
-        return FillSuggestion(chains: chains, preview: preview)
-    }
-
-    private func isIntact(_ chain: BoundaryChain) -> Bool {
-        chain.edges.allSatisfy { mesh.isEdgeAlive($0) } && chain.vertices.allSatisfy { mesh.edgesOf($0).count <= 2 || !chain.isClosed }
-    }
-
-    private func fills(after result: PlanResult, reshaping reshaped: [FillSuggestion]) -> [FillSuggestion] {
-        if let chain = drawnChain(result) {
-            // A line through a band of quads makes a band on each side of it.
-            for fill in reshaped where fill.chains.count == 2 && fill.chains.allSatisfy(isIntact) {
-                let both = fill.chains.compactMap { suggestion([$0, chain]) }
-                if both.count == 2 { return both }
-            }
-            if let other = NeighborChains.neighbor(of: chain, in: mesh, projector: projector, mirror: symmetry.activePlane),
-               let fill = suggestion([other, chain]) {
-                return [fill]
-            }
-        }
-        return EnclosedRegions.regions(bordering: result.edges, in: mesh, projector: projector).compactMap { suggestion([$0]) }
-    }
-
-    /// Moves on from the pencilled quads, making them part of the mesh.
-    public func firmUpFills() {
-        guard !pencilledFills.isEmpty else { return }
-        let fills = pencilledFills
-        pencilledFills = []
-        firmUp(fills)
-        rebuildOverlay()
-        notify()
-    }
-
-    private func firmUp(_ fills: [FillSuggestion]) {
-        for fill in fills where fill.chains.allSatisfy({ $0.edges.allSatisfy(mesh.isEdgeAlive) }) {
-            guard let plan = suggestion(fill.chains)?.preview.plan else { continue }
-            let ok = perform("Fill") { mesh, selection in
-                _ = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector)
-                selection.clear()
-            }
-            if ok { onEvent?(.facesGenerated) }
-        }
-        clearMessage()
     }
 
     /// A mark that can't become topology stays on the model as a pencil line, as it would on paper.
@@ -1327,21 +1220,11 @@ public final class RetopoEngine {
     public var hasPick: Bool { pickedMark != nil || !selection.isEmpty }
 
     public func clearPick() {
-        pickedLoop = nil
         if pickedMark != nil {
             pickedMark = nil
             sketchRevision &+= 1
         }
         selection.clear()
-        notify()
-    }
-
-    public func fillPick() {
-        guard let chain = pickedLoop, let fill = suggestion([chain]) else { return }
-        selection.clear()
-        pickedLoop = nil
-        firmUp([fill])
-        rebuildOverlay()
         notify()
     }
 
@@ -1361,36 +1244,8 @@ public final class RetopoEngine {
         notify()
     }
 
-    private func pencilPlans(_ paths: [ProcessedPath], options: StrokePlanOptions) -> [StrokePlan] {
-        if paths.count == 1, paths[0].canClose, closesLoopsAutomatically {
-            let closed = closedPlan(paths[0], options: options)
-            if !closed.plan.isEmpty { return [closed] }
-        }
-        return paths.map { StrokePlanner.plan(path: prepared($0), mesh: mesh, options: options) }.filter { !$0.plan.isEmpty }
-    }
-
-    /// The zoom sets the size, unless the stroke starts or ends on topology, which it then matches.
-    private func pencilSpacing(_ capture: StrokeCapture, scale: Float) -> Float {
-        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
-        picker.ignoresOcclusion = ignoresOcclusionForPicking
-        var touched: [Float] = []
-        for end in [capture.screenPath.first, capture.screenPath.last].compactMap({ $0 }) {
-            guard let v = picker.pickVertex(at: end, radius: tools.stroke.snapRadiusPoints) else { continue }
-            let edges = mesh.edgesOf(v)
-            guard !edges.isEmpty else { continue }
-            touched.append(edges.reduce(0) { $0 + mesh.edgeLength($1) } / Float(edges.count))
-        }
-        guard !touched.isEmpty else { return Self.quadSizePoints * scale }
-        return touched.reduce(0, +) / Float(touched.count)
-    }
-
     /// A tap picks what's under it: a whole line, or a quad, with further quads adding to the pick.
     private func pencilTap(at screen: Vec2) {
-        pickedLoop = nil
-        if !pencilledFills.isEmpty {
-            firmUpFills()
-            return
-        }
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
         picker.ignoresOcclusion = ignoresOcclusionForPicking
         pickedMark = showsSketch ? sketches.lastIndex { touches($0, at: screen) } : nil
@@ -1404,10 +1259,6 @@ public final class RetopoEngine {
             selection.clear()
             selection.mode = .edge
             selection.edges = Set(chain.edges)
-            if chain.isClosed {
-                pickedLoop = EnclosedRegions.regions(bordering: chain.edges, in: mesh, projector: projector)
-                    .first { Set($0.edges) == Set(chain.edges) }
-            }
         } else if let face = picker.pickFace(at: screen) {
             if selection.mode != .face { selection.clear() }
             selection.mode = .face
@@ -2169,6 +2020,7 @@ public final class RetopoEngine {
             mesh.deleteEdges(symmetry.isEnabled ? Symmetry.expanded(edges: Set(lines), in: mesh) : Set(lines))
             changed = true
         }
+        if changed { mesh.settleBends() }
         return changed
     }
 
@@ -2729,7 +2581,6 @@ public final class RetopoEngine {
         if let plan = pendingStrip?.plan { addPlan(plan) }
         if let preview = patchPreview { addPlan(preview.plan) }
         if let suggestion = fillSuggestion { addPlan(suggestion.preview.plan) }
-        for fill in pencilledFills { addPlan(fill.preview.plan) }
         for chain in patchChains + (fillSuggestion?.chains ?? []) {
             var lines: [Vec3] = []
             for e in chain.edges where mesh.isEdgeAlive(e) {

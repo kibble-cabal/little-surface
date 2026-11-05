@@ -17,12 +17,13 @@ public struct MeshStatistics: Equatable {
     public init() {}
 
     public init(_ mesh: Mesh) {
-        vertices = mesh.vertexCount
-        edges = mesh.edgeCount
+        vertices = mesh.vertexCount - mesh.bendCount
+        edges = mesh.edgeCount - mesh.bendCount
         faces = mesh.faceCount
         for f in mesh.aliveFaces {
-            triangleEquivalent += mesh.loop(f).count - 2
-            switch mesh.loop(f).count {
+            let corners = mesh.cornerCount(of: f)
+            triangleEquivalent += max(corners, 3) - 2
+            switch corners {
             case 3: triangles += 1
             case 4: quads += 1
             default: ngons += 1

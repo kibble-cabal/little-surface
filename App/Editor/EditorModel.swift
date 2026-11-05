@@ -167,7 +167,6 @@ final class EditorModel {
 
     func select(tool: Tool) {
         guard tool != engine.activeTool else { return }
-        engine.firmUpFills()
         engine.clearPick()
         engine.setTool(tool)
         // The eraser goes by what's under it, not by a kind of element.
@@ -493,7 +492,6 @@ final class EditorModel {
 
     /// Saves as the app leaves the screen, asking for enough time to finish the write.
     func saveForBackground() {
-        engine.firmUpFills()
         guard saveState != .saved || isWriting else { return }
         let application = UIApplication.shared
         var task = UIBackgroundTaskIdentifier.invalid
@@ -515,7 +513,6 @@ final class EditorModel {
             finishClosing { completion(true) }
             return
         }
-        engine.firmUpFills()
         storeThumbnail()
         save(storesThumbnail: false) { [weak self] ok in
             guard let self else { return }
@@ -551,15 +548,14 @@ final class EditorModel {
 
     func export(format: ExportFormat, options: ExportOptions, name: String) {
         guard busy == nil else { return }
-        engine.firmUpFills()
         // Encoding big models with their source takes a moment, so it stays off the main thread.
         let snapshot = engine.makeSnapshot()
         busy = BusyTask(title: "Exporting…", cancellable: false)
         Task.detached(priority: .userInitiated) { [weak self] in
             let data: Data
             switch format {
-            case .obj: data = OBJExporter.export(mesh: snapshot.mesh, name: name, sources: snapshot.sources, options: options)
-            case .glb: data = GLBExporter.export(mesh: snapshot.mesh, name: name, sources: snapshot.sources, options: options)
+            case .obj: data = OBJExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: snapshot.sources, options: options)
+            case .glb: data = GLBExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: snapshot.sources, options: options)
             }
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Exports", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -582,7 +578,6 @@ final class EditorModel {
 
     func exportTimelapse() {
         guard busy == nil, let device = renderer?.device else { return }
-        engine.firmUpFills()
         let snapshot = engine.makeSnapshot()
         let name = engine.name
         busy = BusyTask(title: "Making timelapse…", cancellable: true)
@@ -670,7 +665,7 @@ final class EditorModel {
         let name = engine.name
         linkStatus = "Getting the mesh ready…"
         Task.detached(priority: .userInitiated) { [weak self] in
-            let data = OBJExporter.export(mesh: snapshot.mesh, name: name, sources: [], options: ExportOptions())
+            let data = OBJExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: [], options: ExportOptions())
             await MainActor.run {
                 self?.outgoingMesh = (name, data, snapshot.mesh.faceCount)
                 self?.linkStatus = "Waiting for Blender to collect it. Check Watch for Meshes is on there."
@@ -686,11 +681,10 @@ final class EditorModel {
             linkStatus = "Connected to Blender."
             return .json(["project": engine.name, "vertices": stats.vertices, "faces": stats.faces, "sculpts": engine.sources.map(\.name)])
         case ("GET", "/mesh"):
-            engine.firmUpFills()
             guard !engine.mesh.isEmpty else { return LinkResponse(status: 204) }
             let snapshot = engine.makeSnapshot()
             let name = engine.name
-            let data = await Task.detached { OBJExporter.export(mesh: snapshot.mesh, name: name, sources: [], options: ExportOptions()) }.value
+            let data = await Task.detached { OBJExporter.export(mesh: snapshot.mesh.withoutBends(), name: name, sources: [], options: ExportOptions()) }.value
             linkStatus = "Sent \(snapshot.mesh.faceCount.formatted()) faces to Blender."
             return Self.objResponse(data, name: name)
         case ("GET", "/outbox"):
@@ -723,7 +717,6 @@ final class EditorModel {
     /// Runs the same import as a file picked here, so a mesh from Blender behaves like one from Files.
     @MainActor
     private func receiveFromBlender(_ request: LinkRequest, start: (EditorModel, URL, String) -> Void) async -> LinkResponse {
-        engine.firmUpFills()
         guard busy == nil, importTask == nil else {
             return .message("Little Surface is busy with something else. Try again in a moment.", status: 409)
         }

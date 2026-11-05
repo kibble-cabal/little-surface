@@ -93,7 +93,7 @@ final class ViewportView: MTKView, UIPencilInteractionDelegate {
         get {
             guard let engine else { return nil }
             let stats = engine.statistics
-            return "\(stats.vertices) points, \(stats.edges) lines, \(stats.faces) quads, \(engine.pencilledFills.count) pencilled, \(engine.sketches.count) marks"
+            return "\(stats.vertices) points, \(stats.edges) lines, \(stats.quads) quads, \(stats.faces - stats.quads) shapes, \(engine.sketches.count) marks"
         }
         set {}
     }

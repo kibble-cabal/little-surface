@@ -328,7 +328,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             let (a, b) = mesh.ends(e)
             return SIMD2<UInt32>(UInt32(a), UInt32(b))
         }
-        cache.dots = mesh.aliveVertices.map { UInt32($0) }
+        cache.dots = mesh.aliveVertices.filter { !mesh.isBendVertex($0) }.map { UInt32($0) }
         topology = cache
     }
 
@@ -405,8 +405,6 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }, into: &b.dotFlags)
     }
 
-    private var averageEdge: Float = 0
-    private var averageEdgeVersions = SIMD2<UInt64>(.max, .max)
     private var sketchBufferStyleInk = Vec4.zero
 
     private func syncSources(_ engine: RetopoEngine) {
@@ -466,7 +464,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
 
         if cageVisible {
-            drawRetopology(e, style: style, uniforms: &uniforms, xray: xray, dotAlpha: includesInteraction ? dotAlpha(engine, camera: camera) : 1)
+            drawRetopology(e, style: style, uniforms: &uniforms, xray: xray, dotAlpha: 1)
         }
         drawOverlays(e, engine: engine, style: style, uniforms: &uniforms)
         if includesInteraction {
@@ -537,17 +535,6 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             }
             e.setTriangleFillMode(.fill)
         }
-    }
-
-    /// Points only come forward when you're close enough to mean one of them.
-    private func dotAlpha(_ engine: RetopoEngine, camera: Camera) -> Float {
-        let mesh = engine.mesh
-        if averageEdgeVersions != SIMD2(mesh.topologyVersion, mesh.positionVersion) {
-            averageEdgeVersions = SIMD2(mesh.topologyVersion, mesh.positionVersion)
-            averageEdge = mesh.averageEdgeLength
-        }
-        let onScreen = averageEdge / max(camera.worldPerPoint(at: camera.target), 1e-6)
-        return simd_smoothstep(36, 60, onScreen)
     }
 
     private func drawRetopology(_ e: MTLRenderCommandEncoder, style: ViewportStyle, uniforms: inout Uniforms, xray: Bool, dotAlpha: Float) {

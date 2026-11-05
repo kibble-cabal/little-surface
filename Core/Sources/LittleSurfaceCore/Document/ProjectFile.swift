@@ -344,6 +344,7 @@ public enum ProjectCodec {
         appendArray(&out, sizes)
         appendArray(&out, corners)
         appendArray(&out, cornerEdges)
+        appendArray(&out, mesh.isBend.map { UInt8($0 ? 1 : 0) })
         return out
     }
 
@@ -442,6 +443,7 @@ public enum ProjectCodec {
         let vertexAlive: [UInt8] = try r.array()
         mesh.vertexAlive = vertexAlive.map { $0 != 0 }
         mesh.mirrorPartner = try r.array()
+        mesh.isBend = [Bool](repeating: false, count: mesh.positions.count)
         mesh.edgeEnds = try r.array()
         let edgeAlive: [UInt8] = try r.array()
         mesh.edgeAlive = edgeAlive.map { $0 != 0 }
@@ -450,6 +452,12 @@ public enum ProjectCodec {
         let sizes: [Int32] = try r.array()
         let corners: [Int32] = try r.array()
         let cornerEdges: [Int32] = try r.array()
+        // Older saves stop here, and everything in them is a real point.
+        if r.offset < data.count {
+            let bends: [UInt8] = try r.array()
+            guard bends.count == mesh.positions.count else { throw ProjectFileError.damaged("the mesh tables disagree") }
+            mesh.isBend = bends.map { $0 != 0 }
+        }
 
         guard mesh.positions.count == mesh.vertexAlive.count, mesh.positions.count == mesh.mirrorPartner.count,
               mesh.edgeEnds.count == mesh.edgeAlive.count, mesh.faceAlive.count == sizes.count, corners.count == cornerEdges.count else {

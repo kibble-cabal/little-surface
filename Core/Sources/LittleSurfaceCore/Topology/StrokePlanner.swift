@@ -11,6 +11,11 @@ public struct StrokePlanOptions {
     public var lineEndRadius: Float = 0
     /// Used to tell a vertex on the far side of a thin surface from one beside the stroke.
     public var projector: SurfaceProjector?
+    /// With a camera, the stroke is a pencil line: it meets other lines where it looks like it does on
+    /// screen, since a straight edge can sit well off the curved surface under it, and its points that
+    /// aren't ends, sharp corners or places it meets another line are only bends.
+    public var camera: Camera?
+    public var snapRadiusPoints: Float = 22
 
     public init(snapRadius: Float, crossingTolerance: Float, projector: SurfaceProjector? = nil) {
         self.snapRadius = snapRadius
@@ -51,7 +56,12 @@ public enum StrokePlanner {
         /// Distance along the path.
         var along: Float
         var isCrossing = false
+        /// A real point of a pencil line rather than a bend.
+        var isReal = false
     }
+
+    /// How sharply a pencil line has to turn for the turn to be a corner rather than a curve.
+    private static let cornerAngle: Float = 60 * .pi / 180
 
     public static func plan(path: ProcessedPath, mesh: Mesh, options: StrokePlanOptions) -> StrokePlan {
         let offset = options.surfaceOffset
@@ -67,6 +77,14 @@ public enum StrokePlanner {
         out.isClosed = path.isClosed
         var splitCount = 0, snappedEnds = 0
         var extendsLine = false, connectedLines = 0
+        var flowsFromStart = false, flowsToEnd = false
+
+        if let camera = options.camera { markCorners(&nodes, isClosed: path.isClosed, camera: camera) }
+
+        func snapped(_ node: PathNode) -> (node: PlanNode, position: Vec3)? {
+            if let camera = options.camera { return snapOnScreen(position: node.position, normal: node.normal, mesh: mesh, options: options, camera: camera) }
+            return snapEnd(position: node.position, normal: node.normal, mesh: mesh, options: options)
+        }
 
         let spacing = path.points.count > 1 ? path.length / Float(path.points.count - 1) : options.snapRadius
 
@@ -78,11 +96,12 @@ public enum StrokePlanner {
                 nodes[0].position = mesh.position(v)
                 snappedEnds += 1
                 extendsLine = true
-            } else if let snapped = snapEnd(position: nodes[0].position, normal: nodes[0].normal, mesh: mesh, options: options) {
-                nodes[0].node = snapped.node
-                nodes[0].position = snapped.position
+                flowsFromStart = flows(from: v, heading: startHeading, in: mesh)
+            } else if let snap = snapped(nodes[0]) {
+                nodes[0].node = snap.node
+                nodes[0].position = snap.position
                 snappedEnds += 1
-                if case .split = snapped.node { splitCount += 1 }
+                if case .split = snap.node { splitCount += 1 }
             }
             let last = nodes.count - 1
             let endHeading = nodes[last - inward].position - nodes[last].position
@@ -91,11 +110,12 @@ public enum StrokePlanner {
                 nodes[last].position = mesh.position(v)
                 snappedEnds += 1
                 extendsLine = true
-            } else if let snapped = snapEnd(position: nodes[last].position, normal: nodes[last].normal, mesh: mesh, options: options) {
-                nodes[last].node = snapped.node
-                nodes[last].position = snapped.position
+                flowsToEnd = flows(from: v, heading: endHeading, in: mesh)
+            } else if let snap = snapped(nodes[last]) {
+                nodes[last].node = snap.node
+                nodes[last].position = snap.position
                 snappedEnds += 1
-                if case .split = snapped.node { splitCount += 1 }
+                if case .split = snap.node { splitCount += 1 }
             }
         }
 
@@ -104,7 +124,12 @@ public enum StrokePlanner {
         }
 
         if !mesh.isEmpty {
-            let crossings = findCrossings(path: path, nodes: nodes, mesh: mesh, options: options, spacing: spacing)
+            let crossings: [PathNode]
+            if let camera = options.camera {
+                crossings = findScreenCrossings(path: path, nodes: nodes, mesh: mesh, options: options, camera: camera, spacing: spacing)
+            } else {
+                crossings = findCrossings(path: path, nodes: nodes, mesh: mesh, options: options, spacing: spacing)
+            }
             if !crossings.isEmpty {
                 // Remove stroke points that crowd a crossing, then merge the crossings in, in path order.
                 let keepClear = spacing * 0.4
@@ -115,9 +140,9 @@ public enum StrokePlanner {
                 merged.append(contentsOf: crossings)
                 merged.sort { $0.along < $1.along }
                 nodes = merged
-                if !path.isClosed, crossings.count >= 2 {
+                if !path.isClosed, crossings.count >= (options.camera == nil ? 2 : 1) {
                     connectedLines = crossings.count
-                    let overshoot = options.snapRadius * 1.5
+                    let overshoot = options.snapRadius * (options.camera == nil ? 1.5 : 1)
                     if let first = nodes.firstIndex(where: \.isCrossing), let last = nodes.lastIndex(where: \.isCrossing) {
                         var keep = 0...(nodes.count - 1)
                         if case .new = nodes[0].node, nodes[first].along - nodes[0].along <= overshoot { keep = first...keep.upperBound }
@@ -126,6 +151,11 @@ public enum StrokePlanner {
                     }
                 }
             }
+        }
+
+        if options.camera != nil, !path.isClosed {
+            nodes[0].isReal = !flowsFromStart
+            nodes[nodes.count - 1].isReal = !flowsToEnd
         }
 
         // Faces already cover this part of the surface: skip stroke segments over them.
@@ -152,7 +182,7 @@ public enum StrokePlanner {
                 if let first = firstForVertex[v] { canonical[i] = first } else { firstForVertex[v] = i }
             }
         }
-        let selfTolerance = spacing * 0.45
+        let selfTolerance = spacing * (options.camera == nil ? 0.45 : 0.75)
         if nodes.count > 4 {
             for j in 0..<nodes.count {
                 guard case .new = nodes[j].node else { continue }
@@ -164,6 +194,7 @@ public enum StrokePlanner {
                     if !path.isClosed && i == 0 && j == nodes.count - 1 { continue }
                     if simd_length(nodes[i].position - nodes[j].position) < selfTolerance {
                         canonical[j] = i
+                        nodes[i].isReal = true
                         break
                     }
                 }
@@ -178,6 +209,7 @@ public enum StrokePlanner {
             plan.nodes.append(nodes[c].node)
             let id = Int32(plan.nodes.count - 1)
             nodeIndex[c] = id
+            if options.camera != nil, !nodes[c].isReal { plan.bends.insert(id) }
             return id
         }
         var seenEdges = Set<UInt64>()
@@ -211,6 +243,146 @@ public enum StrokePlanner {
         out.extendsLine = extendsLine
         out.connectedLines = connectedLines
         return out
+    }
+
+    /// Picks out the places a pencil line turns sharply. How far around to look is in stroke points,
+    /// so a curve drawn at any zoom only reads as a corner if it turns within a small space on screen.
+    private static func markCorners(_ nodes: inout [PathNode], isClosed: Bool, camera: Camera) {
+        let reach = 2
+        let n = nodes.count
+        guard n >= reach * 2 + 1 else { return }
+        let screens = nodes.map { camera.project($0.position)?.screen }
+        func turn(at i: Int) -> Float {
+            if !isClosed, i < reach || i >= n - reach { return 0 }
+            guard let before = screens[(i + n - reach) % n], let here = screens[i], let after = screens[(i + reach) % n] else { return 0 }
+            let a = here - before, b = after - here
+            guard simd_length_squared(a) > 0, simd_length_squared(b) > 0 else { return 0 }
+            return acos(simd_clamp(simd_dot(simd_normalize(a), simd_normalize(b)), -1, 1))
+        }
+        let turns = (0..<n).map(turn)
+        for i in 0..<n where turns[i] >= cornerAngle {
+            let isSharpest = (1...reach).allSatisfy { turns[i] >= turns[(i + $0) % n] && turns[i] > turns[(i + n - $0) % n] }
+            if isSharpest { nodes[i].isReal = true }
+        }
+    }
+
+    /// A stroke carrying a line on without turning leaves no corner where they join.
+    private static func flows(from v: VertexID, heading: Vec3, in mesh: Mesh) -> Bool {
+        guard let edge = mesh.edgesOf(v).first, simd_length_squared(heading) > 0 else { return false }
+        let outward = mesh.position(v) - mesh.position(mesh.otherEnd(edge, from: v))
+        return simd_length_squared(outward) > 0 && simd_dot(simd_normalize(outward), simd_normalize(heading)) >= 0.7
+    }
+
+    /// Where a pencil line's end lands: on a real point in reach, or else on a line in reach.
+    private static func snapOnScreen(position: Vec3, normal: Vec3, mesh: Mesh, options: StrokePlanOptions, camera: Camera) -> (node: PlanNode, position: Vec3)? {
+        guard let here = camera.project(position)?.screen else { return nil }
+        let inReach = options.snapRadius * 4
+        if let v = realPoint(near: here, radius: options.snapRadiusPoints, normal: normal, position: position, mesh: mesh, options: options, camera: camera) {
+            return (.existing(v), mesh.position(v))
+        }
+        var best: (edge: EdgeID, t: Float, point: Vec3)?
+        var bestDistance = options.snapRadiusPoints * 0.6
+        for e in mesh.aliveEdges {
+            let (a, b) = mesh.ends(e)
+            let pa = mesh.position(a), pb = mesh.position(b)
+            guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { continue }
+            let span = sb - sa
+            let t = simd_clamp(simd_dot(here - sa, span) / max(simd_length_squared(span), 1e-6), 0, 1)
+            let d = simd_length(sa + span * t - here)
+            let point = simd_mix(pa, pb, Vec3(repeating: t))
+            if d < bestDistance, simd_length(point - position) <= max(inReach, simd_length(pa - pb) * 0.25), sameSide(of: a, normal: normal, mesh: mesh, options: options) {
+                bestDistance = d
+                best = (e, t, point)
+            }
+        }
+        guard let best else { return nil }
+        return on(edge: best.edge, t: best.t, near: best.point, mesh: mesh, options: options, camera: camera)
+    }
+
+    /// A place on an edge: one of its ends if that's where it is, or else a new point there.
+    private static func on(edge e: EdgeID, t: Float, near point: Vec3, mesh: Mesh, options: StrokePlanOptions, camera: Camera) -> (node: PlanNode, position: Vec3)? {
+        let (a, b) = mesh.ends(e)
+        guard let here = camera.project(point)?.screen else { return nil }
+        for v in [a, b] {
+            if let end = camera.project(mesh.position(v))?.screen, simd_length(end - here) <= 3 { return (.existing(v), mesh.position(v)) }
+        }
+        var position = point
+        if let hit = options.projector?.closest(to: point, maxDistance: .greatestFiniteMagnitude) {
+            position = hit.position + hit.normal * options.surfaceOffset
+        }
+        return (.split(edge: e, t: t, position: position), position)
+    }
+
+    /// The nearest real point to a place on screen, on the same side of the model and not just lined up with it.
+    private static func realPoint(near here: Vec2, radius: Float, normal: Vec3, position: Vec3, mesh: Mesh, options: StrokePlanOptions, camera: Camera) -> VertexID? {
+        var best: VertexID?
+        var bestDistance = radius
+        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
+            let p = mesh.position(v)
+            guard let there = camera.project(p)?.screen else { continue }
+            let d = simd_length(there - here)
+            if d < bestDistance, simd_length(p - position) <= options.snapRadius * 4, sameSide(of: v, normal: normal, mesh: mesh, options: options) {
+                bestDistance = d
+                best = v
+            }
+        }
+        return best
+    }
+
+    /// Where a pencil line crosses other lines, as seen on screen.
+    private static func findScreenCrossings(path: ProcessedPath, nodes: [PathNode], mesh: Mesh, options: StrokePlanOptions, camera: Camera, spacing: Float) -> [PathNode] {
+        struct Line {
+            var edge: EdgeID
+            var a, b: Vec2
+            var pa, pb: Vec3
+        }
+        let lines: [Line] = mesh.aliveEdges.compactMap { e in
+            guard mesh.faceCountOf(edge: e) < 2 else { return nil }
+            let (a, b) = mesh.ends(e)
+            let pa = mesh.position(a), pb = mesh.position(b)
+            guard let sa = camera.project(pa)?.screen, let sb = camera.project(pb)?.screen else { return nil }
+            return Line(edge: e, a: sa, b: sb, pa: pa, pb: pb)
+        }
+        var found: [PathNode] = []
+        let segmentCount = path.isClosed ? nodes.count : nodes.count - 1
+        for i in 0..<max(segmentCount, 0) {
+            let from = nodes[i], to = nodes[(i + 1) % nodes.count]
+            guard let p = camera.project(from.position)?.screen, let q = camera.project(to.position)?.screen else { continue }
+            let stroke = q - p
+            for line in lines {
+                let span = line.b - line.a
+                let denominator = stroke.x * span.y - stroke.y * span.x
+                guard abs(denominator) > 1e-6 else { continue }
+                let gap = line.a - p
+                let s = (gap.x * span.y - gap.y * span.x) / denominator
+                let t = (gap.x * stroke.y - gap.y * stroke.x) / denominator
+                guard s >= 0, s <= 1, t >= 0, t <= 1 else { continue }
+                let onStroke = simd_mix(from.position, to.position, Vec3(repeating: s))
+                let onLine = simd_mix(line.pa, line.pb, Vec3(repeating: t))
+                guard simd_length(onStroke - onLine) <= max(options.snapRadius * 4, simd_length(line.pa - line.pb) * 0.25),
+                      sameSide(of: mesh.ends(line.edge).0, normal: from.normal, mesh: mesh, options: options) else { continue }
+                let along = from.along + (to.along - from.along) * s
+                // A snapped end already deals with the topology there.
+                if !path.isClosed, along < spacing * 0.5 || along > path.length - spacing * 0.5 {
+                    if case .new = nodes[along < spacing ? 0 : nodes.count - 1].node {} else { continue }
+                }
+                if found.contains(where: { abs($0.along - along) < spacing * 0.25 }) { continue }
+                let here = p + stroke * s
+                let node: PlanNode
+                let position: Vec3
+                if let v = realPoint(near: here, radius: options.snapRadiusPoints * 0.5, normal: from.normal, position: onStroke, mesh: mesh, options: options, camera: camera) {
+                    node = .existing(v)
+                    position = mesh.position(v)
+                } else if let place = on(edge: line.edge, t: t, near: onStroke, mesh: mesh, options: options, camera: camera) {
+                    node = place.node
+                    position = place.position
+                } else {
+                    continue
+                }
+                found.append(PathNode(node: node, position: position, normal: from.normal, along: along, isCrossing: true, isReal: true))
+            }
+        }
+        return found
     }
 
     /// A stroke that picked up a line from a distance would join it with one long edge. This spaces

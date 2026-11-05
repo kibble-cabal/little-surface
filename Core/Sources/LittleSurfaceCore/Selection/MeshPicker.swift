@@ -29,14 +29,17 @@ public struct MeshPicker {
             if simd_dot(normal, simd_normalize(toEye)) < -0.25 { return false }
         }
         guard let projector, !projector.isEmpty else { return true }
+        // A straight edge or a flat quad can dip under a curved surface and still be in plain view,
+        // so what counts is the surface there.
+        let onSurface = projector.closest(to: p, maxDistance: .greatestFiniteMagnitude)?.position ?? p
         let tolerance = max(camera.worldPerPoint(at: p) * 3, max(projector.surfaceOffset * 2, projector.bounds.diagonal * 0.0015))
-        return !projector.isOccluded(p, from: camera.occlusionEye(for: p), tolerance: tolerance)
+        return !projector.isOccluded(onSurface, from: camera.occlusionEye(for: p), tolerance: tolerance)
     }
 
     public func pickVertex(at screen: Vec2, radius: Float) -> VertexID? {
         var best = invalidID
         var bestScore = radius
-        for v in mesh.aliveVertices {
+        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
             let p = mesh.position(v)
             guard let projected = camera.project(p) else { continue }
             let d = simd_length(projected.screen - screen)
