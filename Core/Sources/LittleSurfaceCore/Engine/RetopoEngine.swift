@@ -724,7 +724,30 @@ public final class RetopoEngine {
         recordEdit(before: before, label: label)
     }
 
-    private var currentSnapshot: EditSnapshot { EditSnapshot(mesh: mesh, selection: selection, sculpts: sculpts, sketches: sketches) }
+    private var currentSnapshot: EditSnapshot {
+        var snapshot = EditSnapshot(mesh: mesh, selection: selection, sculpts: sculpts, sketches: sketches)
+        snapshot.pickedMark = pickedMark
+        return snapshot
+    }
+
+    private static let pickLabel = "Pick"
+
+    /// Picking is a step of its own, so undo can go back through it. Nothing about the drawing changes,
+    /// so it isn't an edit and doesn't reach the timelapse.
+    private func recordPick(from before: EditSnapshot) {
+        guard selection != before.selection || pickedMark != before.pickedMark else { return }
+        history.record(before: before, label: Self.pickLabel)
+    }
+
+    private func restorePick(_ snapshot: EditSnapshot) {
+        selection = snapshot.selection
+        if pickedMark != snapshot.pickedMark {
+            pickedMark = snapshot.pickedMark
+            sketchRevision &+= 1
+        }
+        rebuildOverlay()
+        notify()
+    }
 
     /// Every committed change to the mesh passes through here, whichever tool made it, so undo and
     /// everything that follows an edit treat them all alike. `before` is the state the edit started from.
@@ -756,17 +779,30 @@ public final class RetopoEngine {
         // stray tap never costs an earlier edit as well.
         if undoUncommittedWork() { return }
         cancelTransientState()
+        let isPick = history.undoLabel == Self.pickLabel
         guard let snapshot = history.undo(current: currentSnapshot) else { return }
+        if isPick { return restorePick(snapshot) }
         restore(snapshot)
+        pickAgain(from: snapshot)
         say("Undid \(history.redoLabel ?? "edit")")
     }
 
     public func redo() {
         if isMidGesture { pencilCancelled() }
         cancelTransientState()
+        let isPick = history.redoLabel == Self.pickLabel
         guard let snapshot = history.redo(current: currentSnapshot) else { return }
+        if isPick { return restorePick(snapshot) }
         restore(snapshot)
+        pickAgain(from: snapshot)
         say("Redid \(history.undoLabel ?? "edit")")
+    }
+
+    /// A mark that was picked when this state was recorded still is, once the edit is taken back.
+    private func pickAgain(from snapshot: EditSnapshot) {
+        guard snapshot.pickedMark != nil else { return }
+        pickedMark = snapshot.pickedMark
+        sketchRevision &+= 1
     }
 
     /// Throws away one piece of unfinished work. Returns false when there was none.
@@ -1200,7 +1236,9 @@ public final class RetopoEngine {
     private func finishPencilStroke(_ capture: StrokeCapture, tapPoint: Vec2) {
         overlay.mirrorEdges = []
         guard capture.screenLength >= minimumStrokeLength else {
+            let before = currentSnapshot
             pencilTap(at: tapPoint)
+            recordPick(from: before)
             return
         }
         pickedMark = nil

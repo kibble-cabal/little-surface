@@ -3,6 +3,8 @@ import Foundation
 /// The state undo restores: connectivity, positions, face indices and selection all live in these two
 /// value types, so restoring a snapshot can't disagree with itself.
 public struct EditSnapshot {
+    /// The pencil mark picked at the time, by its place in `sketches`.
+    public var pickedMark: Int?
     public var mesh: Mesh
     public var selection: Selection
     /// The geometry of every source that has been updated, so undo can go back across an update.
