@@ -635,3 +635,66 @@ final class LineWeightTests: XCTestCase {
         XCTAssertEqual(loaded.lineWeights, engine.mesh.lineWeights)
     }
 }
+
+/// Moving by what the Pencil crosses on screen, not by how far apart two parts of the model happen to be.
+final class MoveAcrossPartsTests: XCTestCase {
+    /// A small panel standing well in front of a big one, so the Pencil can pass from one to the other.
+    private func engine() -> RetopoEngine {
+        let front = Fixtures.plane(size: 2, divisions: 20, z: 1)
+        let back = Fixtures.plane(size: 8, divisions: 40, z: 0)
+        let e = Fixtures.engine(with: SourceObject.merged([front, back], name: "Panels"), camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        return e
+    }
+
+    private func biggestMove(from before: Mesh, in e: RetopoEngine) -> Float {
+        e.mesh.aliveVertices.reduce(0) { max($0, simd_length(e.mesh.position($1) - before.position($1))) }
+    }
+
+    /// Where the front panel's right edge shows on screen.
+    private func edgeX(_ e: RetopoEngine) -> Float { e.camera.project(Vec3(1, 0, 1))!.screen.x }
+
+    func testMoveHoldsWhenThePencilPassesOntoAnotherPart() {
+        let e = engine()
+        let edge = edgeX(e)
+        Fixtures.draw(e, from: Vec2(edge - 30, 420), to: Vec2(edge - 30, 580))
+        e.setTool(.moveBrush)
+        let before = e.mesh
+        let start = Vec2(edge - 20, 500), end = Vec2(edge + 20, 500)
+        e.pencilBegan(at: start)
+        for t in stride(from: Float(0.1), through: 1, by: 0.1) { e.pencilMoved(to: simd_mix(start, end, Vec2(repeating: t))) }
+        e.pencilEnded(at: end)
+        let hand = simd_length(end - start) * e.camera.worldPerPoint(at: Vec3(1, 0, 1))
+        XCTAssertLessThanOrEqual(biggestMove(from: before, in: e), hand, "A point shouldn't go further than the Pencil did")
+        for v in e.mesh.aliveVertices { XCTAssertEqual(e.mesh.position(v).z, 1, accuracy: 0.01, "It stays on the front panel") }
+    }
+
+    func testMoveCarriesOnOnceThePencilComesBack() {
+        let e = engine()
+        let edge = edgeX(e)
+        Fixtures.draw(e, from: Vec2(edge - 30, 420), to: Vec2(edge - 30, 580))
+        e.setTool(.moveBrush)
+        let path: [Vec2] = [Vec2(edge - 30, 500), Vec2(edge - 15, 500), Vec2(edge + 20, 500), Vec2(edge - 15, 500), Vec2(edge - 40, 500)]
+        let before = e.mesh
+        e.pencilBegan(at: path[0])
+        for p in path.dropFirst() { e.pencilMoved(to: p) }
+        e.pencilEnded(at: path[4])
+        let moved = biggestMove(from: before, in: e)
+        XCTAssertGreaterThan(moved, 0, "Moving works again once back on the same part")
+    }
+
+    func testAPointHeldAndDraggedStaysOnItsOwnPart() {
+        let e = engine()
+        let edge = edgeX(e)
+        Fixtures.draw(e, from: Vec2(edge - 30, 420), to: Vec2(edge - 30, 580))
+        let point = e.mesh.aliveVertices.first { !e.mesh.isBendVertex($0) }!
+        let at = e.camera.project(e.mesh.position(point))!.screen
+        e.pencilBegan(at: at)
+        e.pencilHeld()
+        let end = Vec2(edge + 40, at.y)
+        for t in stride(from: Float(0.1), through: 1, by: 0.1) { e.pencilMoved(to: simd_mix(at, end, Vec2(repeating: t))) }
+        e.pencilEnded(at: end)
+        XCTAssertEqual(e.mesh.position(point).z, 1, accuracy: 0.01)
+        XCTAssertLessThan(simd_length(e.camera.project(e.mesh.position(point))!.screen - Vec2(edge, at.y)), 12, "It stops at the edge it reached")
+    }
+}

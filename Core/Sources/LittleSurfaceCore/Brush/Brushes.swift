@@ -33,6 +33,41 @@ public struct BrushStamp {
     }
 }
 
+/// Follows the Pencil along one stretch of surface. Where the next hit is on another part of the model,
+/// such as the lower lip showing past the upper one, it holds until the Pencil comes back, so what's
+/// being moved never leaps across the gap.
+struct SurfaceTrack {
+    /// A surface inclined 84° from the screen stretches distances about tenfold.
+    private static let stretch: Float = 10
+    /// How closely the Pencil has to come back, having left.
+    private static let returning: Float = 2
+
+    private(set) var position: Vec3
+    private var screen: Vec2
+    private var isAway = false
+
+    init(position: Vec3, screen: Vec2) {
+        self.position = position
+        self.screen = screen
+    }
+
+    /// The Pencil has gone off the model.
+    mutating func leave() { isAway = true }
+
+    /// Whether a hit carries on from the last one, which it then becomes.
+    mutating func follow(to hit: Vec3, screen next: Vec2, worldPerPoint: Float) -> Bool {
+        let limit = isAway ? Self.returning : Self.stretch
+        guard simd_length(hit - position) <= max(simd_length(next - screen), 1.5) * worldPerPoint * limit else {
+            isAway = true
+            return false
+        }
+        position = hit
+        screen = next
+        isAway = false
+        return true
+    }
+}
+
 public enum Brushes {
     /// Vertices affected by a stamp, on the same side of the surface as the stamp.
     static func affected(_ mesh: Mesh, stamp: BrushStamp) -> [(VertexID, Float)] {

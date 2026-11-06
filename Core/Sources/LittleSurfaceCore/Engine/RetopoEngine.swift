@@ -160,7 +160,7 @@ public final class RetopoEngine {
         case tapOnly(start: Vec2)
         case select(SelectDrag)
         case lasso([Vec2])
-        case brush(before: EditSnapshot, lastHit: SurfaceHit?, label: String)
+        case brush(before: EditSnapshot, track: SurfaceTrack?, label: String)
         case erase
         /// A stroke that's become a clean shape. `grabbed` is where the Pencil was when it did, and it
         /// can still resize and turn it from there, until it lifts.
@@ -180,6 +180,7 @@ public final class RetopoEngine {
         var targets: [VertexID]
         /// A point picked up by resting on it goes back to being drawn from once it's been put down.
         var staysPicked = true
+        var track: SurfaceTrack?
     }
 
     private var gesture = Gesture.idle
@@ -968,7 +969,7 @@ public final class RetopoEngine {
             gesture = .tapOnly(start: screen)
         case .moveBrush, .relaxBrush:
             let label = activeTool == .moveBrush ? "Move brush" : "Relax brush"
-            gesture = .brush(before: currentSnapshot, lastHit: nil, label: label)
+            gesture = .brush(before: currentSnapshot, track: nil, label: label)
             brushCursor = screen
             applyBrush(at: screen, pressure: pressure)
         case .erase:
@@ -2254,17 +2255,21 @@ public final class RetopoEngine {
         }
         switch dragBehavior {
         case .move:
-            dragMove(drag, to: screen)
+            dragMove(&drag, to: screen)
         case .slide:
             dragSlide(drag, to: screen)
         }
     }
 
-    private func dragMove(_ drag: SelectDrag, to screen: Vec2) {
+    private func dragMove(_ drag: inout SelectDrag, to screen: Vec2) {
         let ray = camera.ray(through: screen)
         var delta: Vec3
         var surfaceHit: SurfaceHit?
         if let projector = activeProjector, let hit = projector.raycast(ray) {
+            var track = drag.track ?? SurfaceTrack(position: drag.grabPoint, screen: drag.start)
+            let carriesOn = track.follow(to: hit.position, screen: screen, worldPerPoint: camera.worldPerPoint(at: track.position))
+            drag.track = track
+            guard carriesOn else { return }
             surfaceHit = hit
             delta = hit.offsetPosition(projector.surfaceOffset) - drag.grabPoint
         } else {
@@ -2273,7 +2278,10 @@ public final class RetopoEngine {
             guard abs(denom) > 1e-5 else { return }
             let t = simd_dot(drag.grabPoint - ray.origin, drag.grabPlaneNormal) / denom
             delta = ray.at(t) - drag.grabPoint
-            if activeProjector != nil { return }
+            if activeProjector != nil {
+                drag.track?.leave()
+                return
+            }
         }
         // Only the side being dragged is driven directly; the other side mirrors it.
         var primary = drag.targets
@@ -2386,9 +2394,9 @@ public final class RetopoEngine {
     // MARK: Brushes
 
     private func applyBrush(at screen: Vec2, pressure: Float) {
-        guard case .brush(let before, let lastHit, let label) = gesture else { return }
+        guard case .brush(let before, var track, let label) = gesture else { return }
         guard let projector, let hit = projector.raycast(camera.ray(through: screen)) else {
-            gesture = .brush(before: before, lastHit: nil, label: label)
+            gesture = .brush(before: before, track: nil, label: label)
             return
         }
         let settings = tools.brush
@@ -2398,10 +2406,13 @@ public final class RetopoEngine {
         let stamp = BrushStamp(center: hit.position, worldRadius: worldRadius, strength: strength, normal: hit.normal)
         if activeTool == .relaxBrush {
             Brushes.relax(&mesh, stamp: stamp, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
-        } else if let lastHit {
-            Brushes.move(&mesh, stamp: stamp, delta: hit.position - lastHit.position, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
+        } else if track != nil {
+            let from = track?.position ?? hit.position
+            if track?.follow(to: hit.position, screen: screen, worldPerPoint: camera.worldPerPoint(at: from)) == true {
+                Brushes.move(&mesh, stamp: stamp, delta: hit.position - from, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
+            }
         }
-        gesture = .brush(before: before, lastHit: hit, label: label)
+        gesture = .brush(before: before, track: track ?? SurfaceTrack(position: hit.position, screen: screen), label: label)
     }
 
     /// Marks the whole lines and the marks the eraser has reached since it last moved. They go when it lifts.
