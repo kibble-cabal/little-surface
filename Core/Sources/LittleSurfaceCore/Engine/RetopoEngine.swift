@@ -1271,6 +1271,8 @@ public final class RetopoEngine {
     /// How far apart a stroke and a line can be and still read as going over that line, about what a
     /// hand wanders by.
     static let sliverWidthPoints: Float = 20
+    /// Points this close on the screen can't be told apart.
+    static let pointGapPoints: Float = 5
 
     /// The pencil mark a tap picked, by its place in `sketches`.
     public private(set) var pickedMark: Int?
@@ -1399,10 +1401,11 @@ public final class RetopoEngine {
                 guard !plan.plan.nodes.isEmpty else { continue }
                 let result = try PlanApplier.apply(plan.plan, to: &mesh, symmetry: symmetry, projector: projector)
                 total.edges += result.edges
+                total.vertices += result.vertices
                 met += result.nodeVertices
             }
             guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
-            straightened = try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, sliverWidth: Self.sliverWidthPoints * scale, in: &mesh, projector: projector, symmetry: symmetry)
+            straightened = try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, sliverWidth: Self.sliverWidthPoints * scale, pointGap: Self.pointGapPoints * scale, in: &mesh, projector: projector, symmetry: symmetry)
             selection.clear()
         }
         clearMessage()
@@ -2960,7 +2963,8 @@ public final class RetopoEngine {
             var result = PlanResult()
             if !plan.isEmpty { result = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector) }
             let met = mesh.aliveVertices.filter { !mesh.isBendVertex($0) }
-            _ = try DrawnFaces.update(after: result, met: met, sliverWidth: Self.sliverWidthPoints * scale, in: &mesh, projector: projector, symmetry: symmetry)
+            result.vertices = met
+            _ = try DrawnFaces.update(after: result, met: met, sliverWidth: Self.sliverWidthPoints * scale, pointGap: diagonal * 0.0015, in: &mesh, projector: projector, symmetry: symmetry)
             selection.clear()
         }
         clearMessage()

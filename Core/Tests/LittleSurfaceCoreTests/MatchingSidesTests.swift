@@ -2,6 +2,87 @@ import XCTest
 import simd
 @testable import LittleSurfaceCore
 
+/// Two points on top of each other, which nobody meant.
+final class PointsTooCloseTests: XCTestCase {
+    private func stripWithAStackedCorner(gap: Float) throws -> (Mesh, VertexID) {
+        var mesh = Mesh()
+        let a = mesh.addVertex(Vec3(1, 1, 0)), b = mesh.addVertex(Vec3(1, 0, 0)), c = mesh.addVertex(Vec3(2, 0, 0))
+        let d = mesh.addVertex(Vec3(2, 1, 0)), extra = mesh.addVertex(Vec3(1.5, 1, 0)), stacked = mesh.addVertex(Vec3(1.5 - gap, 1, 0))
+        try mesh.addFace([a, b, c, d, extra, stacked], autoOrient: false)
+        return (mesh, stacked)
+    }
+
+    func testAPointMadeOnTopOfAnotherJoinsIt() throws {
+        var (mesh, stacked) = try stripWithAStackedCorner(gap: 0.001)
+        XCTAssertEqual(mesh.cornerCount(of: mesh.aliveFaces[0]), 6)
+        var result = PlanResult()
+        result.vertices = [stacked]
+        var met: [VertexID] = []
+        DrawnFaces.joinPointsTooCloseToTell(result: &result, met: &met, gap: 0.003, in: &mesh, symmetry: SymmetrySettings())
+        XCTAssertEqual(mesh.cornerCount(of: mesh.aliveFaces[0]), 5)
+        XCTAssertEqual(mesh.aliveVertices.count, 5)
+    }
+
+    func testPointsAlreadyThereAndPointsApartAreLeftAlone() throws {
+        var (mesh, stacked) = try stripWithAStackedCorner(gap: 0.001)
+        var result = PlanResult()
+        var met: [VertexID] = []
+        DrawnFaces.joinPointsTooCloseToTell(result: &result, met: &met, gap: 0.003, in: &mesh, symmetry: SymmetrySettings())
+        XCTAssertEqual(mesh.aliveVertices.count, 6)
+        (mesh, stacked) = try stripWithAStackedCorner(gap: 0.01)
+        result.vertices = [stacked]
+        DrawnFaces.joinPointsTooCloseToTell(result: &result, met: &met, gap: 0.003, in: &mesh, symmetry: SymmetrySettings())
+        XCTAssertEqual(mesh.aliveVertices.count, 6)
+    }
+
+    func testTheOtherSideJoinsToo() throws {
+        var (mesh, stacked) = try stripWithAStackedCorner(gap: 0.001)
+        var image: [VertexID: VertexID] = [:]
+        for v in mesh.aliveVertices {
+            let p = mesh.position(v)
+            image[v] = mesh.addVertex(Vec3(-p.x, p.y, p.z))
+            mesh.setMirrorPartner(v, image[v]!)
+            mesh.setMirrorPartner(image[v]!, v)
+        }
+        try mesh.addFace(mesh.loop(mesh.aliveFaces[0]).reversed().map { image[$0]! }, autoOrient: false)
+        var settings = SymmetrySettings()
+        settings.isEnabled = true
+        var result = PlanResult()
+        result.vertices = [stacked]
+        var met: [VertexID] = []
+        DrawnFaces.joinPointsTooCloseToTell(result: &result, met: &met, gap: 0.003, in: &mesh, symmetry: settings)
+        XCTAssertEqual(mesh.aliveVertices.count, 10)
+        for f in mesh.aliveFaces { XCTAssertEqual(mesh.cornerCount(of: f), 5) }
+        for v in mesh.aliveVertices {
+            let q = VertexID(mesh.mirrorPartner[Int(v)])
+            XCTAssertTrue(mesh.isVertexAlive(q))
+            XCTAssertEqual(VertexID(mesh.mirrorPartner[Int(q)]), v)
+        }
+    }
+
+    func testAPairEitherSideOfTheMiddleBecomesOnePointOnIt() throws {
+        var mesh = Mesh()
+        let a = mesh.addVertex(Vec3(0.0005, 0, 0)), b = mesh.addVertex(Vec3(-0.0005, 0, 0))
+        let c = mesh.addVertex(Vec3(1, 1, 0)), d = mesh.addVertex(Vec3(-1, 1, 0))
+        try mesh.ensureEdge(a, c)
+        try mesh.ensureEdge(b, d)
+        mesh.setMirrorPartner(a, b)
+        mesh.setMirrorPartner(b, a)
+        mesh.setMirrorPartner(c, d)
+        mesh.setMirrorPartner(d, c)
+        var settings = SymmetrySettings()
+        settings.isEnabled = true
+        var result = PlanResult()
+        result.vertices = [a, b]
+        var met: [VertexID] = []
+        DrawnFaces.joinPointsTooCloseToTell(result: &result, met: &met, gap: 0.003, in: &mesh, symmetry: settings)
+        XCTAssertEqual(mesh.aliveVertices.count, 3)
+        let middle = mesh.aliveVertices.first { mesh.edgesOf($0).count == 2 }!
+        XCTAssertEqual(mesh.mirrorPartner[Int(middle)], middle)
+        XCTAssertEqual(mesh.position(middle).x, 0, accuracy: 1e-5)
+    }
+}
+
 /// Turning mirror on after drawing something, and every stroke from then on.
 final class MatchingSidesTests: XCTestCase {
     private func engine() -> RetopoEngine {

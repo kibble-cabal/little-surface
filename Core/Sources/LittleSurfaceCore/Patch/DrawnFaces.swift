@@ -6,10 +6,14 @@ import simd
 public enum DrawnFaces {
     /// After a stroke: `result` is what it added, and `met` holds the points it used that were already
     /// there. `around` is the edges of any faces already taken out. `sliverWidth` is how far apart two
-    /// lines can be and still read as one line drawn twice. Returns the sides that went straight.
+    /// lines can be and still read as one line drawn twice, and `pointGap` how far apart two points can
+    /// be and still read as one. Returns the sides that went straight.
     @discardableResult
-    static func update(after result: PlanResult, met: [VertexID], around: [EdgeID] = [], sliverWidth: Float = 0, in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws -> [StraightenedSide] {
+    static func update(after stroke: PlanResult, met: [VertexID], around: [EdgeID] = [], sliverWidth: Float = 0, pointGap: Float = 0, in mesh: inout Mesh, projector: SurfaceProjector?, symmetry: SymmetrySettings) throws -> [StraightenedSide] {
         mesh.settleBends()
+        var result = stroke
+        var met = met
+        joinPointsTooCloseToTell(result: &result, met: &met, gap: pointGap, in: &mesh, symmetry: symmetry)
         absorbRetracedLines(along: result.edges, in: &mesh, symmetry: symmetry)
 
         // A line reaches as far as the lines it joins, so two strokes can cut a face between them.
@@ -55,6 +59,76 @@ public enum DrawnFaces {
         let straightened = mesh.straightenQuads(mirrored: symmetry.isEnabled)
         try layLinesOnModel(in: &mesh, projector: projector, symmetry: symmetry)
         return straightened
+    }
+
+    /// Two points nobody could tell apart are one point: a shape with both of them on it has a corner too
+    /// many, and shapes either side of them can't meet. It's only ever a point just made that goes: two
+    /// already there stay as they are, unless they're listed as just made too. The pair opposite goes with them.
+    static func joinPointsTooCloseToTell(result: inout PlanResult, met: inout [VertexID], gap: Float, in mesh: inout Mesh, symmetry: SymmetrySettings) {
+        guard gap > 0 else { return }
+        func onMiddle(_ v: VertexID) -> Bool { mesh.mirrorPartner[Int(v)] == v }
+        var joined = Set<VertexID>()
+        for v in Set(result.vertices).sorted() where mesh.isVertexAlive(v) && !mesh.isBendVertex(v) {
+            let here = mesh.position(v)
+            var nearest: VertexID?
+            var nearestDistance = gap
+            for u in mesh.aliveVertices where u != v && !mesh.isBendVertex(u) {
+                let d = simd_length(mesh.position(u) - here)
+                if d <= nearestDistance {
+                    nearestDistance = d
+                    nearest = u
+                }
+            }
+            guard let u = nearest else { continue }
+            // A point on the middle has to stay there, and otherwise the busier one is the one everything goes to.
+            let keepsU = onMiddle(u) != onMiddle(v) ? onMiddle(u) : mesh.edgesOf(u).count != mesh.edgesOf(v).count ? mesh.edgesOf(u).count > mesh.edgesOf(v).count : u < v
+            let (gone, kept) = keepsU ? (v, u) : (u, v)
+            var work = mesh
+            guard join(gone, into: kept, gap: gap, in: &work, symmetry: symmetry) else { continue }
+            mesh = work
+            joined.insert(kept)
+            if mesh.isVertexAlive(gone) { joined.insert(gone) }
+        }
+        guard !joined.isEmpty else { return }
+        result.edges = result.edges.filter(mesh.isEdgeAlive)
+        met = met.filter(mesh.isVertexAlive)
+        for v in joined where mesh.isVertexAlive(v) {
+            met.append(v)
+            result.edges += mesh.edgesOf(v)
+        }
+    }
+
+    private static func join(_ gone: VertexID, into kept: VertexID, gap: Float, in mesh: inout Mesh, symmetry: SymmetrySettings) -> Bool {
+        let plane = symmetry.activePlane
+        let goneOpposite = plane == nil ? invalidID : mesh.mirrorPartner[Int(gone)]
+        let keptOpposite = plane == nil ? invalidID : mesh.mirrorPartner[Int(kept)]
+        func merge(_ a: VertexID, _ b: VertexID) -> Bool {
+            var start = mesh.edgesOf(a)
+            while let edge = start.popLast() {
+                var line = [a], through = edge, length: Float = 0
+                while true {
+                    let next = mesh.otherEnd(through, from: line[line.count - 1])
+                    length += simd_length(mesh.position(next) - mesh.position(line[line.count - 1]))
+                    line.append(next)
+                    guard mesh.isBendVertex(next), let on = mesh.edgesOf(next).first(where: { $0 != through }) else { break }
+                    through = on
+                }
+                guard line[line.count - 1] == b, line.count > 2, length <= gap * 4 else { continue }
+                for bend in line.dropFirst().dropLast() { guard (try? mesh.dissolveVertex(bend)) != nil else { return false } }
+                break
+            }
+            return (try? mesh.mergeVertex(a, into: b)) != nil
+        }
+        guard merge(gone, kept) else { return false }
+        if let plane, goneOpposite == kept || keptOpposite == gone {
+            // A pair either side of the middle is on it now.
+            mesh.setPosition(kept, plane.snap(mesh.position(kept)))
+            mesh.setMirrorPartner(kept, kept)
+            return true
+        }
+        guard goneOpposite >= 0, goneOpposite != gone, mesh.isVertexAlive(goneOpposite) else { return true }
+        let target = keptOpposite >= 0 ? keptOpposite : kept
+        return goneOpposite == target || merge(goneOpposite, target)
     }
 
     /// How far a straight line can stand off the model, against its length, before it's put back on.
