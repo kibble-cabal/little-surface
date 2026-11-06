@@ -21,6 +21,8 @@ public struct StrokePlanOptions {
     public var mirror: MirrorPlane?
     /// In a view that shows through the model, what's behind counts as seen.
     public var seesThroughModel = false
+    /// Lines this stroke is drawn over from end to end. It takes their place, so it doesn't meet them.
+    public var redrawnEdges: Set<EdgeID> = []
 
     public init(snapRadius: Float, crossingTolerance: Float, projector: SurfaceProjector? = nil) {
         self.snapRadius = snapRadius
@@ -416,7 +418,8 @@ public enum StrokePlanner {
                 let onStroke = simd_mix(from.position, to.position, Vec3(repeating: s))
                 let onLine = simd_mix(line.pa, line.pb, Vec3(repeating: t))
                 let isClose = simd_length(onStroke - onLine) <= max(options.snapRadius * 4, simd_length(line.pa - line.pb) * 0.25)
-                guard isClose || isInFront(onLine, of: onStroke, camera: camera),
+                guard !options.redrawnEdges.contains(line.edge),
+                      isClose || isInFront(onLine, of: onStroke, camera: camera),
                       sameSide(of: mesh.ends(line.edge).0, normal: from.normal, mesh: mesh, options: options),
                       isInView(onLine, mesh: mesh, options: options, camera: camera) else { continue }
                 let along = from.along + (to.along - from.along) * s
@@ -503,6 +506,215 @@ public enum StrokePlanner {
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: options.projector)
         picker.ignoresOcclusion = options.seesThroughModel
         return picker.isVisible(p, normal: nil)
+    }
+
+    /// How far from a line, on the screen, a stroke can wander and still be going over it.
+    private static let retraceWidthPoints: Float = 9
+    /// How far a stroke has to run along a line to be going over it, rather than crossing it at a shallow angle.
+    private static let retraceLengthPoints: Float = 44
+    /// How far it can bow away from the line in between. It's the same as for two lines reading as one.
+    private static let retraceBowPoints: Float = 20
+
+    /// The parts of a pencil line to keep, once the parts going over lines already there are taken out:
+    /// those lines are drawn already. Going over one from end to end redraws it, so that part stays, as a
+    /// stroke of its own that doesn't meet the line it's replacing.
+    public static func withoutRetracing(_ path: ProcessedPath, mesh: Mesh, options: StrokePlanOptions) -> (pieces: [ProcessedPath], redrawn: Set<EdgeID>) {
+        guard let camera = options.camera, !path.isClosed, !mesh.isEmpty, path.points.count >= 2 else { return ([path], []) }
+        struct Chain {
+            var edges: [EdgeID]
+            var points: [Vec2]
+            var along: [Float]
+            var length: Float { along[along.count - 1] }
+        }
+        var chains: [Chain] = []
+        var walked = Set<EdgeID>()
+        func walk(from start: VertexID, along first: EdgeID) {
+            var edges: [EdgeID] = []
+            var vertices = [start]
+            var through = first
+            while true {
+                edges.append(through)
+                walked.insert(through)
+                let next = mesh.otherEnd(through, from: vertices[vertices.count - 1])
+                vertices.append(next)
+                guard next != start, mesh.isBendVertex(next), let on = mesh.edgesOf(next).first(where: { $0 != through }) else { break }
+                through = on
+            }
+            let points = vertices.compactMap { camera.project(mesh.position($0))?.screen }
+            guard points.count == vertices.count else { return }
+            var along: [Float] = [0]
+            for (a, b) in zip(points, points.dropFirst()) { along.append(along[along.count - 1] + simd_length(b - a)) }
+            chains.append(Chain(edges: edges, points: points, along: along))
+        }
+        for v in mesh.aliveVertices where !mesh.isBendVertex(v) {
+            for e in mesh.edgesOf(v) where !walked.contains(e) { walk(from: v, along: e) }
+        }
+        // A closed line with no real points on it.
+        for e in mesh.aliveEdges where !walked.contains(e) { walk(from: mesh.ends(e).0, along: e) }
+
+        var seen: [EdgeID: Bool] = [:]
+        func isSeen(_ e: EdgeID) -> Bool {
+            if let known = seen[e] { return known }
+            let (a, b) = mesh.ends(e)
+            let answer = isInView((mesh.position(a) + mesh.position(b)) * 0.5, mesh: mesh, options: options, camera: camera)
+            seen[e] = answer
+            return answer
+        }
+        // The line each point of the stroke is going over, and how far along it.
+        let screens = path.points.map { camera.project($0.position)?.screen }
+        var on: [(chain: Int, along: Float)?] = screens.indices.map { i in
+            guard let here = screens[i] else { return nil }
+            var best: (chain: Int, along: Float)?
+            var nearest = retraceWidthPoints
+            for (c, chain) in chains.enumerated() {
+                for s in 0..<(chain.points.count - 1) {
+                    let a = chain.points[s], span = chain.points[s + 1] - a
+                    let t = simd_clamp(simd_dot(here - a, span) / max(simd_length_squared(span), 1e-6), 0, 1)
+                    let d = simd_length(a + span * t - here)
+                    if d <= nearest, isSeen(chain.edges[s]), sameSide(of: mesh.ends(chain.edges[s]).0, normal: path.points[i].normal, mesh: mesh, options: options) {
+                        nearest = d
+                        best = (c, chain.along[s] + (chain.along[s + 1] - chain.along[s]) * t)
+                    }
+                }
+            }
+            return best
+        }
+        // A point off to one side, or nearer another line for a moment, doesn't break it up.
+        for i in on.indices.dropFirst().dropLast() {
+            if let before = on[i - 1], let after = on[i + 1], before.chain == after.chain, on[i]?.chain != before.chain {
+                on[i] = (before.chain, (before.along + after.along) * 0.5)
+            }
+        }
+        func screenLength(_ a: Int, _ b: Int) -> Float {
+            guard a < b else { return 0 }
+            return (a..<b).reduce(0) { total, i in
+                guard let p = screens[i], let q = screens[i + 1] else { return total }
+                return total + simd_length(q - p)
+            }
+        }
+        // Runs of points along one line that move along it about as far as they go.
+        var runs: [(from: Int, to: Int, chain: Int, reachesBothEnds: Bool)] = []
+        var i = 0
+        while i < on.count {
+            guard let first = on[i] else {
+                i += 1
+                continue
+            }
+            var j = i
+            while j + 1 < on.count, on[j + 1]?.chain == first.chain { j += 1 }
+            let length = screenLength(i, j)
+            let chain = chains[first.chain]
+            let isLoop = chain.points[0] == chain.points[chain.points.count - 1]
+            var moved = abs(on[j]!.along - first.along)
+            if isLoop { moved = min(moved, chain.length - moved) }
+            if length >= retraceLengthPoints || length >= chain.length * 0.5, moved >= length * 0.7, moved > 0 {
+                let reach = options.snapRadiusPoints * 0.8
+                let reachesBothEnds = !isLoop && min(first.along, on[j]!.along) <= reach && max(first.along, on[j]!.along) >= chain.length - reach
+                runs.append((i, j, first.chain, reachesBothEnds))
+            }
+            i = j + 1
+        }
+        guard !runs.isEmpty else { return ([path], []) }
+        // Bowing out from a line and back is still going over it, if it's no further than a sliver.
+        if runs.count > 1, Set(runs.map(\.chain)).count == 1, let first = runs.first, let final = runs.last {
+            let chain = chains[first.chain]
+            let stays = (first.from...final.to).allSatisfy { i in
+                guard let here = screens[i] else { return false }
+                return (0..<(chain.points.count - 1)).contains { s in
+                    let a = chain.points[s], span = chain.points[s + 1] - a
+                    let t = simd_clamp(simd_dot(here - a, span) / max(simd_length_squared(span), 1e-6), 0, 1)
+                    return simd_length(a + span * t - here) <= retraceBowPoints
+                }
+            }
+            if stays {
+                let from = on[first.from]!.along, to = on[final.to]!.along
+                let reach = options.snapRadiusPoints * 0.8
+                runs = [(first.from, final.to, first.chain, min(from, to) <= reach && max(from, to) >= chain.length - reach)]
+            }
+        }
+
+        func piece(_ a: Int, _ b: Int) -> ProcessedPath {
+            var out = path
+            out.points = Array(path.points[a...b])
+            out.length = StrokeProcessor.polylineLength(out.points)
+            out.endGap = simd_length(out.points[0].position - out.points[out.points.count - 1].position)
+            out.canClose = false
+            out.closeFrom = 0
+            out.closeTo = out.points.count - 1
+            return out
+        }
+        // Past the end of what it went over, a short bit is an overshoot.
+        let overshoot = options.snapRadiusPoints * 1.5
+        let last = path.points.count - 1
+        func isQuadSide(_ chain: Chain) -> Bool { chain.edges.contains { mesh.facesOf(edge: $0).contains(where: mesh.isQuad) } }
+        func isLoose(_ chain: Chain) -> Bool { chain.edges.allSatisfy(mesh.isWire) }
+        // A loose line gone right over is that stroke now, wherever the stroke goes from there.
+        var redrawn = Set<EdgeID>()
+        runs.removeAll { run in
+            let chain = chains[run.chain]
+            guard isLoose(chain), run.reachesBothEnds else { return false }
+            redrawn.formUnion(chain.edges)
+            return true
+        }
+        guard !runs.isEmpty else { return ([path], redrawn) }
+        // All the stroke did was go over part of a line. The side of a quad is straight whatever is drawn
+        // over it, but any other line takes the new shape there.
+        if runs.count == 1, screenLength(0, runs[0].from) <= overshoot, screenLength(runs[0].to, last) <= overshoot {
+            let chain = chains[runs[0].chain]
+            if isQuadSide(chain) { return ([], redrawn) }
+            return ([piece(runs[0].from, runs[0].to)], redrawn.union(chain.edges))
+        }
+        // Otherwise the stroke was on its way from one place to another, and that line is already drawn.
+        var pieces: [ProcessedPath] = []
+        func keep(_ a: Int, _ b: Int, isTail: Bool) {
+            guard a < b, screenLength(a, b) > (isTail ? overshoot : retraceWidthPoints * 2) else { return }
+            pieces.append(piece(a, b))
+        }
+        var next = 0
+        for run in runs {
+            keep(next, run.from, isTail: next == 0)
+            next = run.to
+        }
+        keep(next, last, isTail: true)
+        return (pieces, redrawn)
+    }
+
+    /// After a stroke has gone over part of a line, from `start` to `end`, the old way between them goes,
+    /// along with whatever was on the far side of it, and the points it landed on were only there to join it.
+    static func replaceRedrawnLine(from start: VertexID, to end: VertexID, drawn: PlanResult, before: Mesh, in mesh: inout Mesh, symmetry: SymmetrySettings) {
+        guard start != end, mesh.isVertexAlive(start), mesh.isVertexAlive(end) else { return }
+        let stroke = Set(drawn.edges)
+        let drawnPoints = stroke.flatMap { e -> [Vec3] in
+            let (a, b) = mesh.ends(e)
+            return [mesh.position(a), mesh.position(b)]
+        }
+        // Two lines can join the same two points. The old one is the one it went over.
+        var route: (edges: [EdgeID], apart: Float)?
+        for first in mesh.edgesOf(start) where !stroke.contains(first) {
+            var edges = [first]
+            var points: [Vec3] = []
+            var at = mesh.otherEnd(first, from: start)
+            while at != end, mesh.isBendVertex(at), let on = mesh.edgesOf(at).first(where: { $0 != edges[edges.count - 1] }) {
+                points.append(mesh.position(at))
+                edges.append(on)
+                at = mesh.otherEnd(on, from: at)
+            }
+            guard at == end else { continue }
+            let apart = points.reduce(Float(0)) { farthest, p in
+                max(farthest, drawnPoints.reduce(Float.infinity) { min($0, simd_length($1 - p)) })
+            }
+            if apart < route?.apart ?? .infinity { route = (edges, apart) }
+        }
+        guard let route else { return }
+        var old = Set(route.edges)
+        if symmetry.activePlane != nil { old = Symmetry.expanded(edges: old, in: mesh) }
+        mesh.deleteEdges(old)
+        func wasPoint(_ v: VertexID) -> Bool { before.isVertexAlive(v) && !before.isBendVertex(v) }
+        for v in [start, end] where !wasPoint(v) && mesh.isVertexAlive(v) && mesh.edgesOf(v).count == 2 {
+            mesh.setBend(v, true)
+            let partner = mesh.mirrorPartner[Int(v)]
+            if symmetry.activePlane != nil, partner >= 0, partner != v, mesh.isVertexAlive(partner), mesh.edgesOf(partner).count == 2 { mesh.setBend(partner, true) }
+        }
     }
 
     private static func isInFront(_ line: Vec3, of stroke: Vec3, camera: Camera) -> Bool {

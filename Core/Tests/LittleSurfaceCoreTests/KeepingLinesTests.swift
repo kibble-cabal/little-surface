@@ -718,3 +718,148 @@ final class EnclosedRegionTests: XCTestCase {
         XCTAssertFalse(regions.contains { Set($0.vertices) == Set(corners) })
     }
 }
+
+/// Going back over lines that are already there.
+final class GoingOverLinesTests: XCTestCase {
+    private func engine() -> RetopoEngine {
+        let e = Fixtures.engine(with: Fixtures.plane(size: 6, divisions: 60, z: 0), camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        return e
+    }
+    private func box() -> RetopoEngine {
+        let e = engine()
+        for (a, b) in [(Vec2(300, 300), Vec2(700, 300)), (Vec2(700, 300), Vec2(700, 700)), (Vec2(700, 700), Vec2(300, 700)), (Vec2(300, 700), Vec2(300, 300))] {
+            Fixtures.draw(e, from: a, to: b, steps: 30)
+        }
+        return e
+    }
+    private func along(_ x0: Float, _ x1: Float, y: Float, wobble: Float) -> [Vec2] {
+        (0...60).map { i in
+            let t = Float(i) / 60
+            return Vec2(x0 + (x1 - x0) * t, y + wobble * sin(t * 30))
+        }
+    }
+    private func reals(_ m: Mesh) -> Int { m.aliveVertices.filter { !m.isBendVertex($0) }.count }
+
+    func testGoingOverTheSideOfAQuadLeavesItAQuad() {
+        for wobble in [Float(0), 2, 4, 8] {
+            for (x0, x1) in [(Float(300), Float(700)), (270, 730), (400, 600)] where wobble < 8 || x0 != 270 {
+                let e = box()
+                Fixtures.drawPath(e, along(x0, x1, y: 300, wobble: wobble))
+                XCTAssertEqual(reals(e.mesh), 4, "wobble \(wobble), \(x0) to \(x1)")
+                XCTAssertEqual(e.mesh.aliveFaces.filter(e.mesh.isQuad).count, 1)
+                XCTAssertEqual(e.mesh.edgeCount, 4)
+            }
+        }
+    }
+
+    func testAStrokeThatRunsAlongASideOnItsWayOnlyMeetsItWhereItLeaves() {
+        let e = box()
+        Fixtures.drawPath(e, along(400, 600, y: 300, wobble: 3) + [Vec2(620, 340), Vec2(650, 400), Vec2(650, 500)])
+        XCTAssertEqual(reals(e.mesh), 6, "The box, where it leaves, and where it ends")
+        XCTAssertEqual(e.mesh.aliveFaces.count, 1)
+    }
+
+    func testALineWellClearOfASideStillDividesTheShape() {
+        let e = box()
+        Fixtures.drawPath(e, along(300, 700, y: 340, wobble: 0))
+        XCTAssertEqual(e.mesh.aliveFaces.filter(e.mesh.isQuad).count, 2)
+    }
+
+    func testAZigzagBackAndForthOverALineStillMeetsIt() {
+        let e = box()
+        Fixtures.drawPath(e, along(400, 600, y: 300, wobble: 30))
+        XCTAssertGreaterThan(reals(e.mesh), 8)
+    }
+
+    private func curvedShape() -> RetopoEngine {
+        let e = engine()
+        Fixtures.draw(e, from: Vec2(300, 300), to: Vec2(700, 300), steps: 40, bend: Vec2(0, -40))
+        Fixtures.draw(e, from: Vec2(700, 300), to: Vec2(500, 700))
+        Fixtures.draw(e, from: Vec2(500, 700), to: Vec2(300, 300))
+        return e
+    }
+    private func curve(_ u0: Float, _ u1: Float, bow: Float, wobble: Float) -> [Vec2] {
+        (0...50).map { i in
+            let t = Float(i) / 50, u = u0 + (u1 - u0) * t
+            return Vec2(300 + 400 * u, 300 - bow * 4 * u * (1 - u) + wobble * sin(t * 30))
+        }
+    }
+    private func highest(_ e: RetopoEngine) -> Float {
+        e.mesh.aliveVertices.compactMap { e.camera.project(e.mesh.position($0))?.screen.y }.min() ?? 0
+    }
+
+    func testGoingOverACurvedSideGivesItTheNewShape() {
+        let e = curvedShape()
+        Fixtures.drawPath(e, curve(0, 1, bow: 25, wobble: 2))
+        XCTAssertEqual(reals(e.mesh), 3)
+        XCTAssertEqual(e.mesh.aliveFaces.count, 1)
+        XCTAssertFalse(e.mesh.aliveEdges.contains(where: e.mesh.isWire), "Nothing left beside it")
+        XCTAssertEqual(highest(e), 275, accuracy: 4)
+    }
+
+    func testGoingOverPartOfACurvedSideAddsNoCorners() {
+        let e = curvedShape()
+        Fixtures.drawPath(e, curve(0.25, 0.75, bow: 40, wobble: 2))
+        XCTAssertEqual(reals(e.mesh), 3)
+        XCTAssertEqual(e.mesh.aliveFaces.count, 1)
+        XCTAssertEqual(e.mesh.aliveFaces.first.map(e.mesh.cornerCount(of:)), 3)
+        XCTAssertFalse(e.mesh.aliveEdges.contains(where: e.mesh.isWire))
+    }
+
+    func testGoingOverOneOfTwoLinesBetweenTheSamePointsLeavesTheOther() {
+        // Whichever one it goes over, and whichever way, the other one stays where it was.
+        for (bow, order) in [(Float(60), false), (-60, false), (60, true), (-60, true)] {
+            let e = engine()
+            let lines = [Float(60), -60]
+            for b in order ? lines.reversed() : lines {
+                Fixtures.draw(e, from: Vec2(300, 500), to: Vec2(700, 500), steps: 40, bend: Vec2(0, b))
+            }
+            XCTAssertEqual(reals(e.mesh), 2)
+            XCTAssertEqual(e.mesh.aliveFaces.count, 1)
+            Fixtures.drawPath(e, (0...50).map { i in
+                let t = Float(i) / 50
+                return Vec2(300 + 400 * t, 500 + (bow * 0.9) * 4 * t * (1 - t) + 2 * sin(t * 30))
+            })
+            let ys = e.mesh.aliveVertices.compactMap { e.camera.project(e.mesh.position($0))?.screen.y }
+            XCTAssertEqual(ys.max() ?? 0, 500 + (bow > 0 ? 54 : 60), accuracy: 4, "bow \(bow), order \(order)")
+            XCTAssertEqual(ys.min() ?? 0, 500 - (bow > 0 ? 60 : 54), accuracy: 4, "bow \(bow), order \(order)")
+            XCTAssertEqual(e.mesh.aliveFaces.count, 1)
+            XCTAssertFalse(e.mesh.aliveEdges.contains(where: e.mesh.isWire))
+        }
+    }
+
+    func testALooseLineBowedOutABitIsStillOneLine() {
+        let e = engine()
+        Fixtures.draw(e, from: Vec2(300, 500), to: Vec2(700, 500), steps: 40, bend: Vec2(0, 40))
+        Fixtures.drawPath(e, (0...50).map { i in
+            let t = Float(i) / 50
+            return Vec2(300 + 400 * t, 500 + 30 * 4 * t * (1 - t))
+        })
+        XCTAssertEqual(reals(e.mesh), 2)
+    }
+
+    func testBothSidesTakeTheNewShapeUnderMirror() {
+        let e = Fixtures.engine(with: Fixtures.plane(size: 6, divisions: 60, z: 0), camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        e.setSymmetryEnabled(true)
+        Fixtures.draw(e, from: Vec2(560, 300), to: Vec2(860, 300), steps: 40, bend: Vec2(0, -40))
+        Fixtures.draw(e, from: Vec2(860, 300), to: Vec2(700, 700))
+        Fixtures.draw(e, from: Vec2(700, 700), to: Vec2(560, 300))
+        let before = reals(e.mesh)
+        Fixtures.drawPath(e, (0...50).map { i in
+            let u = Float(i) / 50
+            return Vec2(560 + 300 * u, 300 - 25 * 4 * u * (1 - u) + 2 * sin(u * 30))
+        })
+        let m = e.mesh
+        XCTAssertEqual(reals(m), before)
+        XCTAssertFalse(m.aliveEdges.contains(where: m.isWire))
+        for v in m.aliveVertices {
+            let q = m.mirrorPartner[Int(v)]
+            XCTAssertGreaterThanOrEqual(q, 0)
+            guard q >= 0 else { continue }
+            let p = m.position(q)
+            XCTAssertLessThan(simd_length(Vec3(-p.x, p.y, p.z) - m.position(v)), 0.01)
+        }
+    }
+}

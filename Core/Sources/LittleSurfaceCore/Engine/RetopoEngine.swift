@@ -1388,6 +1388,16 @@ public final class RetopoEngine {
         options.camera = camera
         options.snapRadiusPoints = tools.stroke.snapRadiusPoints
         options.mirror = symmetry.activePlane
+        if shape == nil {
+            let retraced = paths.map { StrokePlanner.withoutRetracing($0, mesh: mesh, options: options) }
+            paths = retraced.flatMap(\.pieces)
+            options.redrawnEdges = Set(retraced.flatMap(\.redrawn))
+            // All of it went over lines that are already there, which is nothing to do.
+            guard !paths.isEmpty else {
+                clearMessage()
+                return
+            }
+        }
 
         let quadsBefore = mesh.aliveFaces.filter(mesh.isQuad).count
         let inkedBefore = InkingIn.Inked(mesh)
@@ -1399,10 +1409,14 @@ public final class RetopoEngine {
             for path in paths {
                 let plan = StrokePlanner.plan(path: prepared(path), mesh: mesh, options: options)
                 guard !plan.plan.nodes.isEmpty else { continue }
+                let before = mesh
                 let result = try PlanApplier.apply(plan.plan, to: &mesh, symmetry: symmetry, projector: projector)
                 total.edges += result.edges
                 total.vertices += result.vertices
                 met += result.nodeVertices
+                if !options.redrawnEdges.isEmpty, let start = result.nodeVertices.first, let end = result.nodeVertices.last {
+                    StrokePlanner.replaceRedrawnLine(from: start, to: end, drawn: result, before: before, in: &mesh, symmetry: symmetry)
+                }
             }
             guard !met.isEmpty else { throw MeshError.invalid("Nothing to add.") }
             straightened = try DrawnFaces.update(after: total, met: met.filter { !mesh.isBendVertex($0) }, sliverWidth: Self.sliverWidthPoints * scale, pointGap: Self.pointGapPoints * scale, in: &mesh, projector: projector, symmetry: symmetry)
