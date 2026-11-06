@@ -1184,7 +1184,7 @@ public final class RetopoEngine {
         let closeRadius = settings.closeRadiusPoints * scale
         var paths: [ProcessedPath] = []
         for run in runs {
-            if let path = StrokeProcessor.process(run: run, settings: settings, projector: projector, closeRadius: closeRadius) {
+            if let path = StrokeProcessor.process(run: run, settings: settings, projector: projector, closeRadius: closeRadius, camera: camera) {
                 paths.append(path)
             }
         }
@@ -1364,7 +1364,7 @@ public final class RetopoEngine {
         var settings = tools.stroke
         // A clean shape has nothing to steady, and smoothing would round its corners.
         if shape != nil { settings.smoothing = 0 }
-        var paths = runs.compactMap { StrokeProcessor.process(run: $0, settings: settings, projector: projector, closeRadius: closeRadius) }
+        var paths = runs.compactMap { StrokeProcessor.process(run: $0, settings: settings, projector: projector, closeRadius: closeRadius, camera: camera) }
         if let shape {
             for i in paths.indices { placeCorners(of: shape, on: &paths[i]) }
         }
@@ -1801,6 +1801,7 @@ public final class RetopoEngine {
         var options = StrokePlanOptions(snapRadius: tools.stroke.snapRadiusPoints * scale, crossingTolerance: max(5 * scale, tools.stroke.edgeLength * 0.15), projector: projector)
         options.lineEndRadius = tools.stroke.closeRadiusPoints * scale
         options.surfaceOffset = projector?.surfaceOffset ?? 0
+        options.seesThroughModel = ignoresOcclusionForPicking
         return options
     }
 

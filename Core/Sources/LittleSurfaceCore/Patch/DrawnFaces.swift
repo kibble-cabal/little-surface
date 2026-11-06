@@ -145,8 +145,12 @@ public enum DrawnFaces {
             let (a, b) = mesh.ends(e)
             guard !mesh.isBendVertex(a), !mesh.isBendVertex(b) else { continue }
             let pa = mesh.position(a), pb = mesh.position(b)
+            // The way its ends are facing, or it could land on the far side of something thin.
+            let facing = mesh.vertexNormal(a) + mesh.vertexNormal(b)
             func onModel(_ t: Float) -> SurfaceHit? {
-                projector.closest(to: simd_mix(pa, pb, Vec3(repeating: t)), maxDistance: .greatestFiniteMagnitude)
+                let p = simd_mix(pa, pb, Vec3(repeating: t))
+                if simd_length_squared(facing) > 1e-6, let hit = projector.closest(to: p, normalHint: simd_normalize(facing), maxDistance: simd_length(pb - pa)) { return hit }
+                return projector.closest(to: p, maxDistance: .greatestFiniteMagnitude)
             }
             let limit = simd_length(pb - pa) * liftedLineLimit
             let lifted = [0.25, 0.5, 0.75].contains { (t: Float) in

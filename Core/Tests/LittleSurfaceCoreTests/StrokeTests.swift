@@ -371,3 +371,86 @@ final class StrokeTests: XCTestCase {
         XCTAssertEqual(freeEnds(engine.mesh), 4)
     }
 }
+
+/// Two surfaces close together, one hidden behind the other, the way a lip folds under on a real model.
+final class StrokesStayInViewTests: XCTestCase {
+    private func doubledRoof(gap: Float) -> SourceObject {
+        func height(_ x: Float) -> Float { -1.5 * abs(x) }
+        var positions: [Vec3] = []
+        var indices: [UInt32] = []
+        for offset in [Float(0), -gap] {
+            let base = UInt32(positions.count)
+            for y in 0...40 {
+                for x in 0...40 {
+                    let px = 2 * (Float(x) / 40 - 0.5)
+                    positions.append(Vec3(px, 2 * (Float(y) / 40 - 0.5), height(px) + offset))
+                }
+            }
+            for y in 0..<UInt32(40) {
+                for x in 0..<UInt32(40) {
+                    let a = base + y * 41 + x, b = a + 1, c = a + 41 + 1, d = a + 41
+                    indices += [a, b, c, a, c, d]
+                }
+            }
+        }
+        return SourceObject(name: "Roof", positions: positions, indices: indices)
+    }
+
+    func testAStrokeOverARidgeStaysOnTheSurfaceInView() {
+        let gap: Float = 0.004
+        let e = Fixtures.engine(with: doubledRoof(gap: gap), camera: Fixtures.frontCamera(distance: 3))
+        e.setTool(.pencil)
+        e.tools.stroke.smoothing = 1
+        Fixtures.draw(e, from: Vec2(380, 500), to: Vec2(620, 505), steps: 40)
+        XCTAssertGreaterThan(e.mesh.vertexCount, 4)
+        for v in e.mesh.aliveVertices {
+            let p = e.mesh.position(v)
+            XCTAssertGreaterThan(p.z + 1.5 * abs(p.x), 0, "Point \(v) is under the surface in view")
+        }
+    }
+
+    /// A plate in front of the right half of a bigger one, with a line on the part it hides.
+    private func plates() throws -> RetopoEngine {
+        var front = Fixtures.plane(size: 1, divisions: 10, z: 0)
+        front.positions = front.positions.map { $0 + Vec3(0.6, 0, 0) }
+        let model = SourceObject.merged([front, Fixtures.plane(size: 4, divisions: 40, z: -0.1)], name: "Plates")
+        let e = Fixtures.engine(with: model, camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        return e
+    }
+
+    private func withHiddenLine(_ e: RetopoEngine) throws -> RetopoEngine {
+        var snapshot = e.makeSnapshot()
+        let a = snapshot.mesh.addVertex(Vec3(0.6, -0.3, -0.1)), b = snapshot.mesh.addVertex(Vec3(0.6, 0.3, -0.1))
+        try snapshot.mesh.ensureEdge(a, b)
+        let out = RetopoEngine(snapshot: snapshot)
+        out.installLoadedBVHs(RetopoEngine.buildBVHs(for: snapshot.sources))
+        out.camera = e.camera
+        out.setTool(.pencil)
+        return out
+    }
+
+    private func onScreen(_ e: RetopoEngine, _ p: Vec3) throws -> Vec2 { try XCTUnwrap(e.camera.project(p)).screen }
+    private func hiddenPoints(_ m: Mesh) -> Int { m.aliveVertices.filter { m.position($0).z < -0.05 }.count }
+
+    func testAStrokeOverAHiddenLineLeavesItAlone() throws {
+        let e = try withHiddenLine(try plates())
+        Fixtures.draw(e, from: try onScreen(e, Vec3(0.3, 0, 0)), to: try onScreen(e, Vec3(0.9, 0, 0)))
+        XCTAssertGreaterThan(e.mesh.vertexCount, 2)
+        XCTAssertEqual(hiddenPoints(e.mesh), 2, "Nothing new on it")
+        let hidden = e.mesh.aliveVertices.filter { e.mesh.position($0).z < -0.05 }
+        for v in hidden { XCTAssertEqual(e.mesh.edgesOf(v).count, 1) }
+    }
+
+    func testAStrokeEndingOverAHiddenPointDoesntJoinIt() throws {
+        let e = try withHiddenLine(try plates())
+        Fixtures.draw(e, from: try onScreen(e, Vec3(0.7, 0.45, 0)), to: try onScreen(e, Vec3(0.6, 0.3, 0)))
+        let hidden = e.mesh.aliveVertices.filter { e.mesh.position($0).z < -0.05 }
+        XCTAssertEqual(hidden.count, 2)
+        for v in hidden { XCTAssertEqual(e.mesh.edgesOf(v).count, 1) }
+        for e0 in e.mesh.aliveEdges {
+            let (a, b) = e.mesh.ends(e0)
+            XCTAssertEqual(e.mesh.position(a).z < -0.05, e.mesh.position(b).z < -0.05, "No line jumps between the plates")
+        }
+    }
+}

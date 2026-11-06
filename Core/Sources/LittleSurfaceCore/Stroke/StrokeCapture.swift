@@ -182,7 +182,8 @@ public struct ProcessedPath: Equatable {
 public enum StrokeProcessor {
     /// Smooths and resamples one run onto the surface.
     /// `closeRadius` is the world distance within which the path reads as a loop.
-    public static func process(run: [StrokePoint], settings: StrokeSettings, projector: SurfaceProjector, closeRadius: Float) -> ProcessedPath? {
+    /// With a `camera`, it stays on the part of the model that can be seen, whatever is close by behind it.
+    public static func process(run: [StrokePoint], settings: StrokeSettings, projector: SurfaceProjector, closeRadius: Float, camera: Camera? = nil) -> ProcessedPath? {
         guard run.count >= 2 else { return nil }
         let spacing = max(settings.edgeLength, 1e-5)
 
@@ -206,7 +207,7 @@ public enum StrokeProcessor {
         let segments = max(1, Int((length / spacing).rounded()))
         var out = resample(dense, count: segments + 1)
         for i in 0..<out.count {
-            if let hit = projector.closest(to: out[i].position, normalHint: out[i].normal, maxDistance: spacing * 3) {
+            if let hit = landing(of: out[i], spacing: spacing, projector: projector, camera: camera) {
                 out[i].position = hit.position
                 out[i].normal = hit.normal
             }
@@ -230,6 +231,24 @@ public enum StrokeProcessor {
         let radius = closeRadius > 0 ? max(closeRadius, min(total * 0.12, closeRadius * 2)) : 0
         let canClose = out.count >= 4 && closeTo - closeFrom >= 3 && closeGap <= radius && total > closeGap * 2.5
         return ProcessedPath(points: out, length: total, endGap: gap, canClose: canClose, closeFrom: closeFrom, closeTo: closeTo)
+    }
+
+    /// Where a steadied point goes back onto the model: straight along the line of sight, which can only
+    /// find what's in view. The nearest place on the model might be a part that's hidden.
+    private static func landing(of point: StrokePoint, spacing: Float, projector: SurfaceProjector, camera: Camera?) -> SurfaceHit? {
+        if let camera {
+            if let screen = camera.project(point.position)?.screen,
+               let hit = projector.raycast(camera.ray(through: screen)),
+               simd_length(hit.position - point.position) <= spacing * 3 {
+                return hit
+            }
+            // Steadying took it off an edge of the model, so back to where the Pencil actually was.
+            if let hit = projector.raycast(camera.ray(through: point.screen)),
+               simd_length(hit.position - point.position) <= spacing * 6 {
+                return hit
+            }
+        }
+        return projector.closest(to: point.position, normalHint: point.normal, maxDistance: spacing * 3)
     }
 
     /// Closes a path where its ends come nearest. The last point is dropped when it nearly coincides

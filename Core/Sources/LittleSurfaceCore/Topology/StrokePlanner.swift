@@ -19,6 +19,8 @@ public struct StrokePlanOptions {
     /// With mirror on, a pencil line that meets a line close to the middle meets it on the middle,
     /// where there's one point for both sides rather than one each, side by side.
     public var mirror: MirrorPlane?
+    /// In a view that shows through the model, what's behind counts as seen.
+    public var seesThroughModel = false
 
     public init(snapRadius: Float, crossingTolerance: Float, projector: SurfaceProjector? = nil) {
         self.snapRadius = snapRadius
@@ -334,7 +336,7 @@ public enum StrokePlanner {
             let t = simd_clamp(simd_dot(here - sa, span) / max(simd_length_squared(span), 1e-6), 0, 1)
             let d = simd_length(sa + span * t - here)
             let point = simd_mix(pa, pb, Vec3(repeating: t))
-            if d < bestDistance, simd_length(point - position) <= max(inReach, simd_length(pa - pb) * 0.25), sameSide(of: a, normal: normal, mesh: mesh, options: options) {
+            if d < bestDistance, simd_length(point - position) <= max(inReach, simd_length(pa - pb) * 0.25), sameSide(of: a, normal: normal, mesh: mesh, options: options), isInView(point, mesh: mesh, options: options, camera: camera) {
                 bestDistance = d
                 best = (e, t, point)
             }
@@ -373,7 +375,7 @@ public enum StrokePlanner {
             let p = mesh.position(v)
             guard let there = camera.project(p)?.screen else { continue }
             let d = simd_length(there - here)
-            if d < bestDistance, simd_length(p - position) <= options.snapRadius * 4, sameSide(of: v, normal: normal, mesh: mesh, options: options) {
+            if d < bestDistance, simd_length(p - position) <= options.snapRadius * 4, sameSide(of: v, normal: normal, mesh: mesh, options: options), isInView(p, mesh: mesh, options: options, camera: camera) {
                 bestDistance = d
                 best = v
             }
@@ -415,7 +417,8 @@ public enum StrokePlanner {
                 let onLine = simd_mix(line.pa, line.pb, Vec3(repeating: t))
                 let isClose = simd_length(onStroke - onLine) <= max(options.snapRadius * 4, simd_length(line.pa - line.pb) * 0.25)
                 guard isClose || isInFront(onLine, of: onStroke, camera: camera),
-                      sameSide(of: mesh.ends(line.edge).0, normal: from.normal, mesh: mesh, options: options) else { continue }
+                      sameSide(of: mesh.ends(line.edge).0, normal: from.normal, mesh: mesh, options: options),
+                      isInView(onLine, mesh: mesh, options: options, camera: camera) else { continue }
                 let along = from.along + (to.along - from.along) * s
                 // A snapped end already deals with the topology there.
                 if !path.isClosed, along < spacing * 0.5 || along > path.length - spacing * 0.5 {
@@ -464,6 +467,7 @@ public enum StrokePlanner {
             guard let best,
                   simd_length(mesh.position(v) - best.position) <= options.snapRadius,
                   sameSide(of: v, normal: best.normal, mesh: mesh, options: options),
+                  isInView(mesh.position(v), mesh: mesh, options: options, camera: camera),
                   !crossings.contains(where: { crossing in
                       guard let at = camera.project(crossing.position)?.screen else { return false }
                       return simd_length(at - there) <= reach
@@ -493,6 +497,14 @@ public enum StrokePlanner {
     /// Whether a line is nearer than the stroke it's lined up with. The stroke lies on the surface, so
     /// nothing hides the line from it: it's a straight edge spanning a dip, however far it stands off,
     /// and it looks crossed because it is.
+    /// A stroke only ever deals with what can be seen. Whatever is behind the part under the Pencil lines
+    /// up with it on the screen, but nobody drawing there means to join it.
+    private static func isInView(_ p: Vec3, mesh: Mesh, options: StrokePlanOptions, camera: Camera) -> Bool {
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: options.projector)
+        picker.ignoresOcclusion = options.seesThroughModel
+        return picker.isVisible(p, normal: nil)
+    }
+
     private static func isInFront(_ line: Vec3, of stroke: Vec3, camera: Camera) -> Bool {
         guard let there = camera.project(line), let here = camera.project(stroke) else { return false }
         return there.depth < here.depth
@@ -536,6 +548,7 @@ public enum StrokePlanner {
             let p = mesh.position(v)
             let d = simd_length(p - position)
             guard d < bestDistance, sameSide(of: v, normal: normal, mesh: mesh, options: options) else { continue }
+            if let camera = options.camera, !isInView(p, mesh: mesh, options: options, camera: camera) { continue }
             let outward = p - mesh.position(mesh.otherEnd(edges[0], from: v))
             guard simd_length_squared(outward) > 0, simd_dot(simd_normalize(outward), direction) >= 0.3 else { continue }
             best = v
