@@ -35,6 +35,8 @@ public extension Mesh {
     /// How far a side's heading can turn from its start to its end, each judged over a fifth of its
     /// length, before it's wrapping. A circular arc at the straight side limit turns about this far.
     static var wrappingTurn: Float { 100 * .pi / 180 }
+    /// How much longer than its straight line a side can be, next to its neighbours, and still go straight whatever it does.
+    static var slightSideExcess: Float { 0.25 }
 
     func isQuad(_ f: FaceID) -> Bool {
         guard cornerCount(of: f) == 4 else { return false }
@@ -45,16 +47,25 @@ public extension Mesh {
     func curvedSides(of f: FaceID) -> [[VertexID]] {
         let loop = self.loop(f)
         guard let first = loop.firstIndex(where: { !isBend[Int($0)] }), loop.contains(where: { isBend[Int($0)] }) else { return [] }
-        var sides: [[VertexID]] = []
+        var all: [[VertexID]] = []
         var side = [loop[first]]
         for offset in 1...loop.count {
             let v = loop[(first + offset) % loop.count]
             side.append(v)
             if isBend[Int(v)] { continue }
-            if side.count > 2, wrapsTooFar(side) { sides.append(Array(side.dropFirst().dropLast())) }
+            all.append(side)
             side = [v]
         }
-        return sides
+        func length(_ side: [VertexID]) -> Float { zip(side, side.dropFirst()).reduce(0) { $0 + simd_length(position($1.1) - position($1.0)) } }
+        var curved: [[VertexID]] = []
+        for (i, side) in all.enumerated() where side.count > 2 && wrapsTooFar(side) {
+            // However sharply it turns, a side this small next to its neighbours hardly bends the shape.
+            let before = all[(i + all.count - 1) % all.count], after = all[(i + 1) % all.count]
+            let excess = length(side) - simd_length(position(side[side.count - 1]) - position(side[0]))
+            if all.count == 4, excess < (length(before) + length(after)) * 0.5 * Self.slightSideExcess { continue }
+            curved.append(Array(side.dropFirst().dropLast()))
+        }
+        return curved
     }
 
     private func wrapsTooFar(_ side: [VertexID]) -> Bool {

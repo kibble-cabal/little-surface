@@ -631,10 +631,10 @@ final class LinesOverADipTests: XCTestCase {
 /// A quad's sides go straight unless they wrap around something, which a bump on the way doesn't.
 final class WrappingSideTests: XCTestCase {
     /// A square whose top side follows these points, in the plane z = 0 unless they say otherwise.
-    private func face(topSide: [Vec3]) throws -> (Mesh, FaceID) {
+    private func face(topSide: [Vec3], height: Float = 2) throws -> (Mesh, FaceID) {
         var mesh = Mesh()
         let a = mesh.addVertex(Vec3(-1, 0, 0)), b = mesh.addVertex(Vec3(1, 0, 0))
-        let c = mesh.addVertex(Vec3(1, -2, 0)), d = mesh.addVertex(Vec3(-1, -2, 0))
+        let c = mesh.addVertex(Vec3(1, -height, 0)), d = mesh.addVertex(Vec3(-1, -height, 0))
         let bends = topSide.map { mesh.addVertex($0) }
         for v in bends { mesh.setBend(v, true) }
         let f = try mesh.addFace([a] + bends + [b, c, d], autoOrient: false)
@@ -669,6 +669,17 @@ final class WrappingSideTests: XCTestCase {
     func testASideJustPastTheLimitStaysCurved() throws {
         // A circular arc of 140 degrees is about 1.31 times its straight line, and it's still wrapping.
         let (mesh, f) = try face(topSide: arc(degrees: 140))
+        XCTAssertFalse(mesh.isQuad(f))
+    }
+
+    func testATinyFoldNextToLongSidesGoesStraight() throws {
+        // The same wrap as above, but it's a small step along the end of something long and thin.
+        let (mesh, f) = try face(topSide: arc(degrees: 140), height: 8)
+        XCTAssertTrue(mesh.isQuad(f))
+    }
+
+    func testAFoldOnASideLongerThanItsNeighboursStaysCurved() throws {
+        let (mesh, f) = try face(topSide: arc(degrees: 140), height: 0.5)
         XCTAssertFalse(mesh.isQuad(f))
     }
 
