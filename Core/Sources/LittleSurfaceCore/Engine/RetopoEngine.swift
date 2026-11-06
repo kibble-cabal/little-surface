@@ -968,6 +968,11 @@ public final class RetopoEngine {
         case .face:
             gesture = .tapOnly(start: screen)
         case .moveBrush, .relaxBrush:
+            // Starting right on a point moves that point, and nothing around it.
+            if activeTool == .moveBrush, let point = pointToPickUp(at: screen, reach: Self.pointPickReach) {
+                pickUp(point, at: screen)
+                break
+            }
             let label = activeTool == .moveBrush ? "Move brush" : "Relax brush"
             gesture = .brush(before: currentSnapshot, track: nil, label: label)
             brushCursor = screen
@@ -1069,7 +1074,7 @@ public final class RetopoEngine {
                 recordPick(from: drag.before)
             } else {
                 finishSelectDrag(drag, at: screen)
-                if activeTool == .pencil, !drag.staysPicked { selection.clear() }
+                if !drag.staysPicked { selection.clear() }
             }
         case .lasso(let points):
             lassoPath = []
@@ -1273,11 +1278,21 @@ public final class RetopoEngine {
     /// The Pencil has rested on a point for long enough to pick it up rather than draw from it.
     public func pencilHeld() {
         guard activeTool == .pencil, case .stroke(let capture) = gesture,
-              capture.screenLength < tapSlop, let start = capture.screenPath.first else { return }
+              capture.screenLength < tapSlop, let start = capture.screenPath.first,
+              let vertex = pointToPickUp(at: start, reach: pickRadius) else { return }
+        inkPath = []
+        pickUp(vertex, at: start)
+        rebuildOverlay()
+        notify()
+    }
+
+    private func pointToPickUp(at screen: Vec2, reach: Float) -> VertexID? {
         var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
         picker.ignoresOcclusion = ignoresOcclusionForPicking
-        guard let vertex = picker.pickVertex(at: start, radius: pickRadius) else { return }
-        inkPath = []
+        return picker.pickVertex(at: screen, radius: reach)
+    }
+
+    private func pickUp(_ vertex: VertexID, at start: Vec2) {
         let before = currentSnapshot
         selection.clear()
         selection.mode = .vertex
@@ -1288,8 +1303,6 @@ public final class RetopoEngine {
             drag.staysPicked = false
             gesture = .select(drag)
         }
-        rebuildOverlay()
-        notify()
     }
 
     /// The Pencil has rested partway through a stroke. If it looks like it's going for a shape, it

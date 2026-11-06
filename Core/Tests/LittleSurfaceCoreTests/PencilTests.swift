@@ -739,3 +739,48 @@ final class BrushReachTests: XCTestCase {
         XCTAssertEqual(backs.map { simd_length(e.mesh.position($0) - before.position($0)) }.max()!, 0, accuracy: 1e-5)
     }
 }
+
+/// The Move tool on a point moves that point.
+final class MovePointTests: XCTestCase {
+    private func twoLines() -> RetopoEngine {
+        let e = Fixtures.engine(with: Fixtures.plane(), camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        Fixtures.draw(e, from: Vec2(400, 500), to: Vec2(600, 500))
+        Fixtures.draw(e, from: Vec2(500, 400), to: Vec2(500, 600))
+        e.setTool(.moveBrush)
+        return e
+    }
+
+    private func crossing(_ e: RetopoEngine) -> VertexID {
+        e.mesh.aliveVertices.first { e.mesh.edgesOf($0).count == 4 }!
+    }
+
+    func testStartingOnAPointMovesOnlyThatPoint() {
+        let e = twoLines()
+        let point = crossing(e)
+        let before = e.mesh
+        let at = e.camera.project(before.position(point))!.screen
+        e.pencilBegan(at: at)
+        for t in 1...10 { e.pencilMoved(to: at + Vec2(Float(t) * 3, Float(t) * 3)) }
+        e.pencilEnded(at: at + Vec2(30, 30))
+        XCTAssertLessThan(simd_length(e.camera.project(e.mesh.position(point))!.screen - (at + Vec2(30, 30))), 1, "It goes where it's put")
+        for v in e.mesh.aliveVertices where v != point && e.mesh.mirrorPartner[Int(v)] != point && !e.mesh.isBendVertex(v) {
+            XCTAssertEqual(simd_length(e.mesh.position(v) - before.position(v)), 0, accuracy: 1e-5)
+        }
+        XCTAssertTrue(e.selection.isEmpty, "Nothing's left picked")
+        XCTAssertEqual(e.activeTool, .moveBrush)
+        e.undo()
+        XCTAssertEqual(simd_length(e.mesh.position(point) - before.position(point)), 0, accuracy: 1e-5, "One undo puts it back")
+    }
+
+    func testStartingAwayFromAPointStillMovesTheArea() {
+        let e = twoLines()
+        let before = e.mesh
+        let at = e.camera.project(before.position(crossing(e)))!.screen + Vec2(40, 0)
+        e.pencilBegan(at: at)
+        for t in 1...10 { e.pencilMoved(to: at + Vec2(0, Float(t) * 3)) }
+        e.pencilEnded(at: at + Vec2(0, 30))
+        let moved = e.mesh.aliveVertices.filter { simd_length(e.mesh.position($0) - before.position($0)) > 1e-4 }
+        XCTAssertGreaterThan(moved.count, 1)
+    }
+}
