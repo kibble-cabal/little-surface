@@ -2404,12 +2404,16 @@ public final class RetopoEngine {
         // Moving keeps up with the Pencil, so whatever's under it goes where it's put.
         let strength = activeTool == .moveBrush ? 1 : settings.strength * (settings.usesPressure ? simd_clamp(pressure, 0.1, 1) : 1)
         let stamp = BrushStamp(center: hit.position, worldRadius: worldRadius, strength: strength, normal: hit.normal)
+        // Only what can be seen under the Pencil. The ball reaches through a thin part of the model too.
+        var picker = MeshPicker(camera: camera, mesh: mesh, projector: projector)
+        picker.ignoresOcclusion = ignoresOcclusionForPicking
+        let isInView = { [picker] (p: Vec3) in picker.isVisible(p, normal: nil) }
         if activeTool == .relaxBrush {
-            Brushes.relax(&mesh, stamp: stamp, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
+            Brushes.relax(&mesh, stamp: stamp, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry, isInView: isInView)
         } else if track != nil {
             let from = track?.position ?? hit.position
             if track?.follow(to: hit.position, screen: screen, worldPerPoint: camera.worldPerPoint(at: from)) == true {
-                Brushes.move(&mesh, stamp: stamp, delta: hit.position - from, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry)
+                Brushes.move(&mesh, stamp: stamp, delta: hit.position - from, projector: projector, snap: tools.surfaceSnapping, symmetry: symmetry, isInView: isInView)
             }
         }
         gesture = .brush(before: before, track: track ?? SurfaceTrack(position: hit.position, screen: screen), label: label)

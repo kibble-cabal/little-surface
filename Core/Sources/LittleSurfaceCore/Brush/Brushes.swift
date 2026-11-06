@@ -69,8 +69,9 @@ struct SurfaceTrack {
 }
 
 public enum Brushes {
-    /// Vertices affected by a stamp, on the same side of the surface as the stamp.
-    static func affected(_ mesh: Mesh, stamp: BrushStamp) -> [(VertexID, Float)] {
+    /// Vertices affected by a stamp, on the same side of the surface as the stamp, and only those
+    /// `isInView` lets through. Strongest first, since under mirror the first of a pair leads the other.
+    static func affected(_ mesh: Mesh, stamp: BrushStamp, isInView: ((Vec3) -> Bool)? = nil) -> [(VertexID, Float)] {
         var out: [(VertexID, Float)] = []
         for v in mesh.aliveVertices {
             let p = mesh.position(v)
@@ -78,14 +79,15 @@ public enum Brushes {
             guard w > 0 else { continue }
             let n = mesh.vertexNormal(v)
             if simd_length_squared(n) > 0 && simd_dot(n, stamp.normal) < -0.2 { continue }
+            if let isInView, !isInView(p) { continue }
             out.append((v, w))
         }
-        return out
+        return out.sorted { $0.1 > $1.1 }
     }
 
     /// Relax brush: evens out vertex spacing under the brush, staying on the surface.
-    public static func relax(_ mesh: inout Mesh, stamp: BrushStamp, projector: SurfaceProjector?, snap: Bool, symmetry: SymmetrySettings) {
-        let targets = affected(mesh, stamp: stamp)
+    public static func relax(_ mesh: inout Mesh, stamp: BrushStamp, projector: SurfaceProjector?, snap: Bool, symmetry: SymmetrySettings, isInView: ((Vec3) -> Bool)? = nil) {
+        let targets = affected(mesh, stamp: stamp, isInView: isInView)
         var updates: [(VertexID, Vec3)] = []
         updates.reserveCapacity(targets.count)
         for (v, w) in targets {
@@ -106,8 +108,8 @@ public enum Brushes {
     }
 
     /// Move brush: pushes vertices along the surface by the world-space drag.
-    public static func move(_ mesh: inout Mesh, stamp: BrushStamp, delta: Vec3, projector: SurfaceProjector?, snap: Bool, symmetry: SymmetrySettings) {
-        let targets = affected(mesh, stamp: stamp)
+    public static func move(_ mesh: inout Mesh, stamp: BrushStamp, delta: Vec3, projector: SurfaceProjector?, snap: Bool, symmetry: SymmetrySettings, isInView: ((Vec3) -> Bool)? = nil) {
+        let targets = affected(mesh, stamp: stamp, isInView: isInView)
         var updates: [(VertexID, Vec3)] = []
         updates.reserveCapacity(targets.count)
         for (v, w) in targets {

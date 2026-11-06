@@ -698,3 +698,44 @@ final class MoveAcrossPartsTests: XCTestCase {
         XCTAssertLessThan(simd_length(e.camera.project(e.mesh.position(point))!.screen - Vec2(edge, at.y)), 12, "It stops at the edge it reached")
     }
 }
+
+/// The brushes only reach what can be seen under the Pencil.
+final class BrushReachTests: XCTestCase {
+    /// A line on the front of a thin slab and another just behind it on the back.
+    private func slab() -> (RetopoEngine, Mesh, front: [VertexID], back: [VertexID]) {
+        let front = Fixtures.plane(size: 3, divisions: 30, z: 0.05)
+        var back = Fixtures.plane(size: 3, divisions: 30, z: -0.05)
+        // Wound to face away, as the back of a slab would be.
+        for t in stride(from: 0, to: back.indices.count, by: 3) { back.indices.swapAt(t + 1, t + 2) }
+        let e = Fixtures.engine(with: SourceObject.merged([front, back], name: "Slab"), camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        Fixtures.draw(e, from: Vec2(500, 430), to: Vec2(500, 570))
+        let facing = e.camera.orientation
+        e.camera.orientation = simd_quatf(angle: .pi, axis: Vec3(0, 1, 0))
+        Fixtures.draw(e, from: Vec2(500, 430), to: Vec2(500, 570))
+        e.camera.orientation = facing
+        let mesh = e.mesh
+        return (e, mesh, mesh.aliveVertices.filter { mesh.position($0).z > 0 }, mesh.aliveVertices.filter { mesh.position($0).z < 0 })
+    }
+
+    func testMoveLeavesWhatIsBehindTheSurface() {
+        let (e, before, fronts, backs) = slab()
+        e.setTool(.moveBrush)
+        let at = e.camera.project(Vec3(0, 0, 0.05))!.screen
+        e.pencilBegan(at: at)
+        for t in 1...10 { e.pencilMoved(to: at + Vec2(Float(t) * 2, 0)) }
+        e.pencilEnded(at: at + Vec2(20, 0))
+        XCTAssertGreaterThan(fronts.map { simd_length(e.mesh.position($0) - before.position($0)) }.max()!, 0.01)
+        XCTAssertEqual(backs.map { simd_length(e.mesh.position($0) - before.position($0)) }.max()!, 0, accuracy: 1e-5)
+    }
+
+    func testSmoothLeavesWhatIsBehindTheSurface() {
+        let (e, before, _, backs) = slab()
+        e.setTool(.relaxBrush)
+        let at = e.camera.project(Vec3(0, 0, 0.05))!.screen
+        e.pencilBegan(at: at)
+        for t in 1...10 { e.pencilMoved(to: at + Vec2(0, Float(t) * 2)) }
+        e.pencilEnded(at: at + Vec2(0, 20))
+        XCTAssertEqual(backs.map { simd_length(e.mesh.position($0) - before.position($0)) }.max()!, 0, accuracy: 1e-5)
+    }
+}
