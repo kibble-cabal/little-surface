@@ -85,12 +85,25 @@ public enum Brushes {
         return out.sorted { $0.1 > $1.1 }
     }
 
-    /// Relax brush: evens out vertex spacing under the brush, staying on the surface.
+    /// Whether a point is on the outer edge of the shapes drawn so far: on a side with a shape on only
+    /// one side of it. A loose line isn't an edge of anything, so it's free to be smoothed.
+    private static func isOnOuterEdge(_ v: VertexID, of mesh: Mesh) -> Bool {
+        mesh.edgesOf(v).contains { mesh.faceCountOf(edge: $0) == 1 }
+    }
+
+    /// Relax brush: evens out vertex spacing under the brush, staying on the surface. The outer edge of
+    /// what's drawn stays put, with everything inside evening out up to it.
     public static func relax(_ mesh: inout Mesh, stamp: BrushStamp, projector: SurfaceProjector?, snap: Bool, symmetry: SymmetrySettings, isInView: ((Vec3) -> Bool)? = nil) {
         let targets = affected(mesh, stamp: stamp, isInView: isInView)
         var updates: [(VertexID, Vec3)] = []
         updates.reserveCapacity(targets.count)
         for (v, w) in targets {
+            if isOnOuterEdge(v, of: mesh) { continue }
+            // Its partner moves with it, so under mirror it stays if either one is on the edge.
+            if symmetry.activePlane != nil {
+                let partner = mesh.mirrorPartner[Int(v)]
+                if partner >= 0, mesh.isVertexAlive(partner), isOnOuterEdge(partner, of: mesh) { continue }
+            }
             let boundary = mesh.isBoundaryVertex(v)
             var sum = Vec3(repeating: 0)
             var count: Float = 0

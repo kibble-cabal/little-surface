@@ -740,6 +740,90 @@ final class BrushReachTests: XCTestCase {
     }
 }
 
+/// Smooth evens out what's inside a shape, up to its outer edge, which stays where it was drawn.
+final class SmoothKeepsEdgesTests: XCTestCase {
+    private func engine(mirror: Bool = false) -> RetopoEngine {
+        let e = Fixtures.engine(with: Fixtures.plane(size: 6, divisions: 60, z: 0), camera: Fixtures.frontCamera())
+        e.setTool(.pencil)
+        if mirror { e.setSymmetryEnabled(true) }
+        return e
+    }
+    /// Four quads in a box, the lines between them well off to one side.
+    private func dividedBox(_ e: RetopoEngine, left: Float = 300, right: Float = 700) {
+        for (a, b) in [(Vec2(left, 300), Vec2(right, 300)), (Vec2(right, 300), Vec2(right, 700)), (Vec2(right, 700), Vec2(left, 700)), (Vec2(left, 700), Vec2(left, 300))] {
+            Fixtures.draw(e, from: a, to: b, steps: 30)
+        }
+        Fixtures.draw(e, from: Vec2(left, 380), to: Vec2(right, 380), steps: 30)
+    }
+    private func smoothAll(_ e: RetopoEngine) {
+        e.setTool(.relaxBrush)
+        e.tools.brush.radiusPoints = 500
+        for _ in 0..<3 {
+            e.pencilBegan(at: Vec2(500, 450), pressure: 0.5)
+            for t in 1...10 { e.pencilMoved(to: Vec2(500, 450 + Float(t) * 10), pressure: 0.5) }
+            e.pencilEnded(at: Vec2(500, 550), pressure: 0.5)
+        }
+    }
+    private func edgePoints(_ m: Mesh) -> [VertexID] {
+        m.aliveVertices.filter { v in m.edgesOf(v).contains { m.faceCountOf(edge: $0) == 1 } }
+    }
+
+    func testTheOuterEdgeStaysAndTheInsideEvensOut() throws {
+        let e = engine()
+        dividedBox(e)
+        Fixtures.draw(e, from: Vec2(420, 300), to: Vec2(420, 700), steps: 30)
+        let before = e.mesh
+        let inside = try XCTUnwrap(before.aliveVertices.first { !before.isBoundaryVertex($0) && !before.isBendVertex($0) })
+        XCTAssertEqual(before.aliveFaces.filter(before.isQuad).count, 4)
+        smoothAll(e)
+        XCTAssertGreaterThan(simd_length(e.mesh.position(inside) - before.position(inside)), 0.05, "The middle evened out")
+        XCTAssertFalse(edgePoints(before).isEmpty)
+        for v in edgePoints(before) { XCTAssertEqual(simd_length(e.mesh.position(v) - before.position(v)), 0, accuracy: 1e-5) }
+    }
+
+    func testACurvedOuterEdgeKeepsItsCurve() {
+        let e = engine()
+        Fixtures.draw(e, from: Vec2(300, 300), to: Vec2(700, 300), steps: 40, bend: Vec2(0, -60))
+        Fixtures.draw(e, from: Vec2(700, 300), to: Vec2(500, 700))
+        Fixtures.draw(e, from: Vec2(500, 700), to: Vec2(300, 300))
+        let before = e.mesh
+        XCTAssertGreaterThan(before.bendCount, 10)
+        smoothAll(e)
+        for v in before.aliveVertices { XCTAssertEqual(simd_length(e.mesh.position(v) - before.position(v)), 0, accuracy: 1e-5) }
+    }
+
+    func testALooseLineCanStillBeSmoothed() {
+        let e = engine()
+        Fixtures.drawPath(e, (0...60).map { i in
+            let t = Float(i) / 60
+            return Vec2(300 + 400 * t, 500 + 12 * sin(t * 40))
+        })
+        let before = e.mesh
+        smoothAll(e)
+        let moved = before.aliveVertices.map { simd_length(e.mesh.position($0) - before.position($0)) }.max() ?? 0
+        XCTAssertGreaterThan(moved, 0.001)
+    }
+
+    func testUnderMirrorBothOuterEdgesStay() throws {
+        let e = engine(mirror: true)
+        dividedBox(e, left: 560, right: 860)
+        Fixtures.draw(e, from: Vec2(640, 300), to: Vec2(640, 700), steps: 30)
+        let before = e.mesh
+        XCTAssertFalse(edgePoints(before).isEmpty)
+        let inside = before.aliveVertices.filter { !before.isBoundaryVertex($0) }
+        XCTAssertFalse(inside.isEmpty)
+        smoothAll(e)
+        for v in edgePoints(before) { XCTAssertEqual(simd_length(e.mesh.position(v) - before.position(v)), 0, accuracy: 1e-5) }
+        for v in e.mesh.aliveVertices {
+            let q = e.mesh.mirrorPartner[Int(v)]
+            XCTAssertGreaterThanOrEqual(q, 0)
+            guard q >= 0 else { continue }
+            let p = e.mesh.position(q)
+            XCTAssertLessThan(simd_length(Vec3(-p.x, p.y, p.z) - e.mesh.position(v)), 0.01)
+        }
+    }
+}
+
 /// The Move tool on a point moves that point.
 final class MovePointTests: XCTestCase {
     private func twoLines() -> RetopoEngine {
