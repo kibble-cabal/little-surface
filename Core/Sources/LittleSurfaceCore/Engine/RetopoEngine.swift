@@ -2934,14 +2934,36 @@ public final class RetopoEngine {
 
     public func setSymmetryEnabled(_ enabled: Bool) {
         symmetry.isEnabled = enabled
-        if enabled, let plane = symmetry.activePlane {
+        if enabled, let plane = symmetry.activePlane, !mesh.aliveVertices.isEmpty {
             var work = mesh
             repairPairs(&work, plane: plane)
-            adoptRepairedPairs(work)
+            if Symmetry.isMatched(work) {
+                adoptRepairedPairs(work)
+            } else {
+                matchSides(plane: plane)
+            }
         }
         editGeneration &+= 1
         rebuildOverlay()
         notify()
+    }
+
+    /// Makes what's already drawn symmetrical, as one step that can be undone, with mirror left on.
+    private func matchSides(plane: MirrorPlane) {
+        let diagonal = max(sceneBounds.diagonal, mesh.bounds.diagonal)
+        let reach = max(symmetry.centerTolerance * 2, diagonal * 0.02)
+        let searchRadius = max(diagonal * 0.05, symmetry.centerTolerance * 4)
+        let scale = camera.worldPerPoint(at: camera.target)
+        let projector = activeProjector
+        _ = perform("Match sides") { mesh, selection in
+            let plan = Symmetry.matchExistingLines(in: &mesh, plane: plane, centerTolerance: symmetry.centerTolerance, reach: reach, projector: projector, searchRadius: searchRadius)
+            var result = PlanResult()
+            if !plan.isEmpty { result = try PlanApplier.apply(plan, to: &mesh, symmetry: symmetry, projector: projector) }
+            let met = mesh.aliveVertices.filter { !mesh.isBendVertex($0) }
+            _ = try DrawnFaces.update(after: result, met: met, sliverWidth: Self.sliverWidthPoints * scale, in: &mesh, projector: projector, symmetry: symmetry)
+            selection.clear()
+        }
+        clearMessage()
     }
 
     public func setSymmetryPlane(axis: MirrorAxis? = nil, offset: Float? = nil) {

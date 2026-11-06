@@ -83,7 +83,8 @@ public enum Symmetry {
             if abs(plane.signedDistance(p)) <= centerTolerance {
                 mesh.setPosition(v, plane.snap(p))
                 mesh.setMirrorPartner(v, v)
-            } else {
+            } else if !mesh.isBendVertex(v) {
+                // Bends pair along their line, in order, or neighbours can end up with partners apart.
                 grid[key(p), default: []].append(v)
             }
         }

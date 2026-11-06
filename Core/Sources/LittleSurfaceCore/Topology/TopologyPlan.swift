@@ -141,6 +141,11 @@ public enum PlanApplier {
         }
 
         if let plane {
+            // A point the plan stops being a bend, or that was a point already, is on a line drawn before.
+            var meetsExistingLine = Set<VertexID>()
+            for (i, node) in plan.nodes.enumerated() where !plan.bends.contains(Int32(i)) {
+                if case .existing(let v) = node { meetsExistingLine.insert(v) }
+            }
             func partner(_ v: VertexID) -> VertexID {
                 let existing = work.mirrorPartner[Int(v)]
                 if existing >= 0 { return existing }
@@ -149,6 +154,9 @@ public enum PlanApplier {
                     work.setPosition(v, plane.snap(p))
                     work.setMirrorPartner(v, v)
                     return v
+                }
+                if meetsExistingLine.contains(v), let joined = Symmetry.joinOtherSide(of: v, in: &work, plane: plane, reach: symmetry.centerTolerance * 4, projector: projector) {
+                    return joined
                 }
                 let normal = normalHint(for: v, plan: plan, nodeVertices: nodeVertices, mesh: work)
                 let q = Symmetry.mirroredPosition(of: p, normal: normal, plane: plane, projector: projector, searchRadius: searchRadius)
@@ -279,7 +287,12 @@ public enum PlanApplier {
             return split.vertex
         }
         let split = try mesh.splitEdge(e, at: t, position: position)
-        guard let mirrorEdge else { return split.vertex }
+        guard let mirrorEdge else {
+            // That line isn't paired with its other side, but the stroke still has to meet it there.
+            mesh.setBend(split.vertex, false)
+            Symmetry.joinOtherSide(of: split.vertex, in: &mesh, plane: plane, reach: tolerance * 4, projector: projector)
+            return split.vertex
+        }
 
         var targetEdge = mirrorEdge
         var targetT = t
