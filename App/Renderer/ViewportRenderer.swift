@@ -201,6 +201,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     weak var engine: RetopoEngine?
     var isDark = false
+    /// How big vertex dots are, against the editor's. The guide's small clips draw them smaller.
+    var dotScale: Float = 1
 
     private let surfacePipeline: MTLRenderPipelineState
     private let depthOnlyPipeline: MTLRenderPipelineState
@@ -476,7 +478,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             lightIntensity: viewport.lightIntensity,
             // Thumbnails show the model small, where full-size wires and dots would turn the mesh into a blob.
             edgeWidth: includesInteraction ? 1.6 : 0.7,
-            dotSize: includesInteraction ? 6 : 2,
+            dotSize: (includesInteraction ? 6 : 2) * dotScale,
             depthBias: bias,
             faceOpacity: viewport.faceOpacity * 2.2,
             surfacePull: engine.sceneBounds.diagonal * 0.006

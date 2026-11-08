@@ -50,6 +50,10 @@ A line stays on the side it started on. It stops when it reaches the middle and 
 
 To draw a line down the middle itself, start or end it there and stay close. It goes exactly on the middle as one line, however much your hand wanders.
 
+## The retopology guide
+
+Tap the book at the top for a short guide to good topology: edge loops, edge flow, deformation, poles, openings, reducing loops, density and silhouette, with a checklist for before you export. It opens beside the model, so you can keep drawing while you read. Each page has a short looping example. With Reduce Motion on, the examples hold still.
+
 ## The … menu
 
 ### Keeping to a poly budget

@@ -35,6 +35,9 @@ final class EditorModel {
     @ObservationIgnored private var pendingSaves: [((Bool) -> Void)?] = []
     @ObservationIgnored private var memoryObserver: NSObjectProtocol?
     var showsSettings = false
+    /// The retopology guide, open beside the viewport, and the page it's on. Nil is its contents.
+    var showsGuide = false
+    var guidePage: Int?
     var exportedFile: ExportedFile?
 
     enum SaveState: Equatable { case saved, unsaved, saving, failed(String) }

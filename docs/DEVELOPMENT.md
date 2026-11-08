@@ -45,6 +45,7 @@ There are two layers, and the geometry layer knows nothing about UIKit, SwiftUI 
 | `IO`, `Document` | OBJ and glTF/GLB, and the versioned project file |
 | `Sketch` | Planning strokes and their palette. They're saved and undone with the project but never join the mesh |
 | `Timelapse` | The recorder that keeps a compressed frame for every edit, and the director that turns them into timed shots |
+| `Guide` | The small quad meshes the retopology guide shows, made in code, and what each one lights up as it plays |
 | `Link` | The small piece of HTTP the Blender add-on speaks |
 | `Engine` | `RetopoEngine`, the entry point the app talks to |
 
@@ -59,7 +60,7 @@ Tools describe what they want as a `TopologyPlan`, which a previewer can draw an
 | `Editor` | `EditorModel` connects the engine to SwiftUI and runs imports and previews off the main thread. `TimelapseExporter` renders the video |
 | `Link` | `BlenderLinkServer`, the listener for the add-on |
 | `Document` | `ProjectDocument` (a `UIDocument`, for autosave and safe writing) and `ProjectLibrary` (recents and thumbnails) |
-| `UI` | SwiftUI views: welcome, editor, the sheets behind the … menu, and theme. System navigation and forms, using Liquid Glass on iPadOS 26 and materials on iPadOS 18 |
+| `UI` | SwiftUI views: welcome, editor, the sheets behind the … menu, the retopology guide, and theme. The guide's clips each have a `ViewportRenderer` of their own, drawing a `RetopoEngine` that shows the example with `showExample`. System navigation and forms, using Liquid Glass on iPadOS 26 and materials on iPadOS 18 |
 
 **`blender/little_surface_link.py`** is the Blender add-on. It uses only Blender and Python's standard library, and the app bundles it so people can save it from the Blender Link sheet.
 

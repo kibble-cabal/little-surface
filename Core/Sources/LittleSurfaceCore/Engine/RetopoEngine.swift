@@ -545,6 +545,20 @@ public final class RetopoEngine {
         rebuildOverlay()
     }
 
+    /// Shows one of the guide's examples: its mesh, with `highlight` picked, over a solid copy of
+    /// itself as the model, so it reads as a shape and not just lines.
+    public func showExample(mesh: Mesh, highlight: Selection) {
+        install(EditSnapshot(mesh: mesh, selection: highlight))
+        let solid = mesh.triangulated()
+        // Sunk a little under the mesh, or the mesh would count as dipping under it and be tinted.
+        let sink = mesh.bounds.diagonal * 0.006
+        let sunk = zip(solid.positions, solid.normals).map { $0 - $1 * sink }
+        var model = SourceObject(id: sources.first?.id ?? UUID(), name: "Example", positions: sunk, normals: solid.normals, indices: solid.indices)
+        model.geometryRevision = (sources.first?.geometryRevision ?? 0) &+ 1
+        sources = [model]
+        notify()
+    }
+
     // MARK: Sketch layer
 
     public private(set) var sketches: [SketchStroke] = []

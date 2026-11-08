@@ -31,10 +31,12 @@
 		B615EFF448BFFED6C41F6E0A /* ProjectLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A34BA98C55686516ECB57D1 /* ProjectLibrary.swift */; };
 		B9A00326904285BBBDA6C803 /* LittleSurfaceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 86455407BC6AD5E65434F015 /* LittleSurfaceCore */; };
 		BDD3DD101149612324216BEF /* Marble Bust.glb in Resources */ = {isa = PBXBuildFile; fileRef = 34FD87997FF660D11E757C43 /* Marble Bust.glb */; };
+		CC0C14EA610108ABCE888953 /* GuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95273E4CC9F93F8C195412D5 /* GuideView.swift */; };
 		D092E87CBC1AF3BC84B203E6 /* ExampleModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F9E4D4EF70FA5E6C753653F /* ExampleModel.swift */; };
 		D0FEEAAA0A34FBC5FF1FADD9 /* TimelapseExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 719BEDEF46278DC6954D5CF7 /* TimelapseExporter.swift */; };
 		D37C1C98DCA6F7AAA185CFBC /* WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2752333A7C152D22E08FEC27 /* WorkflowUITests.swift */; };
 		E3B8D77466DAC110E36E906B /* Blub the Fish.glb in Resources */ = {isa = PBXBuildFile; fileRef = A9231A351EA93E69FEAA84E9 /* Blub the Fish.glb */; };
+		E9BF81C9EF708F5F5FE28CCF /* GuideClipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01CCA1975656C4EDCCD1178B /* GuideClipTests.swift */; };
 		F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77C29AE9EE3901E9C42619B /* EditorView.swift */; };
 /* End PBXBuildFile section */
 
@@ -56,6 +58,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		01CCA1975656C4EDCCD1178B /* GuideClipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuideClipTests.swift; sourceTree = "<group>"; };
 		069771140D1C2C22DE3B20A8 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		06C85ED7C796A7978A25DFA0 /* BlenderLinkServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkServer.swift; sourceTree = "<group>"; };
 		09603273F981C15D5AB0A93B /* MenuSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuSheets.swift; sourceTree = "<group>"; };
@@ -76,6 +79,7 @@
 		804563D7FDEE3D22BEDDA3E3 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		862D894F342901E63C82BC90 /* Shaders.msl */ = {isa = PBXFileReference; path = Shaders.msl; sourceTree = "<group>"; };
 		8E0D11E108833499D459410C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		95273E4CC9F93F8C195412D5 /* GuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuideView.swift; sourceTree = "<group>"; };
 		9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkView.swift; sourceTree = "<group>"; };
 		9F9E4D4EF70FA5E6C753653F /* ExampleModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExampleModel.swift; sourceTree = "<group>"; };
 		A2CB3279F8027235D92B6C16 /* BlenderLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlenderLinkTests.swift; sourceTree = "<group>"; };
@@ -224,6 +228,7 @@
 			children = (
 				9981EC6BCDB28454E85C05EC /* BlenderLinkView.swift */,
 				C77C29AE9EE3901E9C42619B /* EditorView.swift */,
+				95273E4CC9F93F8C195412D5 /* GuideView.swift */,
 				09603273F981C15D5AB0A93B /* MenuSheets.swift */,
 				069771140D1C2C22DE3B20A8 /* Theme.swift */,
 				FF8E71B735CA1BCC54E753D5 /* WelcomeView.swift */,
@@ -236,6 +241,7 @@
 			children = (
 				A2CB3279F8027235D92B6C16 /* BlenderLinkTests.swift */,
 				64964A42BDD2F8515FB3421A /* DocumentTests.swift */,
+				01CCA1975656C4EDCCD1178B /* GuideClipTests.swift */,
 				DF5B3319E68C652219B81854 /* TimelapseExportTests.swift */,
 			);
 			path = AppTests;
@@ -406,6 +412,7 @@
 				28C67CB5770916452B11EFD8 /* EditorModel.swift in Sources */,
 				F07EA5C33AE21DED03900B2B /* EditorView.swift in Sources */,
 				D092E87CBC1AF3BC84B203E6 /* ExampleModel.swift in Sources */,
+				CC0C14EA610108ABCE888953 /* GuideView.swift in Sources */,
 				20BF909B8805F464B4434ACF /* LittleSurfaceApp.swift in Sources */,
 				0BFE694CDD69FD8ED8D534C2 /* MenuSheets.swift in Sources */,
 				2C6DE9CD3B751F72CA635013 /* ProjectDocument.swift in Sources */,
@@ -424,6 +431,7 @@
 			files = (
 				49E98855026B3BF0AE86FE97 /* BlenderLinkTests.swift in Sources */,
 				8D2D78BB187D63B667F332FF /* DocumentTests.swift in Sources */,
+				E9BF81C9EF708F5F5FE28CCF /* GuideClipTests.swift in Sources */,
 				41E939F6A70455FBD3AE6954 /* TimelapseExportTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

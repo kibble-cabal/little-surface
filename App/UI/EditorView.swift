@@ -43,12 +43,21 @@ struct EditorView: View {
                         MirrorAxisPicker(model: model)
                     }
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    // Moves over to the guide's left while it's open.
+                    .padding(.trailing, model.showsGuide ? 370 : 0)
                     Spacer(minLength: 0)
                     MessageToast(model: model)
                     PickChips(model: model)
                     BudgetChip(model: model)
                 }
                 .padding(10)
+
+                if model.showsGuide {
+                    GuidePanel(model: model)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
 
                 if model.state.sources.isEmpty, model.busy == nil {
                     EmptyViewportPrompt(model: model, importsModel: $importsModel, importsAsMesh: $importsAsMesh)
@@ -198,6 +207,12 @@ private struct EditorToolbar: ToolbarContent {
             .tint(model.state.symmetry.isEnabled ? Theme.selection : Color.primary)
             .accessibilityIdentifier("Symmetry")
             .accessibilityValue(model.state.symmetry.isEnabled ? "On" : "Off")
+            Button { withAnimation(.snappy) { model.showsGuide.toggle() } } label: {
+                Label("Guide", systemImage: model.showsGuide ? "book.fill" : "book")
+                    .foregroundStyle(model.showsGuide ? Theme.selection : Color.primary)
+            }
+            .accessibilityIdentifier("Guide Button")
+            .accessibilityValue(model.showsGuide ? "Open" : "Closed")
             menu
         }
     }
